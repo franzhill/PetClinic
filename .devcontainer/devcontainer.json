@@ -1,0 +1,11 @@
+
+{
+  "name": "Spring Boot Dev",
+  "image": "mcr.microsoft.com/devcontainers/java:17",
+  "customizations": {
+    "vscode": {
+      "extensions": ["vscjava.vscode-spring-boot", "pivotal.vscode-spring-boot"]
+    }
+  },
+  "forwardPorts": [8080]
+}
