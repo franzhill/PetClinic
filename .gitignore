@@ -1,0 +1,53 @@
+# === Java/Maven build files ===
+/target/
+!.mvn/wrapper/maven-wrapper.jar
+.mvn/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+
+# === IDEs ===
+
+# IntelliJ
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Eclipse
+.project
+.classpath
+.settings/
+bin/
+
+# VS Code
+.vscode/
+
+# === Logs and DB ===
+*.log
+*.db
+
+# === OS-specific ===
+.DS_Store
+Thumbs.db
+
+# === H2 or temp DB files ===
+*.mv.db
+*.h2.db
+
+# === Lombok-generated stuff (none really needed, but to be safe) ===
+lombok.config
+
+# === Tests and coverage ===
+/test-output/
+/surefire-reports/
+/jacoco.exec
+
+# === Optional ===
+*.swp
+*.swo
