@@ -1,0 +1,21 @@
+[
+  {
+    "name": "Dorothy",
+    "pets": [
+      { "name": "Toto" },
+      { "name": "Whiskers" }
+    ]
+  },
+  {
+    "name": "Harry",
+    "pets": [
+      { "name": "Hedwig" }
+    ]
+  },
+  {
+    "name": "Tintin",
+    "pets": [
+      { "name": "Milou" }
+    ]
+  }
+]

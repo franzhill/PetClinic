@@ -34,11 +34,18 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <!-- No eed to specify version it is managed by the spring boot parent -->
+      <!-- No need to specify version it is managed by the spring boot parent -->
         <groupId>org.projectlombok</groupId>
         <artifactId>lombok</artifactId>
         <optional>true</optional>
     </dependency>
+    <!-- To read the json file with customers and pets -->
+    <dependency>
+        <groupId>com.fasterxml.jackson.core</groupId>
+        <artifactId>jackson-databind</artifactId>
+        <!--<version>2.17.1</version> <!- - or latest stable -->
+    </dependency>
+
   </dependencies>
 
   <build>

@@ -1,4 +1,4 @@
-package com.fhi.pet_clinic;
+package com.fhi.pet_clinic.model;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
@@ -15,6 +15,6 @@ public class PetClinic
 
     private String name;
 
-    @OneToMany(mappedBy = "petClinic")
+    @OneToMany(mappedBy = "petClinic")  // inverse side
     private List<Customer> customers;
 }
