@@ -11,7 +11,7 @@
 
 ### Objective
 
-These are the bidirectional relationships that we have: 
+These are the bidirectional relationships that we have: <br />
   PetClinic <- OneToMany -> Customer <- oneToMany -> Pet
   
 The objective of the exercise îs to fix the `ClinicService#createClinic` method so that a `PetClinic` with its `Customers` and their `Pets` is fully persisted.
