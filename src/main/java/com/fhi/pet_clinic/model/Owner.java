@@ -8,7 +8,7 @@ import java.util.List;
 @Entity
 @Setter
 @Getter
-public class Customer 
+public class Owner
 {
     @Id @GeneratedValue private Long id;
     private String name;
@@ -16,6 +16,6 @@ public class Customer
     @ManyToOne
     private PetClinic petClinic;
 
-    @OneToMany(mappedBy = "customer")  // inverse side
+    @OneToMany(mappedBy = "owner")  // inverse side
     private List<Pet> pets;
 }

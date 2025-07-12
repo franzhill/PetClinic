@@ -29,8 +29,8 @@ class PetClinicServiceTest
 
     @Test
     @Transactional  // This keeps the Hibernate session open during assertions
-                    // and lets us access lazy loaded elements like customers
-                    // via clinic.getCustomers()
+                    // and lets us access lazy loaded elements like owners
+                    // via clinic.getOwners()
     void testCreateClinic() 
     {
         // GIVEN
@@ -43,7 +43,7 @@ class PetClinicServiceTest
 
         // (Let's flush and clear the persistence context to simulate a fresh read
         //  Otherwise Hibernate might just read from cache and not from DB when
-        //  we ask it to retrieve Customers and Pets.)
+        //  we ask it to retrieve Owners and Pets.)
         entityManager.flush();
         entityManager.clear();
 
@@ -52,10 +52,10 @@ class PetClinicServiceTest
         // ...it is as I created it:
         assertEquals("Happy Paws PetClinic", petClinic.getName());
 
-        assertEquals(dataLoader.getCustomer(0).getName(), petClinic.getCustomers().get(0).getName());
+        assertEquals(dataLoader.getOwner(0).getName(), petClinic.getOwners().get(0).getName());
 
-        assertEquals(dataLoader.getPet(0, 0).getName(), petClinic.getCustomers().get(0).getPets().get(0).getName());
+        assertEquals(dataLoader.getPet(0, 0).getName(), petClinic.getOwners().get(0).getPets().get(0).getName());
 
-        assertEquals(dataLoader.getCustomer(1).getName(), petClinic.getCustomers().get(1).getName());
+        assertEquals(dataLoader.getOwner(1).getName(), petClinic.getOwners().get(1).getName());
     }
 }

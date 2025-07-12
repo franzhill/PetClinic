@@ -39,7 +39,7 @@
         <artifactId>lombok</artifactId>
         <optional>true</optional>
     </dependency>
-    <!-- To read the json file with customers and pets -->
+    <!-- To read the json file with owners and pets -->
     <dependency>
         <groupId>com.fasterxml.jackson.core</groupId>
         <artifactId>jackson-databind</artifactId>

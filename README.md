@@ -12,13 +12,13 @@
 ### Objective
 
 These are the bidirectional relationships that we have: <br />
-  PetClinic <- OneToMany -> Customer <- oneToMany -> Pet
+  PetClinic <- OneToMany -> Owner <- oneToMany -> Pet
   
-The objective of the exercise îs to fix the `ClinicService#createClinic` method so that a `PetClinic` with its `Customers` and their `Pets` is fully persisted.
+The objective of the exercise îs to fix the `ClinicService#createClinic` method so that a `PetClinic` with its `Owners` and their `Pets` is fully persisted.
 
 ### Instructions
 
-- Fix missing relationships (`setClinic`, `setCustomer`, etc.)
+- Fix missing relationships (`setClinic`, `setOwner`, etc.)
 - Use appropriate `CascadeType`s on `@OneToMany`, or not.
 - Make the test in `ClinicServiceTest` pass
 

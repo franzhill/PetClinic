@@ -2,7 +2,7 @@ package com.fhi.pet_clinic.util;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fhi.pet_clinic.model.Customer;
+import com.fhi.pet_clinic.model.Owner;
 import com.fhi.pet_clinic.model.Pet;
 
 import jakarta.annotation.PostConstruct;
@@ -15,17 +15,15 @@ import java.util.List;
 
 
 /**
- * Loads a predefined {customer and pet} json data file to easily retrieve Customer/Pet values.
+ * Loads a predefined {owner and pet} json data file to easily retrieve Owner/Pet values.
  *
- * Loaded from a JSON file the path of which is defined in application properties
+ * Loads a JSON file, the path of which is defined in application properties,
  * into memory during application startup.
  *
- * The relationships between Customer and Pet are deliberately not set:
- * - Customer.pets remains null or empty
- * - Pet.customer is not assigned
+ * The relationships between Owner and Pet are deliberately not set:
+ * - Owner.pets remains null or empty
+ * - Pet.owner is not assigned
  *
- * This is intended for demonstrating the importance of correctly setting
- * owning/inverse sides in JPA bidirectional relationships.
  *
  * This component is useful for preloading a consistent object graph
  * for test scenarios or workshop demonstrations.
@@ -36,9 +34,9 @@ public class DataLoader {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final String jsonPath;
 
-    private List<Customer> cache;
+    private List<Owner> cache;
 
-    public DataLoader(@Value("${data.customers.path}") String jsonPath) {
+    public DataLoader(@Value("${data.owners.path}") String jsonPath) {
         this.jsonPath = jsonPath;
     }
 
@@ -47,15 +45,15 @@ public class DataLoader {
         try {
             File file = new File(jsonPath);
             JsonNode root = objectMapper.readTree(file);
-            List<Customer> result = new ArrayList<>();
+            List<Owner> result = new ArrayList<>();
 
-            for (JsonNode customerNode : root) {
-                Customer customer = new Customer();
-                customer.setName(customerNode.get("name").asText());
+            for (JsonNode ownerNode : root) {
+                Owner owner = new Owner();
+                owner.setName(ownerNode.get("name").asText());
 
-                // DO NOT set pets on customer
-                // DO NOT set customer on pet
-                result.add(customer);
+                // DO NOT set pets on owner
+                // DO NOT set owner on pet
+                result.add(owner);
             }
 
             this.cache = result;
@@ -66,13 +64,13 @@ public class DataLoader {
     }
 
     /**
-     * Returns a Customer described in the  json data file.
-     * The customer's pets are not set and must be linked manually.
+     * Returns an owner described in the  json data file.
+     * The owner's pets are not set and must be linked manually.
      *
-     * @param index of customer in the data file. Starts at 0.
-     * @return a Customer instance with no relationships set
+     * @param index of owner in the data file. Starts at 0.
+     * @return an owner instance with no relationships set
      */
-    public Customer getCustomer(int index) {
+    public Owner getOwner(int index) {
         return cache.get(index);
     }
 
@@ -80,27 +78,27 @@ public class DataLoader {
    /**
      * Returns a Pet as described in the json data file.
      * 
-     * @param customerIndex the customer of the pet. Index starts at 0.
-     * @param petIndex index ot the pet in the customer's lit of pets. Sarts at 0.
+     * @param ownerIndex the owner of the pet. Index starts at 0.
+     * @param petIndex index ot the pet in the owner's lit of pets. Sarts at 0.
      * @return
      */
 
 
     /**
      * Returns a Pet as described in the json data file.
-     * The returned Pet is not linked to any Customer.
+     * The returned Pet is not linked to any Owner.
      *
-     * @param customerIndex the index of the customer (0-based)
-     * @param petIndex the index of the pet in the customer's array (0-based)
-     * @return a Pet instance with no customer set
+     * @param ownerIndex the index of the owner (0-based)
+     * @param petIndex the index of the pet in the owner's array (0-based)
+     * @return a Pet instance with no owner set
      */
-    public Pet getPet(int customerIndex, int petIndex) {
+    public Pet getPet(int ownerIndex, int petIndex) {
         try {
             File file = new File(jsonPath);
             JsonNode root = objectMapper.readTree(file);
 
-            JsonNode customerNode = root.get(customerIndex);
-            JsonNode petNode = customerNode.withArray("pets").get(petIndex);
+            JsonNode ownerNode = root.get(ownerIndex);
+            JsonNode petNode = ownerNode.withArray("pets").get(petIndex);
 
             Pet pet = new Pet();
             pet.setName(petNode.get("name").asText());

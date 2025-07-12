@@ -14,6 +14,6 @@ public class Pet
     private String name;
 
     @ManyToOne                          // owning side
-    @JoinColumn(name = "customer_id")   // FK in table employee. Can be omitted. If so, JPA auto-generates the foreign key column name using a naming convention.
-    private Customer customer;
+    @JoinColumn(name = "owner_id")   // FK in table employee. Can be omitted. If so, JPA auto-generates the foreign key column name using a naming convention.
+    private Owner owner;
 }

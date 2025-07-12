@@ -16,5 +16,5 @@ public class PetClinic
     private String name;
 
     @OneToMany(mappedBy = "petClinic")  // inverse side
-    private List<Customer> customers;
+    private List<Owner> owners;
 }

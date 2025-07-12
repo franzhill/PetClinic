@@ -11,5 +11,5 @@ spring:
     show-sql: true
 
 data:
-  customers:
-    path: src/main/resources/customers.json
+  owners:
+    path: src/main/resources/data.json
