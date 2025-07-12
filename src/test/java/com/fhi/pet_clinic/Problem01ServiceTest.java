@@ -5,7 +5,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.fhi.pet_clinic.repo.PetClinicRepository;
-import com.fhi.pet_clinic.service.PetClinicService;
+import com.fhi.pet_clinic.service.Problem01Service;
 import com.fhi.pet_clinic.util.DataLoader;
 
 import jakarta.persistence.EntityManager;
@@ -13,13 +13,13 @@ import jakarta.persistence.EntityManager;
 import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest
-class PetClinicServiceTest 
+class Problem01ServiceTest 
 {
     @Autowired
     EntityManager entityManager;
 
     @Autowired 
-    private PetClinicService clinicService;
+    private Problem01Service prb01service;
     
     @Autowired 
     private PetClinicRepository clinicRepository;
@@ -36,7 +36,7 @@ class PetClinicServiceTest
         // GIVEN
 
         // WHEN I create a clinic
-        clinicService.createClinic();
+        prb01service.createClinic();
 
         // THEN it is persisted 
         // i.e. when I retrieve from the DB...
@@ -52,10 +52,13 @@ class PetClinicServiceTest
         // ...it is as I created it:
         assertEquals("Happy Paws PetClinic", petClinic.getName());
 
-        assertEquals(dataLoader.getOwner(0).getName(), petClinic.getOwners().get(0).getName());
+        assertEquals(dataLoader.getOwner(0).getName(), 
+                     petClinic.getOwners().get(0).getName());
 
-        assertEquals(dataLoader.getPet(0, 0).getName(), petClinic.getOwners().get(0).getPets().get(0).getName());
+        assertEquals(dataLoader.getPet(0, 0).getName(), 
+                     petClinic.getOwners().get(0).getPets().get(0).getName());
 
-        assertEquals(dataLoader.getOwner(1).getName(), petClinic.getOwners().get(1).getName());
+        assertEquals(dataLoader.getOwner(1).getName(), 
+                     petClinic.getOwners().get(1).getName());
     }
 }

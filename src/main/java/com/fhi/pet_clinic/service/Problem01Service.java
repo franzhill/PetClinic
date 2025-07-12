@@ -16,13 +16,13 @@ import java.util.List;
  * owning/inverse sides in JPA bidirectional relationships.
  */
 @Service
-public class PetClinicService 
+public class Problem01Service 
 {
     // Not using @Autowired, using constructor injection instead.
     private PetClinicRepository clinicRepository;
     private DataLoader dataLoader;
 
-    public PetClinicService(PetClinicRepository clinicRepository, 
+    public Problem01Service(PetClinicRepository clinicRepository, 
                             DataLoader dataLoader) 
     {   this.clinicRepository = clinicRepository;
         this.dataLoader       = dataLoader;
