@@ -16,6 +16,7 @@ public class Owner
     @ManyToOne
     private PetClinic petClinic;
 
-    @OneToMany(mappedBy = "owner")  // inverse side
+
+    @OneToMany(mappedBy = "owner", cascade = CascadeType.ALL)  // inverse side
     private List<Pet> pets;
 }

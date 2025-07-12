@@ -15,6 +15,6 @@ public class PetClinic
 
     private String name;
 
-    @OneToMany(mappedBy = "petClinic")  // inverse side
+    @OneToMany(mappedBy = "petClinic", cascade = CascadeType.ALL)  // inverse side
     private List<Owner> owners;
 }
