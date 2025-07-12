@@ -24,6 +24,10 @@
       <artifactId>spring-boot-starter-data-jpa</artifactId>
     </dependency>
     <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
       <groupId>com.h2database</groupId>
       <artifactId>h2</artifactId>
       <scope>runtime</scope>
@@ -34,10 +38,11 @@
       <scope>test</scope>
     </dependency>
     <dependency>
+      <!-- Lombok (avoids having to generate boilerplate code by autogenerating it)-->
       <!-- No need to specify version it is managed by the spring boot parent -->
-        <groupId>org.projectlombok</groupId>
-        <artifactId>lombok</artifactId>
-        <optional>true</optional>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <optional>true</optional>
     </dependency>
     <!-- To read the json file with owners and pets -->
     <dependency>
@@ -45,7 +50,6 @@
         <artifactId>jackson-databind</artifactId>
         <!--<version>2.17.1</version> <!- - or latest stable -->
     </dependency>
-
   </dependencies>
 
   <build>
@@ -53,6 +57,49 @@
       <plugin>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+
+      <!-- 
+        Plugin: maven-resources-plugin
+        Purpose: Allows copying specific files or folders during the build lifecycle.
+
+        Here, we use it to copy our `logback-spring.yml` config file into the `test-classes` output directory 
+        so that it is picked up when running integration or unit tests.
+        
+        This solves the following problem:
+        - By default, Maven does NOT copy `src/main/resources` into `target/test-classes`.
+        - So if you put `logback-spring.yml` in `src/main/resources`, it will NOT be visible to the Spring context 
+          when running tests — only during normal app runs.
+      -->
+      <plugin>
+        <artifactId>maven-resources-plugin</artifactId>
+        <version>3.3.1</version>
+        <executions>
+          <execution>
+            <id>copy-logback-spring</id>
+            
+            <!--  Phase during which this should be executed.
+                  'process-test-resources' runs before tests are compiled or executed. -->
+            <phase>process-test-resources</phase> 
+            <goals>
+              <goal>copy-resources</goal>
+            </goals>
+            <configuration>
+              <!-- Copy to test-classes so Spring Boot picks it up during test context loading -->
+              <outputDirectory>${project.build.testOutputDirectory}</outputDirectory>
+              <resources>
+                <resource>
+                  <!-- Source: your main resources folder -->
+                  <directory>src/main/resources</directory>
+                  <includes>
+                    <!-- Only copy the logging config file -->
+                    <include>logback-spring.xml</include>
+                  </includes>
+                </resource>
+              </resources>
+            </configuration>
+          </execution>
+        </executions>
       </plugin>
     </plugins>
   </build>

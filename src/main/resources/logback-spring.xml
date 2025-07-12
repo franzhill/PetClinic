@@ -1,0 +1,30 @@
+<!--
+  Beware! The yaml format is not (well?) supported by Spring Boot
+  So here is the XML format.
+-->
+
+
+<configuration debug="true">
+
+  <!-- Enables status messages to the console during logback startup -->
+  <statusListener class="ch.qos.logback.core.status.OnConsoleStatusListener" />
+
+  <!-- Define a reusable log pattern -->
+  <property name="LOG_PATTERN"
+            value="%cyan(%d{HH:mm:ss.SSS}) [%thread] %highlight(%-5level) %green(%logger{36}):%blue(%line) - %msg%n" />
+
+
+  <!-- Console appender with caller data enabled to use file/line/method -->
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <includeCallerData>true</includeCallerData>
+    <encoder>
+      <pattern>${LOG_PATTERN}</pattern>
+    </encoder>
+  </appender>
+
+  <!-- Root logger configuration -->
+  <root level="INFO">
+    <appender-ref ref="CONSOLE" />
+  </root>
+
+</configuration>

@@ -1,0 +1,20 @@
+
+    // This JSON file contains owner entities without direct pet references.
+    // We have done away with referecing the pets here, since Pet
+    // being the JPA entity that owns the relationshop, having the
+    // reference to the owner from the Pet end is entirely sufficiant.
+
+
+[
+  {   "id": 1,
+      "name": "Dorothy"
+    },
+    {
+      "id": 2,
+      "name": "Harry"
+    },
+    {
+      "id": 3,
+      "name": "Tintin"
+    }
+]

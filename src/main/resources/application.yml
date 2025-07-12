@@ -10,6 +10,30 @@ spring:
       ddl-auto: update
     show-sql: true
 
+  # Force color output (when not auto-detected)
+  # This ensures colors are forced even in IDEs or tools that might suppress them.
+  # For the console logger for example.
+  output:
+    ansi:
+      enabled: ALWAYS
+
 data:
   owners:
     path: src/main/resources/data.json
+
+server:
+  port: 8081
+
+logging:
+  # Overrides settings from logback-spring.yaml
+  level:
+    root: INFO                 # Global log level
+    com.fhi.pet_clinic: DEBUG  # Set DEBUG level for your application's main package
+    org.hibernate.SQL: DEBUG   # Optional: log SQL statements
+    #org.hibernate.type.descriptor.sql.BasicBinder: TRACE  # Optional: log SQL parameter bindings
+  #pattern:
+    # we'll be configuring the pattern through the logback config file
+    # Spring Boot supports a limited set of logging configuration directly via application.yaml 
+    # and colour formatting, use of %file, %line, %M, %class (source info), multiple appenders etc.
+    # are not part of them.
+
