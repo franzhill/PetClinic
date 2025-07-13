@@ -25,7 +25,9 @@ public class GenericFixtureLoader {
     // Cache repositories by entity type
     private final Map<Class<?>, CrudRepository<?, ?>> repositoryCache = new ConcurrentHashMap<>();
 
-    public GenericFixtureLoader(ObjectMapper objectMapper, ApplicationContext context) {
+    // Autowired constructor
+    public GenericFixtureLoader(ObjectMapper objectMapper, ApplicationContext context) 
+    {
         this.objectMapper = objectMapper;
         this.context = context;
     }
@@ -46,8 +48,10 @@ public class GenericFixtureLoader {
         {
             try (InputStream is = new ClassPathResource(path).getInputStream()) 
             {   List<T> entities = deserializeList(is, entityClass);
+                
+                log.debug("About to save entities of type {} ...", entityClass.getSimpleName());
                 getRepository(entityClass).saveAll(entities);
-                log.info("Loaded {} entities of type {} from {}", entities.size(), entityClass.getSimpleName(), path);
+                log.info("Save in DB DONE. Loaded {} entities of type {} from {}", entities.size(), entityClass.getSimpleName(), path);
                 return; // success!
             } 
             catch (Exception e) 

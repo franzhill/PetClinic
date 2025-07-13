@@ -1,5 +1,5 @@
 <!--
-  Beware! The yaml format is not (well?) supported by Spring Boot
+  Beware! The yaml format is not (well?) supported by Spring Boot.
   So here is the XML format.
 -->
 
@@ -11,7 +11,7 @@
 
   <!-- Define a reusable log pattern -->
   <property name="LOG_PATTERN"
-            value="%cyan(%d{HH:mm:ss.SSS}) [%thread] %highlight(%-5level) %green(%logger{36}):%blue(%line) - %msg%n" />
+            value="%cyan(%d{HH:mm:ss.SSS}) %thread %highlight(%-5level) %green(%logger{36}),%line : %msg%n" />
 
 
   <!-- Console appender with caller data enabled to use file/line/method -->

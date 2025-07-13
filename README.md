@@ -1,5 +1,11 @@
 
-# PetClinic: a collection of exercises around Spring and Hibernate
+
+# PetClinic: my "pet" ;o) project — a technical playground for Spring & JPA
+This project serves as a technical playground where I explore both common and advanced use cases of Spring Boot, JPA/Hibernate, and related technologies.
+It aims to offer a clean, production-ready, and well-documented codebase that demonstrates how these technologies work in practice — from everyday challenges to more complex architectural scenarios.
+
+It also hosts a collection of focused exercises on Spring and Hibernate that I regularly submit to my team of junior developers as part of ongoing skills improvement and knowledge sharing.
+
 
 
 ## Exercise 01: Hibernate bi-directional relationship and cascade 

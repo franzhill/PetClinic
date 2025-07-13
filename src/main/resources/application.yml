@@ -7,9 +7,14 @@ spring:
     password:
   jpa:
     hibernate:
-      ddl-auto: update
-    show-sql: true
+      #ddl-auto: update       # Adjust the schema to match the entity model without dropping existing data.
+                              # Suitable for development, but not recommended for testing or production,
+                              # as it can silently skip mismatches and leave the schema in an inconsistent state.
+      ddl-auto: create-drop   # Automatically create the schema from JPA entities on startup,
+                              # and drop it when the application context shuts down.
+                              # Ideal for integration testing with an in-memory database.
 
+    show-sql: true
   # Force color output (when not auto-detected)
   # This ensures colors are forced even in IDEs or tools that might suppress them.
   # For the console logger for example.

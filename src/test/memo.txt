@@ -1,0 +1,13 @@
+
+
+JpaRepository.save(entity) logic (simplified)
+=============================================
+If entity.id == null
+→ JPA treats it as new, and inserts it (persist).
+
+If entity.id != null
+→ JPA will check if it already exists in the current persistence context or in the database:
+
+If it exists → JPA does a merge (update if needed, or skip if identical)
+
+If it does not exist → JPA inserts it with the specified ID
