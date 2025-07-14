@@ -1,4 +1,12 @@
 
+Running tests
+================
+$ mvn clean test -Dtest=SpringFixtureLoaderTest
+
+or using surefire:
+$ mvn surefire:test -Dtest=SpringFixtureLoaderTest -Djunit.platform.output.capture.stdout=true
+
+
 
 JpaRepository.save(entity) logic (simplified)
 =============================================

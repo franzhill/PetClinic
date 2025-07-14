@@ -1,9 +1,4 @@
-
-package com.fhi.pet_clinic.tests.controller;
-
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+package com.fhi.pet_clinic.tests.fixtures;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -15,11 +10,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.http.MediaType;
-import org.springframework.test.web.servlet.MockMvc;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fhi.pet_clinic.dto.OwnerDto;
 import com.fhi.pet_clinic.fixtures.Fixtures;
 import com.fhi.pet_clinic.fixtures.junitfixtureloader.FixtureExtension;
 import com.fhi.pet_clinic.model.Owner;
@@ -28,6 +19,13 @@ import com.fhi.pet_clinic.repo.OwnerRepository;
 import com.fhi.pet_clinic.repo.PetRepository;
 
 import lombok.extern.slf4j.Slf4j;
+
+
+/**
+ * Run with
+ * $ mvn clean test -Dtest=JUnitFixtureLoaderTest
+ */
+
 
 // Starts the full application context (like a mini Spring Boot app) for testing
 // when the test class is initialized.
@@ -53,10 +51,7 @@ import lombok.extern.slf4j.Slf4j;
 // you carry state between tests if needed).
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 
-// Ensures tests run in a defined order if needed
-// By placing 
-// @Order(n)
-// on a test.
+// Ensures test methods are run in a specific order using @Order(n)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 
 // Automatically configures MockMvc for testing HTTP endpoints
@@ -71,14 +66,9 @@ import lombok.extern.slf4j.Slf4j;
 @ExtendWith(FixtureExtension.class)
 
 @Slf4j
-class OwnerControllerIntegrationTest 
+
+class JUnitFixtureLoaderTest 
 {
-   @Autowired
-   private MockMvc mockMvc;
-
-   @Autowired
-   private ObjectMapper objectMapper;
-
     @Autowired
     private OwnerRepository ownerRepository;
 
@@ -92,7 +82,7 @@ class OwnerControllerIntegrationTest
    }
 
 
-    @DisplayName("Verify that owners and pets are loaded from fixtures")
+    @DisplayName("Verify the fixture loading mechanism")
     @Test
     void printLoadedFixtures() 
     {   log.debug("");
@@ -114,41 +104,4 @@ class OwnerControllerIntegrationTest
         {   log.info("Pet[id={}, name={}, owner={}]", p.getId(), p.getName(), p.getOwner() != null ? p.getOwner().getName() : "null");
         }
     }
-
-
-
-
-
-   //@Test
-   void testCreateOwner() throws Exception 
-   {
-      // GIVEN:
-      // Owner creation payload
-      OwnerDto ownerDto    =  new OwnerDto();
-      String   jsonPayload = objectMapper.writeValueAsString(ownerDto);
-
-      // WHEN:
-      // Call the endpoint 
-      mockMvc.perform(post("/owners")
-               .contentType(MediaType.APPLICATION_JSON)
-               .content(jsonPayload))
-               .andExpect(status().isCreated());
-
-      // THEN:       
-      // Add assertions to verify the result, like fetching the created owner
-   }
-
-
-   //@Test
-   void testDeleteOwner() throws Exception 
-   {
-      Long ownerId = 1L;
-      // First, ensure the owner with ownerId exists
-
-      mockMvc.perform(delete("/owners/{id}", ownerId))
-               .andExpect(status().isNoContent());
-      // Add assertions to verify the owner has been deleted
-   }
-
-   // ... additional tests can go here ...
 }

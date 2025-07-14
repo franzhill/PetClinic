@@ -17,14 +17,8 @@ import java.lang.annotation.*;
  * <p>By default, fixtures are loaded before each test method. You can override this
  * with {@code loadMode = Fixtures.lifecycle.PER_CLASS} to load once for the test class.</p>
  * 
- * <p>This annotation must be combined with {@code @ExtendWith(FixtureExtension.class)}.</p>
- *
- * <p>Example:</p>
- * <pre>{@code
- *    @ExtendWith(FixtureExtension.class)
- *    @Fixtures(value = { Owner.class, Pet.class }, lifecycle = Fixtures.Lifecycle.PER_CLASS)
- *    public class MyIntegrationTest { ... }
- * }</pre>
+ * Use either with @SpringFixtureTest or @ExtendWith(JUnitFixtureLoader.class), see
+ * file readme.md.
  *
  * <p>The fixture loader classes typically implement a common interface or convention and use Jackson
  * to read JSON data and persist it with Spring Data JPA.</p>

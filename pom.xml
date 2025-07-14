@@ -101,6 +101,51 @@
           </execution>
         </executions>
       </plugin>
+
+      <!-- 
+        Plugin: maven-surefire-plugin
+        Purpose: Controls how tests are executed during the Maven `test` phase.
+
+        This plugin is responsible for launching your JUnit tests (unit or integration) from the command line 
+        with `mvn test` or `mvn verify`. The configuration below aims to:
+
+        - Ensure reliable and predictable test execution
+        - Improve developer feedback loop with clearer console output
+        - Prevent Maven from swallowing test logs (System.out or log.info)
+        - Avoid unnecessary parallelism or weird stack trace truncation
+        - Make test method names and @DisplayName annotations more visible in the terminal output
+
+         This setup is ideal for Spring Boot projects using JUnit 5 and Logback
+      -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.1.2</version> <!--  Use the latest stable version to support JUnit 5 and modern features -->
+        <configuration>
+          <!--  Ensures a clean, single forked JVM is used for running tests -->
+          <forkCount>1</forkCount>
+          <reuseForks>true</reuseForks>
+          <!--  Print a short summary of tests in the console (e.g., number of tests run, passed, failed) -->
+          <printSummary>true</printSummary>
+          <!--  Show test output (e.g., System.out, log.info) directly in the console instead of redirecting it to a file -->
+          <redirectTestOutputToFile>false</redirectTestOutputToFile>
+          <!--  Prevents writing test results to a target/surefire-reports/TEST-*.txt file; enables real-time output to console -->
+          <useFile>false</useFile>
+          <!--  Keeps the full stack trace for errors (disable truncation) -->
+          <trimStackTrace>false</trimStackTrace>
+          <!--  Use 'brief' format to print only essential information (not per-method unless there's a failure) -->
+          <reportFormat>plain</reportFormat>
+          <!--  If a test fails, fail the build. Set to true if you want to continue even on failure -->
+          <testFailureIgnore>false</testFailureIgnore>
+          <!--  Explicitly disable parallel execution (unless you’ve configured it elsewhere) -->
+          <systemPropertyVariables>
+            <junit.jupiter.execution.parallel.enabled>false</junit.jupiter.execution.parallel.enabled>
+          </systemPropertyVariables>
+        </configuration>
+      </plugin>
+
+
+
     </plugins>
   </build>
 </project>

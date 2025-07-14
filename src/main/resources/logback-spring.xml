@@ -11,8 +11,20 @@
 
   <!-- Define a reusable log pattern -->
   <property name="LOG_PATTERN"
-            value="%cyan(%d{HH:mm:ss.SSS}) %thread %highlight(%-5level) %green(%logger{36}),%line : %msg%n" />
+            value="%cyan(%d{HH:mm:ss.SSS}) %thread %highlight(%-5level) %green(%logger{36}) %yellow(%M,%line) : %msg%n" />
 
+  <!-- Available colours:
+  black
+  red
+  green
+  yellow
+  blue
+  magenta
+  cyan
+  white
+  gray
+  bold and faint modifiers can also be added.
+  -->
 
   <!-- Console appender with caller data enabled to use file/line/method -->
   <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">

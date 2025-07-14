@@ -1,9 +1,10 @@
 package com.fhi.pet_clinic.fixtures;
 
-import com.fasterxml.jackson.databind.JavaType;
-import com.fasterxml.jackson.databind.ObjectMapper;
-
-import lombok.extern.slf4j.Slf4j;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.springframework.context.ApplicationContext;
 import org.springframework.core.io.ClassPathResource;
@@ -11,14 +12,15 @@ import org.springframework.data.repository.CrudRepository;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.io.InputStream;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import com.fasterxml.jackson.databind.JavaType;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 @Component
-public class GenericFixtureLoader {
-
+public class GenericFixtureLoader 
+{
     private final ObjectMapper objectMapper;
     private final ApplicationContext context;
 
@@ -47,17 +49,35 @@ public class GenericFixtureLoader {
         for (String path : candidatePaths) 
         {
             try (InputStream is = new ClassPathResource(path).getInputStream()) 
-            {   List<T> entities = deserializeList(is, entityClass);
-                
+            {   List<T> entities;
+                try 
+                {   entities = deserializeList(is, entityClass);
+                }
+                catch (Exception e) 
+                {   throw new RuntimeException(
+                            String.format("While trying to deserialize entities of type %s from path %s", 
+                                          entityClass.getSimpleName(), path));
+                }
                 log.debug("About to save entities of type {} ...", entityClass.getSimpleName());
                 getRepository(entityClass).saveAll(entities);
                 log.info("Save in DB DONE. Loaded {} entities of type {} from {}", entities.size(), entityClass.getSimpleName(), path);
                 return; // success!
             } 
-            catch (Exception e) 
-            {   // Silent fail — try next
-                log.debug("Failed to load fixture from {}: {}", path, e.getMessage());
+            catch (java.io.FileNotFoundException e) 
+            {
+                log.debug("Fixture file not found: {}: {}", path, e.getMessage());
                 log.debug("Trying next one");
+                // Try next one silently
+            } 
+            catch (IOException e) 
+            {
+                log.warn("I/O error while loading fixture from {}: {}", path, e.getMessage());
+            }
+            catch (org.springframework.dao.DataIntegrityViolationException e)
+            {
+                log.error("Data integrity violation while saving fixture from {}: {}", path, e.getMessage());
+                // TODO wrap
+                throw e;
             }
         }
 
