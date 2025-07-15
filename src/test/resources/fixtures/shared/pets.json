@@ -1,8 +1,0 @@
-// This JSON file contains pet entities with id reference to their owner.
-
-[
-   { "id": 1, "name": "Toto", "owner": { "id": 1 } },
-   { "id": 2, "name": "Whiskers", "owner": { "id": 1 } },
-   { "id": 3, "name": "Hedwig", "owner": { "id": 2 } },
-   { "id": 4, "name": "Milou", "owner": { "id": 3 } }
-]

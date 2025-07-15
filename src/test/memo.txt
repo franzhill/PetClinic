@@ -8,6 +8,49 @@ $ mvn surefire:test -Dtest=SpringFixtureLoaderTest -Djunit.platform.output.captu
 
 
 
+Validation
+=============================================
+Correct — in Bean Validation (jakarta.validation) there is no annotation that explicitly
+means "nullable."
+
+The absence of @NotNull is the standard way to indicate that a field is allowed to be null.
+
+f you still want to explicitly declare intent
+You can use @Nullable, but only for documentation or IDE tooling, not validation.
+
+Spring or Hibernate won’t enforce it at runtime.
+
+
+
+Id in Entity
+============================================
+
+What s best 
+
+    @Id @GeneratedValue 
+    private Long id;
+
+or 
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+?
+
+
+Answer: both technically work, but the second one is the better and safer practice.
+
+Reason                             Explanation
+------------------------------+-------------------------------------------------
+Explicit	                          You state exactly how IDs are generated (by the DB using AUTO_INCREMENT-style behavior)
+More portable	                    Makes behavior predictable across different DBs or ORM tools
+Easier debugging	                 You immediately know this is using identity columns
+Consistent with SQL defaults	     SQL Server, MySQL, and PostgreSQL handle IDENTITY cleanly and efficiently
+The default (AUTO)                 Might use a sequence, table, or identity depending on the DB, which can lead to subtle bugs or inefficiencies
+
+
+
+
 JpaRepository.save(entity) logic (simplified)
 =============================================
 If entity.id == null

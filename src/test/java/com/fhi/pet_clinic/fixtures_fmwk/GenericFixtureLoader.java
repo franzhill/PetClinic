@@ -1,4 +1,4 @@
-package com.fhi.pet_clinic.fixtures;
+package com.fhi.pet_clinic.fixtures_fmwk;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -39,7 +39,7 @@ public class GenericFixtureLoader
     public <T> void load(Class<T> entityClass, String testClassSimpleName) 
     {   log.debug("");
 
-        String entityName = entityClass.getSimpleName().toLowerCase() + "s.json";  // e.g. Owner -> owners.json
+        String entityName = entityClass.getSimpleName().toLowerCase() + ".json";  // e.g. Owner -> owners.json
 
         List<String> candidatePaths = List.of(
                 "fixtures/tests/" + testClassSimpleName + "/" + entityName,

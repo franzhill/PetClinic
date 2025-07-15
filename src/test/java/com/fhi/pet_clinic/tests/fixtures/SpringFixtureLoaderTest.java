@@ -10,10 +10,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 
-import com.fhi.pet_clinic.fixtures.Fixtures;
-import com.fhi.pet_clinic.fixtures.springfixtureloader.SpringFixtureTest;
+import com.fhi.pet_clinic.fixtures_fmwk.Fixtures;
+import com.fhi.pet_clinic.fixtures_fmwk.springfixtureloader.SpringFixtureTest;
 import com.fhi.pet_clinic.model.Owner;
 import com.fhi.pet_clinic.model.Pet;
+import com.fhi.pet_clinic.model.Species;
 import com.fhi.pet_clinic.repo.OwnerRepository;
 import com.fhi.pet_clinic.repo.PetRepository;
 
@@ -25,7 +26,7 @@ import lombok.extern.slf4j.Slf4j;
 
 // Loads the JSON fixtures for the given entities, in the given order.
 // With PER_CLASS lifecycle, fixtures are loaded once per class and cleaned via rollback.
- @Fixtures(value = { Owner.class, Pet.class }, lifecycle = Fixtures.Lifecycle.PER_CLASS)
+ @Fixtures(value = { Species.class, Owner.class, Pet.class }, lifecycle = Fixtures.Lifecycle.PER_CLASS)
 
 // Ensures test methods are run in a specific order using @Order(n)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)

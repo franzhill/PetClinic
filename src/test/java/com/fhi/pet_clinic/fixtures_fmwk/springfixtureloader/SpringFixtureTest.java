@@ -1,4 +1,4 @@
-package com.fhi.pet_clinic.fixtures.springfixtureloader;
+package com.fhi.pet_clinic.fixtures_fmwk.springfixtureloader;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -12,7 +12,7 @@ import org.springframework.test.context.TestExecutionListeners;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.fhi.pet_clinic.config.SpringTestConfig;
-import com.fhi.pet_clinic.fixtures.Fixtures;
+import com.fhi.pet_clinic.fixtures_fmwk.Fixtures;
 
 
  /**

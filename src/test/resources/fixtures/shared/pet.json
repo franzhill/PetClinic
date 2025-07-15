@@ -1,0 +1,48 @@
+// This JSON file contains pet entities with id reference to their owner.
+
+[
+  {
+    "id": 1,
+    "name": "Toto",
+    "owner": { "id": 1 },
+    "birthDate": "2020-03-15",
+    "sex": "MALE",
+    "species": { "id": 1 },  // Dog
+    "coatColor": "Brown",
+    "eyeColor": "Amber",
+    "hasWings": false
+  },
+  {
+    "id": 2,
+    "name": "Whiskers",
+    "owner": { "id": 1 },
+    "birthDate": "2021-09-01",
+    "sex": "FEMALE",
+    "species": { "id": 2 },  // Cat
+    "coatColor": "White",
+    "eyeColor": "Blue",
+    "hasWings": false
+  },
+  {
+    "id": 3,
+    "name": "Hedwig",
+    "owner": { "id": 2 },
+    "birthDate": "2018-12-05",
+    "sex": "FEMALE",
+    "species": { "id": 3 },  // Dragon
+    "coatColor": "Silver",
+    "eyeColor": "Yellow",
+    "hasWings": true
+  },
+  {
+    "id": 4,
+    "name": "Milou",
+    "owner": { "id": 3 },
+    "birthDate": "2022-06-20",
+    "sex": "MALE",
+    "species": { "id": 1 },  // Dog
+    "coatColor": "White",
+    "eyeColor": "Black",
+    "hasWings": false
+  }
+]

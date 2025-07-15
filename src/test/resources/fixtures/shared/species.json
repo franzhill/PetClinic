@@ -1,0 +1,33 @@
+
+[
+  {
+    "id": 1,
+    "name": "Dog",
+    "maturityAge": 1,
+    "hybridAllowed": true
+  },
+  {
+    "id": 2,
+    "name": "Cat",
+    "maturityAge": 1,
+    "hybridAllowed": true
+  },
+  {
+    "id": 3,
+    "name": "Dragon",
+    "maturityAge": 3,
+    "hybridAllowed": false
+  },
+  {
+    "id": 4,
+    "name": "Hamster",
+    "maturityAge": 0,
+    "hybridAllowed": false
+  },
+  {
+    "id": 5,
+    "name": "Hybrid",
+    "maturityAge": 2,
+    "hybridAllowed": false
+  }
+]

@@ -1,4 +1,4 @@
-package com.fhi.pet_clinic.fixtures;
+package com.fhi.pet_clinic.fixtures_fmwk;
 
 import java.lang.annotation.*;
 
