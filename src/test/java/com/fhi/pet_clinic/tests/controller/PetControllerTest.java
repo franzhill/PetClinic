@@ -1,8 +1,8 @@
 package com.fhi.pet_clinic.tests.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import java.util.List;
 
@@ -22,12 +22,10 @@ import com.fhi.pet_clinic.model.Species;
 
 import lombok.extern.slf4j.Slf4j;
 
+
 /**
- * Integration test for mating pets.
- *
- * Loads the database with test fixtures and attempts to mate two pets,
- * printing the resulting offspring via logger.
- * 
+ * Integration tests for the PetController
+ * Loads the database with test fixtures 
  * Run with:
  * $ mvn clean test -Dtest=PetControllerTest
  */
@@ -52,33 +50,91 @@ public class PetControllerTest
     @Test
     void mateTwoPetsViaController_shouldReturnLitter() throws Exception 
     {
-        long motherId = 2L; // Whiskers (FEMALE)
-        long fatherId = 1L; // Toto (MALE)
+        long motherId = 4L;
+        long fatherId = 2L;
 
         String url = String.format("/api/pets/mate?motherId=%d&fatherId=%d", motherId, fatherId);
 
         String json = mockMvc.perform(post(url))
-                .andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString();
-/*
+                             .andExpect(status().isOk())
+                             .andReturn().getResponse().getContentAsString();
 
-        String requestBody = String.format("{ \"motherId\": %d, \"fatherId\": %d }", motherId, fatherId);
+        log.info("Raw JSON response:\n{}", json);
 
-        String json = mockMvc.perform(post("/api/pets/mate")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(requestBody))
-                .andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString();
-*/
-        log.info("Raw JSON response:\n{}", json);  // 👈 added
+        String pretty = objectMapper.writerWithDefaultPrettyPrinter()
+                                    .writeValueAsString(objectMapper.readValue(json, Object.class));
+        log.info("Pretty-printed JSON response:\n{}", pretty);
 
         List<Pet> litter = objectMapper.readValue(json, new TypeReference<List<Pet>>() {});
-
         log.info("Mating result: {} offspring(s) created", litter.size());
         logLitter(litter);
 
         assertThat(litter).allSatisfy(pet ->
                 assertThat(pet.getName()).isNotBlank());
+    }
+
+    @DisplayName("Create a new pet via POST endpoint")
+    @Test
+    void createPet_shouldReturnCreatedPet() throws Exception {
+        Pet newPet = new Pet();
+        newPet.setName("Fido");
+        newPet.setSpecies(new Species("Dog"));
+
+        String json = objectMapper.writeValueAsString(newPet);
+
+        mockMvc.perform(post("/api/pets")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.name").value("Fido"))
+                .andExpect(jsonPath("$.species.name").value("Dog"));
+    }
+
+    @DisplayName("Get all pets via GET endpoint")
+    @Test
+    void getAllPets_shouldReturnListOfPets() throws Exception 
+    {
+        mockMvc.perform(get("/api/pets"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isArray());
+    }
+
+    @DisplayName("Get a pet by ID via GET endpoint")
+    @Test
+    void getPetById_shouldReturnPet() throws Exception {
+        long petId = 1L; // Assume this ID exists in the fixtures
+
+        mockMvc.perform(get("/api/pets/{id}", petId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(petId));
+    }
+
+    @DisplayName("Update a pet via PUT endpoint")
+    @Test
+    void updatePet_shouldReturnUpdatedPet() throws Exception {
+        long petId = 1L; // Assume this ID exists in the fixtures
+
+        Pet updatedPet = new Pet();
+        updatedPet.setName("Tiger");
+        updatedPet.setSpecies(new Species("Cat"));
+
+        String json = objectMapper.writeValueAsString(updatedPet);
+
+        mockMvc.perform(put("/api/pets/{id}", petId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Tiger"))
+                .andExpect(jsonPath("$.species.name").value("Cat"));
+    }
+
+    @DisplayName("Delete a pet via DELETE endpoint")
+    @Test
+    void deletePet_shouldReturnNoContent() throws Exception {
+        long petId = 1L; // Assume this ID exists in the fixtures
+
+        mockMvc.perform(delete("/api/pets/{id}", petId))
+                .andExpect(status().isNoContent());
     }
 
     private void logLitter(List<Pet> litter) {
@@ -90,3 +146,4 @@ public class PetControllerTest
                 pet.getSterile()));
     }
 }
+

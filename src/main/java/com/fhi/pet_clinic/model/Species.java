@@ -54,5 +54,12 @@ public class Species
     // TODO 
 
 
+
+   @Override
+   public String toString() 
+   {   return name;
+   }
+
+
 }
 
