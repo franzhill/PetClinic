@@ -107,8 +107,8 @@ public class Pet
     {   int age = this.getAgeInYears();
         var window = this.getSpecies().getFertilityAgeWindow();
         return    age >= window.getFrom() 
-               && age <= window.getTo()
-               && ! Boolean.FALSE.equals(this.getSterile());  // assume possible fertility if sterility is not known
+               && age <= window.getTo();
+               //# && ! Boolean.FALSE.equals(this.getSterile());  // assume possible fertility if sterility is not known
     }
 
 

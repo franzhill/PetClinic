@@ -28,6 +28,7 @@ public class JacksonConfig
                 .configure(JsonParser.Feature.ALLOW_COMMENTS, true)                       // // and /* */ comments in JSON
                 .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)     // allows _comment fields etc.
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)                 // write "2025-07-15", not [2025,7,15]
-                .registerModule(new JavaTimeModule());                                   // support for java.time.* (Java 8 "modern" time types)
+                .registerModule(new JavaTimeModule())                                    // support for java.time.* (Java 8 "modern" time types)
+                .enable(SerializationFeature.INDENT_OUTPUT);                             // for pretty print
     }
 }

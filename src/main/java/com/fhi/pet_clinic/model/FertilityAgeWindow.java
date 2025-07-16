@@ -33,4 +33,10 @@ public class FertilityAgeWindow
    @Min(0) @Max(200)
    @Column(name = "fertility_to") // from and to are reserved SQL keywords,
    private int to;
+
+   @Override
+   public String toString() 
+   {   return "[" + from + "-" + to + "]";
+   }
+
 }

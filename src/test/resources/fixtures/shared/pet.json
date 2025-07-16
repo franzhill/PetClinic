@@ -18,7 +18,7 @@
     "name": "Whiskers",
     "owner": { "id": 1 },
     "sex": "FEMALE",
-    "species": { "id": 2 }  // Cat
+    "species": { "id": 1 }  // Cat
     // All optional fields omitted
   },
   {
@@ -37,7 +37,7 @@
     "id": 4,
     "name": "Milou",
     "owner": { "id": 3 },
-    "sex": "MALE",
+    "sex": "FEMALE",
     "species": { "id": 1 },  // Dog
     "coatColor": "White",
     "eyeColor": "Black",

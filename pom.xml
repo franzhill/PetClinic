@@ -85,6 +85,36 @@
       <artifactId>jackson-datatype-jsr310</artifactId>
     </dependency>
 
+    <!-- Hibernate second-level caching support via JCache (JSR-107) 
+         This is the standard cache abstraction used by Hibernate to plug in various cache providers 
+    -->
+    <dependency>
+      <groupId>javax.cache</groupId>
+      <artifactId>cache-api</artifactId>
+      <version>1.1.1</version>
+    </dependency>
+
+    <!-- EhCache 3.x: a production-grade JCache-compliant caching provider
+         This is the actual implementation used behind the JSR-107 (JCache) API 
+    -->
+    <dependency>
+      <groupId>org.ehcache</groupId>
+      <artifactId>ehcache</artifactId>
+      <version>3.10.8</version>
+    </dependency>
+
+    <!-- Optional (but useful): Allows Hibernate to auto-discover JCache configuration 
+         Not required in all setups, but improves integration in Spring Boot 
+    -->
+    <dependency>
+      <groupId>org.hibernate</groupId>
+      <artifactId>hibernate-jcache</artifactId>
+      <version>${hibernate.version}</version> <!-- Match your Hibernate version -->
+    </dependency>
+
+
+
+
   </dependencies>
 
 
