@@ -1,7 +1,10 @@
 package com.fhi.pet_clinic.model;
 
+import jakarta.annotation.Nullable;
 import jakarta.persistence.*;
-
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotNull;
 import lombok.Setter;
 import lombok.Getter;
 
@@ -11,6 +14,7 @@ import lombok.Getter;
 @Setter
 public class Species 
 {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -18,35 +22,36 @@ public class Species
     /**
      * e.g. "Dog", "Cat", "Dragon", "Hybrid"
      */
+    @NotNull
     private String name;
 
     /**
-     * In years
+     * Fertility window in years during which a pet of this species can reproduce
      */
-    private int maturityAge; 
+    @NotNull
+    @Embedded  // Hibernate inlines the fields of FertilityAgeWindow into the species table.
+               // No join, no foreign key — it's composition, not association.
+               // => species table will have columns "from" and "to"
+    private FertilityAgeWindow fertilityAgeWindow;
 
     /**
-     * In years
+     * In years.
      */
-    private int defaultLifespan;
+    @NotNull
+    @Min(1)
+    @Max(200)
+    private int expectedLifespan;
 
-
+    @NotNull
     private boolean hybridAllowed = false;
 
-    private int avgLitterSize; 
+    @NotNull
+    private int avgLitterSize;
+
+
 
     // Optional: trait constraints, color palette...
-
-
-    // --- Convenience constructor ---
-    public Species() {}
-
-    public Species(String name, int maturityAge, boolean hybridAllowed) 
-    {
-        this.name = name;
-        this.maturityAge = maturityAge;
-        this.hybridAllowed = hybridAllowed;
-    }
+    // TODO 
 
 
 }

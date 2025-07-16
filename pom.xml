@@ -23,10 +23,12 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-data-jpa</artifactId>
     </dependency>
+
     <dependency>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-web</artifactId>
     </dependency>
+
     <!-- 
       Validation Support for Spring Boot
 
@@ -48,26 +50,40 @@
       <artifactId>h2</artifactId>
       <scope>runtime</scope>
     </dependency>
+
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>
     </dependency>
+
+    <!-- Avoids having to generate boilerplate code by autogenerating it.
+         No need to specify version it is managed by the spring boot parent.
+    -->
     <dependency>
-      <!-- Lombok (avoids having to generate boilerplate code by autogenerating it)-->
-      <!-- No need to specify version it is managed by the spring boot parent -->
       <groupId>org.projectlombok</groupId>
       <artifactId>lombok</artifactId>
       <optional>true</optional>
     </dependency>
-    <!-- To read the json file with owners and pets -->
+
+    <!-- To read json files -->
     <dependency>
         <groupId>com.fasterxml.jackson.core</groupId>
         <artifactId>jackson-databind</artifactId>
         <!--<version>2.17.1</version> <!- - or latest stable -->
     </dependency>
 
-
+    <!--  Adds support for Java 8 Date & Time API types (e.g. LocalDate, LocalDateTime) in Jackson
+          Why it's needed:
+          - Jackson by default cannot serialize/deserialize Java 8 date/time types.
+          - Without this, you get exceptions like:
+              com.fasterxml.jackson.databind.exc.InvalidDefinitionException: Java 8 date/time type `java.time.LocalDate` not supported by default
+          This module must be registered on your ObjectMapper manually (unless Spring Boot auto-config does it).
+    -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.datatype</groupId>
+      <artifactId>jackson-datatype-jsr310</artifactId>
+    </dependency>
 
   </dependencies>
 

@@ -6,6 +6,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.TestExecutionListeners;
@@ -35,10 +36,26 @@ import com.fhi.pet_clinic.fixtures_fmwk.Fixtures;
 // That context is shared across all test methods in the class.
 @SpringBootTest
 
+// This tells Spring to destroy and recreate the entire application context after the test class.
+// It’s heavy (slow), but guarantees a clean state.
+// Use case:
+// - You don’t want to write manual purging logic.
+// - You're OK with slower test startup.
+//# @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
+
+// Also remember that:
+// If using an in-memory H2 database (which is often the case for Integration testing)
+// with spring.jpa.hibernate.ddl-auto=create-drop, then:
+// - the database is created from scratch before each test class
+// - it is automatically dropped afterward
+
 // Ensures JUnit uses a single instance of the test class => the same instance is reused
 // for all test methods, which enables @BeforeAll methods to be non-static (and lets 
 // you carry state between tests if needed).
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+
+// Automatically configures MockMvc for testing HTTP endpoints
+@AutoConfigureMockMvc
 
 // Ensures each test method runs in a transaction that is rolled back after the test.
 // This guarantees that fixture data does not leak across tests.

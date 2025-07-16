@@ -22,15 +22,15 @@ import lombok.extern.slf4j.Slf4j;
 
 
 // Declares a Spring Boot integration test with transactional fixture-based data loading
- @SpringFixtureTest
+@SpringFixtureTest
 
 // Loads the JSON fixtures for the given entities, in the given order.
 // With PER_CLASS lifecycle, fixtures are loaded once per class and cleaned via rollback.
- @Fixtures(value = { Species.class, Owner.class, Pet.class }, lifecycle = Fixtures.Lifecycle.PER_CLASS)
+@Fixtures(value = { Species.class, Owner.class, Pet.class }, 
+          lifecycle = Fixtures.Lifecycle.PER_CLASS)
 
 // Ensures test methods are run in a specific order using @Order(n)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
-
 
 @Slf4j
 class SpringFixtureLoaderTest 
@@ -48,7 +48,7 @@ class SpringFixtureLoaderTest
    }
 
 
-    @DisplayName("Verify the fixture loading mechanism")
+    @DisplayName("Verify the fixture loading mechanism.")
     @Test
     @Order(1)
     void printLoadedFixtures() 

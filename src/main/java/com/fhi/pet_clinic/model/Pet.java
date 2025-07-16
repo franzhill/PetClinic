@@ -33,12 +33,14 @@ public class Pet
     @Size(max = 50)
     private String name;
 
-
     @NotNull
     @ManyToOne                       // owning side
     @JoinColumn(name = "owner_id")   // FK in table employee. Can be omitted. If so, JPA auto-generates the foreign key column name using a naming convention.
     private Owner owner;
 
+    /**
+     * LocalDate is the "modern" Java type to use for dates.
+     */
     @Nullable // might not be known
     private LocalDate birthDate;
 
@@ -65,38 +67,50 @@ public class Pet
     // --- Genetic traits ---
 
     /** 
-     * The higher the degeneracy the higher the sterility
+     * Higher means probable sterility, reduced health & lifespan
      */
+    @Nullable // might not be known
     @Min(0)
     @Max(100)
-    private int degeneracyScore = 0;
+    private Integer degeneracyScore = 0;
 
-    private boolean sterile = false;
+    @Nullable // might not be known
+    private Boolean sterile = false;
 
-    /**
-     * In years
-     */
-    @Min(1)
-    @Max(200)
-    private int expectedLifespan = 14;
 
     private String coatColor;
 
     private String eyeColor;
 
-    private boolean hasWings;
 
 
+    public boolean isAgeUnknown()
+    {   return birthDate == null;
+    }
 
-    // --- Derived logic ---
+    public int getAgeInYears() 
+    {   // TODO handle the case where age of Pet is unknown
+        // For the time being just assume he's at half expectancy of his Species avg lifespan
 
-    public int getAgeInYears() {
+        if (isAgeUnknown())
+        {   return this.getSpecies() != null ? this.getSpecies().getExpectedLifespan() / 2 : 1;
+        }
+        
         return Period.between(birthDate, LocalDate.now()).getYears();
     }
 
-    public boolean isMature() {
-        return getAgeInYears() >= species.getMaturityAge();
+
+    /**
+     * Pet is fertile if its age falls within its fertility age window.
+     */
+    public boolean isFertile() 
+    {   int age = this.getAgeInYears();
+        var window = this.getSpecies().getFertilityAgeWindow();
+        return    age >= window.getFrom() 
+               && age <= window.getTo()
+               && ! Boolean.FALSE.equals(this.getSterile());  // assume possible fertility if sterility is not known
     }
+
 
     public boolean isMale() {
         return sex == Sex.MALE;
@@ -106,9 +120,9 @@ public class Pet
         return sex == Sex.FEMALE;
     }
 
-    public boolean isAlive(LocalDate currentDate) {
-        return Period.between(birthDate, currentDate).getYears() < expectedLifespan;
-    }
+
+
+
 
     // --- Optional: convenience methods ---
 

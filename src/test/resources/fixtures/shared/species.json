@@ -1,33 +1,77 @@
+// This JSON file contains species entities fully compatible with the Species entity class
+// Fertility age is now represented as a window (from/to)
 
 [
   {
     "id": 1,
     "name": "Dog",
-    "maturityAge": 1,
-    "hybridAllowed": true
+    "fertilityAgeWindow": { "from": 1, "to": 10 },
+    "expectedLifespan": 15,
+    "hybridAllowed": true,
+    "avgLitterSize": 4
   },
   {
     "id": 2,
     "name": "Cat",
-    "maturityAge": 1,
-    "hybridAllowed": true
+    "fertilityAgeWindow": { "from": 1, "to": 12 },
+    "expectedLifespan": 16,
+    "hybridAllowed": true,
+    "avgLitterSize": 3
   },
   {
     "id": 3,
     "name": "Dragon",
-    "maturityAge": 3,
-    "hybridAllowed": false
+    "fertilityAgeWindow": { "from": 3, "to": 100 },
+    "expectedLifespan": 120,
+    "hybridAllowed": false,
+    "avgLitterSize": 1  // Rarely lays eggs
   },
   {
     "id": 4,
     "name": "Hamster",
-    "maturityAge": 0,
-    "hybridAllowed": false
+    "fertilityAgeWindow": { "from": 0, "to": 2 },
+    "expectedLifespan": 3,
+    "hybridAllowed": false,
+    "avgLitterSize": 8  // Rodents often have large litters
   },
   {
     "id": 5,
     "name": "Hybrid",
-    "maturityAge": 2,
-    "hybridAllowed": false
+    "fertilityAgeWindow": { "from": 2, "to": 7 },
+    "expectedLifespan": 10,
+    "hybridAllowed": false,
+    "avgLitterSize": 2
+  },
+  {
+    "id": 6,
+    "name": "Fox",
+    "fertilityAgeWindow": { "from": 2, "to": 8 },
+    "expectedLifespan": 12,
+    "hybridAllowed": false,
+    "avgLitterSize": 5
+  },
+  {
+    "id": 7,
+    "name": "Parrot",
+    "fertilityAgeWindow": { "from": 4, "to": 40 },
+    "expectedLifespan": 50,
+    "hybridAllowed": true,
+    "avgLitterSize": 2  // Birds usually have small clutches
+  },
+  {
+    "id": 8,
+    "name": "Turtle",
+    "fertilityAgeWindow": { "from": 10, "to": 80 },
+    "expectedLifespan": 100,
+    "hybridAllowed": false,
+    "avgLitterSize": 12  // Many hatchlings, low survival
+  },
+  {
+    "id": 9,
+    "name": "Griffin",
+    "fertilityAgeWindow": { "from": 5, "to": 60 },
+    "expectedLifespan": 80,
+    "hybridAllowed": false,
+    "avgLitterSize": 1  // Mythical, rare breeding
   }
 ]

@@ -56,7 +56,7 @@ public class GenericFixtureLoader
                 catch (Exception e) 
                 {   throw new RuntimeException(
                             String.format("While trying to deserialize entities of type %s from path %s", 
-                                          entityClass.getSimpleName(), path));
+                                          entityClass.getSimpleName(), path), e);
                 }
                 log.debug("About to save entities of type {} ...", entityClass.getSimpleName());
                 getRepository(entityClass).saveAll(entities);
