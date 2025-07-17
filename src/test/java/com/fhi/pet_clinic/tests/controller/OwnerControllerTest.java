@@ -20,7 +20,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fhi.pet_clinic.dto.OwnerDto;
-import com.fhi.pet_clinic.fixtures_fmwk.Fixtures;
+import com.fhi.pet_clinic.fixtures_fmwk.annotation.Fixtures;
 import com.fhi.pet_clinic.fixtures_fmwk.junitfixtureloader.FixtureExtension;
 import com.fhi.pet_clinic.model.Owner;
 import com.fhi.pet_clinic.model.Pet;

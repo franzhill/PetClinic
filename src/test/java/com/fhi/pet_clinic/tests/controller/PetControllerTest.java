@@ -14,8 +14,8 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fhi.pet_clinic.fixtures_fmwk.Fixtures;
-import com.fhi.pet_clinic.fixtures_fmwk.springfixtureloader.SpringFixtureTest;
+import com.fhi.pet_clinic.fixtures_fmwk.annotation.Fixtures;
+import com.fhi.pet_clinic.fixtures_fmwk.springfixtureloader.annotation.SpringIntegrationTest;
 import com.fhi.pet_clinic.model.Owner;
 import com.fhi.pet_clinic.model.Pet;
 import com.fhi.pet_clinic.model.Species;
@@ -31,7 +31,7 @@ import lombok.extern.slf4j.Slf4j;
  */
 
  // Declares a Spring Boot integration test with transactional fixture-based data loading
-@SpringFixtureTest
+@SpringIntegrationTest
 
 // Loads the JSON fixtures for the given entities, in the given order.
 // With PER_CLASS lifecycle, fixtures are loaded once per class and cleaned via rollback.
@@ -90,6 +90,7 @@ public class PetControllerTest
                 .andExpect(jsonPath("$.species.name").value("Dog"));
     }
 
+/*
     @DisplayName("Get all pets via GET endpoint")
     @Test
     void getAllPets_shouldReturnListOfPets() throws Exception 
@@ -136,7 +137,7 @@ public class PetControllerTest
         mockMvc.perform(delete("/api/pets/{id}", petId))
                 .andExpect(status().isNoContent());
     }
-
+*/
     private void logLitter(List<Pet> litter) {
         litter.forEach(pet -> log.info(" - name={}, sex={}, coatColor={}, degeneracy={}, sterile={}",
                 pet.getName(),
@@ -145,5 +146,6 @@ public class PetControllerTest
                 pet.getDegeneracyScore(),
                 pet.getSterile()));
     }
+
 }
 

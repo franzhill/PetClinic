@@ -1,19 +1,22 @@
-package com.fhi.pet_clinic.fixtures_fmwk.springfixtureloader;
+package com.fhi.pet_clinic.fixtures_fmwk.springfixtureloader.annotation;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.TestInstance;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestExecutionListeners;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.fhi.pet_clinic.config.SpringTestConfig;
-import com.fhi.pet_clinic.fixtures_fmwk.Fixtures;
+import com.fhi.pet_clinic.fixtures_fmwk.annotation.Fixtures;
+import com.fhi.pet_clinic.fixtures_fmwk.springfixtureloader.FixtureTestExecutionListener;
 
 
  /**
@@ -49,6 +52,12 @@ import com.fhi.pet_clinic.fixtures_fmwk.Fixtures;
 // - the database is created from scratch before each test class
 // - it is automatically dropped afterward
 
+// Activates the Spring 'test' profile.
+// This will make Spring Boot automatically pick up:
+// - application.yml
+// - and override with: application-test.yml
+@ActiveProfiles("test")
+
 // Ensures JUnit uses a single instance of the test class => the same instance is reused
 // for all test methods, which enables @BeforeAll methods to be non-static (and lets 
 // you carry state between tests if needed).
@@ -79,5 +88,20 @@ import com.fhi.pet_clinic.fixtures_fmwk.Fixtures;
 // In particular, this includes the GenericFixtureLoader and any related support infrastructure.
 @Import(SpringTestConfig.class)
 
-public @interface SpringFixtureTest {
-}
+// It is possible to filter by tag when running tests in Maven, Gradle, or your IDE.
+// For example, we could chose to run only fast unit tests by chosing only @Tag("smoke")
+//
+// It is possible to efine multiple tags by stacking multiple @Tag annotations on a class
+// or method:
+// E.g.:
+// @Tag("SpringIntegrationTest")
+// @Tag("Smoke")
+//
+// Usage examples:
+// - In Maven: mvn test -Dgroups=SpringIntegrationTest
+// - In Gradle: ./gradlew test --tests * --include-tag SpringIntegrationTest
+// - In IntelliJ: Edit Run Configuration → Tags → Include/Exclude specific tags
+@Tag("SpringIntegrationTest")
+
+public @interface SpringIntegrationTest 
+{}

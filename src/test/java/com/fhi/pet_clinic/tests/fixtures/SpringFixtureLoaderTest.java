@@ -10,8 +10,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 
-import com.fhi.pet_clinic.fixtures_fmwk.Fixtures;
-import com.fhi.pet_clinic.fixtures_fmwk.springfixtureloader.SpringFixtureTest;
+import com.fhi.pet_clinic.fixtures_fmwk.annotation.Fixtures;
+import com.fhi.pet_clinic.fixtures_fmwk.springfixtureloader.annotation.SpringIntegrationTest;
 import com.fhi.pet_clinic.model.Owner;
 import com.fhi.pet_clinic.model.Pet;
 import com.fhi.pet_clinic.model.Species;
@@ -22,7 +22,7 @@ import lombok.extern.slf4j.Slf4j;
 
 
 // Declares a Spring Boot integration test with transactional fixture-based data loading
-@SpringFixtureTest
+@SpringIntegrationTest
 
 // Loads the JSON fixtures for the given entities, in the given order.
 // With PER_CLASS lifecycle, fixtures are loaded once per class and cleaned via rollback.

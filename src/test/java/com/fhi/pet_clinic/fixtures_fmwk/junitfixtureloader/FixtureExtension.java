@@ -8,8 +8,8 @@ import org.junit.jupiter.api.extension.BeforeEachCallback;
 import org.junit.jupiter.api.extension.ExtensionContext;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
 
-import com.fhi.pet_clinic.fixtures_fmwk.Fixtures;
 import com.fhi.pet_clinic.fixtures_fmwk.GenericFixtureLoader;
+import com.fhi.pet_clinic.fixtures_fmwk.annotation.Fixtures;
 
 /**
  * JUnit 5 extension that integrates the fixture loading mechanism.

@@ -12,14 +12,13 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/pets")
-public class PetController {
-
+public class PetController 
+{
    private final PetService petService;
 
    // Constructor autowiring
    public PetController(PetService petService) 
-   {
-      this.petService = petService;
+   {  this.petService = petService;
    }
 
 

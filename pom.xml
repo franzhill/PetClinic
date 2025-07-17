@@ -33,12 +33,15 @@
       Validation Support for Spring Boot
 
       This starter provides:
-      - jakarta.validation-api (for annotations like @NotNull, @Size, @Min, etc.)
+      - jakarta.validation-api (for annotations like @NotNull, @Size, @Min, etc.)       
       - hibernate-validator (the runtime implementation)
-      - automatic Spring integration for @Valid in controllers, services, and test contexts
+      - automatic Spring integration for @Valid in controllers, services, 
+        and test contexts
 
-      Recommended: use this instead of declaring jakarta.validation-api and hibernate-validator manually.
-      Do NOT combine with javax.validation.* — Spring Boot 3+ uses jakarta.* namespace.
+      Recommended: use this instead of declaring jakarta.validation-api and 
+      hibernate-validator manually.
+      Do NOT combine with javax.validation.* — Spring Boot 3+ uses jakarta.* 
+      namespace.
     -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
@@ -77,8 +80,10 @@
           Why it's needed:
           - Jackson by default cannot serialize/deserialize Java 8 date/time types.
           - Without this, you get exceptions like:
-              com.fasterxml.jackson.databind.exc.InvalidDefinitionException: Java 8 date/time type `java.time.LocalDate` not supported by default
-          This module must be registered on your ObjectMapper manually (unless Spring Boot auto-config does it).
+              com.fasterxml.jackson.databind.exc.InvalidDefinitionException: 
+              Java 8 date/time type `java.time.LocalDate` not supported by default
+          This module must be registered on your ObjectMapper manually (unless Spring Boot 
+          auto-config does it).
     -->
     <dependency>
       <groupId>com.fasterxml.jackson.datatype</groupId>
@@ -86,7 +91,10 @@
     </dependency>
 
     <!-- Hibernate second-level caching support via JCache (JSR-107) 
-         This is the standard cache abstraction used by Hibernate to plug in various cache providers 
+         This is the standard cache abstraction used by Hibernate to plug in 
+         various cache providers .
+         Spring Boot will automatically detect the JCache API (javax.cache) 
+         and its EhCache implementation (ehcache) if both are on the classpath.
     -->
     <dependency>
       <groupId>javax.cache</groupId>
@@ -100,7 +108,7 @@
     <dependency>
       <groupId>org.ehcache</groupId>
       <artifactId>ehcache</artifactId>
-      <version>3.10.8</version>
+      <version>3.10.8</version>  <!-- ehcache should be 3.x — version 3.10.8 is stable as of mid-2025 -->
     </dependency>
 
     <!-- Optional (but useful): Allows Hibernate to auto-discover JCache configuration 
@@ -109,10 +117,8 @@
     <dependency>
       <groupId>org.hibernate</groupId>
       <artifactId>hibernate-jcache</artifactId>
-      <version>${hibernate.version}</version> <!-- Match your Hibernate version -->
+      <version>${hibernate.version}</version> <!-- should match hibernate-core version (check BOM or parent POM) -->
     </dependency>
-
-
 
 
   </dependencies>

@@ -8,8 +8,8 @@ import org.springframework.test.context.TestContext;
 import org.springframework.test.context.support.AbstractTestExecutionListener;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.fhi.pet_clinic.fixtures_fmwk.Fixtures;
 import com.fhi.pet_clinic.fixtures_fmwk.GenericFixtureLoader;
+import com.fhi.pet_clinic.fixtures_fmwk.annotation.Fixtures;
 
 import lombok.extern.slf4j.Slf4j;
 

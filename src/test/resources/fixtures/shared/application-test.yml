@@ -1,0 +1,39 @@
+# ========================================================================
+# Spring Boot application configuration for the "test" profile
+# Used during integration testing with @SpringBootTest or similar
+# 
+# This file is automatically picked up by Spring Boot when the 'test'
+# profile is active — typically via:
+# - @ActiveProfiles("test") on your test class
+# - Or by passing -Dspring.profiles.active=test to the JVM
+#
+# If no active profile is specified, this file is NOT loaded.
+#
+# ========================================================================
+
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=false
+    driverClassName: org.h2.Driver
+    username: sa
+    password:
+
+  jpa:
+    show-sql: true  # Logs SQL statements during tests — useful for debugging or verifying queries
+
+    hibernate:
+      ddl-auto: create-drop  # Creates the schema at startup and drops it at shutdown
+                             # Ideal for integration testing with in-memory DB
+
+      cache:
+        # Why disable cache in integration tests:
+        #  1. Tests should verify actual DB persistence and retrieval — not cache hits
+        #  2. Caches can introduce state leakage between tests
+        #  3. Rollbacks or mocks may not invalidate cache content
+        #  4. Simpler and faster test startup
+        #
+        # When NOT to disable cache:
+        # - When specifically testing cache behavior or performance
+        use_second_level_cache: false
+        use_query_cache: false
+
