@@ -10,7 +10,7 @@ $ mvn surefire:test -Dtest=SpringFixtureLoaderTest -Djunit.platform.output.captu
 
 Validation
 =============================================
-Correct — in Bean Validation (jakarta.validation) there is no annotation that explicitly
+In Bean Validation (jakarta.validation) there is no annotation that explicitly
 means "nullable."
 
 The absence of @NotNull is the standard way to indicate that a field is allowed to be null.
@@ -42,11 +42,11 @@ Answer: both technically work, but the second one is the better and safer practi
 
 Reason                             Explanation
 ------------------------------+-------------------------------------------------
-Explicit	                          You state exactly how IDs are generated (by the DB using AUTO_INCREMENT-style behavior)
+Explicit	                        You state exactly how IDs are generated (by the DB using AUTO_INCREMENT-style behavior)
 More portable	                    Makes behavior predictable across different DBs or ORM tools
-Easier debugging	                 You immediately know this is using identity columns
-Consistent with SQL defaults	     SQL Server, MySQL, and PostgreSQL handle IDENTITY cleanly and efficiently
-The default (AUTO)                 Might use a sequence, table, or identity depending on the DB, which can lead to subtle bugs or inefficiencies
+Easier debugging	                You immediately know this is using identity columns
+Consistent with SQL defaults	    SQL Server, MySQL, and PostgreSQL handle IDENTITY cleanly and efficiently
+The default (AUTO)                  Might use a sequence, table, or identity depending on the DB, which can lead to subtle bugs or inefficiencies
 
 
 

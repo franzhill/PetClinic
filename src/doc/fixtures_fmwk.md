@@ -1,6 +1,6 @@
 # Fixture Loading Mechanism for Integration Tests
 
-This package I am currently working on aims at providing a structured and flexible 
+The fixture framework I am currently working on aims at providing a structured and flexible 
 mechanism for loading test fixtures into the database during (before) integration 
 tests.
 
@@ -16,9 +16,9 @@ So there are **two distinct possible strategies**.
 
 
 
-## 1. Spring Transactional Fixture Loading (Recommended)
+## > 1. Spring Transactional Fixture Loading (Recommended)
 
-### Summary
+### >> Summary
 
 Fixtures are loaded *inside the Spring context* and *within the test transaction*, so that:
 
@@ -26,7 +26,7 @@ Fixtures are loaded *inside the Spring context* and *within the test transaction
 - No manual purge is needed
 - Test classes remain clean and isolated
 
-### How to use
+### >> How to use
 
 ```java
 @SpringFixtureTest
@@ -49,7 +49,7 @@ Alternatively, if you prefer not to use the meta-annotation:
 class MyIntegrationTest { ... }
 ```
 
-### Meta-annotation
+### >> Meta-annotation
 
 A shortcut to encapsulate all the boilerplate exists:
 
@@ -66,7 +66,7 @@ public @interface SpringFixtureTest {}
 ```
 
 
-### Loading lifecycle
+### >> Loading lifecycle
 
 Optional control is given on when the fixtures are loaded with `Fixtures.Lifecycle` (`PER_METHOD` or `PER_CLASS`)
   The default  is `PER_METHOD`.  
@@ -87,16 +87,16 @@ Example:
 
 
 
-## 2. JUnit Fixture Loading (first strategy I developped)
+## > 2. JUnit Fixture Loading (first strategy I developped)
 
-### Summary
+### >> Summary
 
 Fixtures are loaded using a JUnit 5 extension that hooks into `@BeforeEach` or `@BeforeAll`.
 This is the first strategy that I developed, however it does not natively support "purging"
 the DB after each test. This can be done, but I haven't got round to it, since the Spring 
 transactional strategy seemed better.
 
-### How to use
+### >> How to use
 
 ```java
 @ExtendWith(FixtureExtension.class)
@@ -106,12 +106,12 @@ class MyTest {
 }
 ```
 
-### Loading lifecycle
+### >> Loading lifecycle
 
 Optional control is given on when the fixtures are loaded with `Fixtures.Lifecycle` (`PER_METHOD` or `PER_CLASS`)
   The default  is `PER_METHOD`.
 
-### Purging
+### >> Purging
 
 Since there's no rollback or DB purging, cleanup must be managed "by hand" if needed
 
@@ -121,7 +121,7 @@ Since there's no rollback or DB purging, cleanup must be managed "by hand" if ne
 <br />
 
 
-## 3. Common to both: Fixture Configuration
+## > 3. Common to both: Fixture Configuration
 
 Fixtures are declared in JSON and stored in:
 
@@ -147,7 +147,7 @@ Fixtures must be listed in the correct order if there are relationships:
 <br />
 
 
-## 4. Comparison between the two
+## > 4. Comparison between the two
   
 <br />
 
