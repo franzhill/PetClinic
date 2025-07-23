@@ -1,0 +1,140 @@
+package com.fhi.pet_clinic.tools;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+import lombok.extern.slf4j.Slf4j;
+import net.ttddyy.dsproxy.ExecutionInfo;
+import net.ttddyy.dsproxy.QueryInfo;
+import net.ttddyy.dsproxy.listener.QueryExecutionListener;
+
+/**
+ * Query execution listener for datasource-proxy.
+ *
+ * This listener logs every SQL statement executed by the application,
+ * including its execution time and the Java method (class, line number)
+ * that triggered it. This is particularly useful for tracing N+1 queries,
+ * diagnosing slow SQL, and debugging unexpected query patterns.
+ *
+ * It works well in local/dev environments when integrated with a
+ * proxied {@code DataSource} via {@link net.ttddyy.dsproxy.support.ProxyDataSourceBuilder}.
+ *
+ * Note: For performance and log readability, consider adding a threshold
+ * to skip logging fast queries, or log only those exceeding a certain duration.
+ */
+@Slf4j
+public class ProfilingQueryExecutionListener implements QueryExecutionListener 
+{
+   private final boolean enabled;
+   private final String logLinePrefix;
+
+    /**
+     * 
+     * @param enabled
+     * @param logPrefix prefix putput logged lines with this to make searching ore reading easier.
+     */
+    public ProfilingQueryExecutionListener(boolean enabled, String logLinePrefix) 
+    {   this.enabled = enabled;
+        this.logLinePrefix = logLinePrefix;
+    }
+
+   /**
+    * Callback executed **after** each SQL query has run, allowing inspection and logging of query execution details.
+    * 
+    * <p>This method is invoked by the datasource-proxy library and provides access to:
+    *   - Execution metadata (duration, success/failure, etc.) via {@code execInfo}
+    *   - One or more SQL statements involved in the operation via {@code queryInfoList}
+    * 
+    * <p>If SQL profiling is enabled, it logs:
+    *   - Total execution time in milliseconds
+    *   - Raw SQL query (formatted multiline)
+    *   - The Java class, method, and line number that triggered the query
+    *
+    * <p>{@link #findApplicationCaller()} is used to locate the first stack frame belonging to the application
+    * (i.e. not internal proxy code), and reflectively extract the simple class name to produce clean logs like:
+    * <pre>
+    *     PROFILING--- in [CustomerQueryServiceImpl:findAllAccountByBu:70], executed SQL request in 4 ms:
+    *     SELECT * FROM customer WHERE ...
+    * </pre>
+    *
+    * @param execInfo      metadata about the SQL execution (timing, success, etc.)
+    * @param queryInfoList list of queries executed (typically one per JDBC call, but could be multiple)
+    */
+    @Override
+    public void afterQuery(ExecutionInfo execInfo, List<QueryInfo> queryInfoList) 
+    {   
+      if (!enabled) return;
+
+      long elapsedTime = execInfo.getElapsedTime();
+
+      String combinedSql = queryInfoList.stream()
+                .map(QueryInfo::getQuery)
+                .collect(Collectors.joining("\n"));
+
+      StackTraceElement caller = findApplicationCaller();
+
+      try 
+      {  log.info("{} in [{}:{}:{}], executed SQL request in {} ms: \n{}",
+                   logLinePrefix,
+                   Class.forName(caller.getClassName()).getSimpleName(),
+                   caller.getMethodName(),
+                   caller.getLineNumber(),
+                   elapsedTime,
+                   combinedSql);
+      } 
+      catch (ClassNotFoundException e) 
+      {  // shouldn't happen since we're getting class names from the running stack trace
+         log.warn("ClassNotFoundException while trying to print profiling logs: {}", e.getMessage());
+      }
+    }
+
+
+   /**
+    * Attempts to identify the first meaningful application-level stack frame
+    * that triggered the SQL execution, skipping internal proxy and listener code.
+    *
+    * <p>This is used for logging purposes to trace SQL queries back to the Java class
+    * and method that caused them, excluding infrastructure layers such as
+    * {@link ProfilingQueryExecutionListener} and proxy mechanisms.
+    *
+    * @return the first {@link StackTraceElement} matching application code, or a placeholder if none found.
+    */
+   private StackTraceElement findApplicationCaller() 
+   {
+      boolean foundProfiler = false;
+
+      for (StackTraceElement element : Thread.currentThread().getStackTrace()) {
+         String className = element.getClassName();
+
+         // Skip internal and proxy classes
+         if (!foundProfiler) 
+         {  // Wait until we've passed this class (ProfilingQueryExecutionListener)
+            foundProfiler = className.equals(ProfilingQueryExecutionListener.class.getName());
+            continue;
+         }
+
+         // Look for real application code
+         if (     className.startsWith("com.fhi.pet_clinic")  // TODO extract in application.yml
+              && !className.contains("DataSourceProxy") // defensive filter to exclude synthetic or internal 
+                                                          // classes generated by the datasource proxy library
+                                                          // such as:
+                                                          //  com.zaxxer.hikari.pool.ProxyConnection
+                                                          //  net.ttddyy.dsproxy.*
+                                                          //  or Spring-generated proxies with names like DataSource$$EnhancerBySpringCGLIB.
+              && !className.equals(ProfilingQueryExecutionListener.class.getName())) 
+          {
+             return element;
+         }
+      }
+
+      return new StackTraceElement("NOT com.fhi.pet_clinic.*", "unknown", "unknown", -1);
+   }
+
+
+
+    @Override
+    public void beforeQuery(ExecutionInfo execInfo, List<QueryInfo> queryInfoList) 
+    {
+        // No action needed before query execution
+    }
+}

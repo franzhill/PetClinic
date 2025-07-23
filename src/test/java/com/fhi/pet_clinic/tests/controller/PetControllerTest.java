@@ -78,7 +78,7 @@ public class PetControllerTest
     void createPet_shouldReturnCreatedPet() throws Exception {
         Pet newPet = new Pet();
         newPet.setName("Fido");
-        newPet.setSpecies(new Species("Dog"));
+        //newPet.setSpecies(new Species("Dog"));
 
         String json = objectMapper.writeValueAsString(newPet);
 

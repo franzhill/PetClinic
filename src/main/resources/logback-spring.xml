@@ -25,6 +25,15 @@
   gray
   bold and faint modifiers can also be added.
   -->
+  <!-- Relative to the JVM working directory, i.e. the directory from which the 
+       Spring Boot app is launched.
+       Probably best to use an absolute path
+   -->
+  <property name="LOG_FILE" value="${LOG_FILE_PATH:-logs/petclinic.log}"/>
+  <property name="LOG_FILE_MAX_HISTORY" value="7"/>
+  <property name="LOG_FILE_MAX_SIZE" value="10MB"/>
+
+
 
   <!-- Console appender with caller data enabled to use file/line/method -->
   <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
@@ -34,9 +43,29 @@
     </encoder>
   </appender>
 
+  <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <includeCallerData>true</includeCallerData>
+    <file>${LOG_FILE}</file>
+    <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+      <fileNamePattern>logs/application.%d{yyyy-MM-dd}.log</fileNamePattern>
+      <!-- 	How many days of log files to keep when using TimeBasedRollingPolicy.
+            This tells Logback to keep X rolled log files (=> one per day if X=7, 
+            and you're using a daily TimeBasedRollingPolicy). 
+            So after X days, older log files like myebcs.2025-07-13.log will be deleted automatically.  
+      -->
+      <maxHistory>${LOG_FILE_MAX_HISTORY}</maxHistory>
+    </rollingPolicy>
+    <encoder>
+      <pattern>${LOG_PATTERN}</pattern>
+    </encoder>
+  </appender>
+
+
+
   <!-- Root logger configuration -->
   <root level="INFO">
     <appender-ref ref="CONSOLE" />
+    <appender-ref ref="FILE" />
   </root>
 
 </configuration>

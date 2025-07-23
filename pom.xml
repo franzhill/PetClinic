@@ -120,6 +120,18 @@
       <version>${hibernate.version}</version> <!-- should match hibernate-core version (check BOM or parent POM) -->
     </dependency>
 
+    <!-- Datasource Proxy: Intercepts JDBC calls to log SQL, parameters,
+          execution times, and caller stack traces. 
+          Used for profiling performance and tracking
+          N+1 queries, slow queries, and tracing SQL back to Java methods.
+    -->
+    <dependency>
+        <groupId>net.ttddyy</groupId>
+        <artifactId>datasource-proxy</artifactId>
+        <version>1.9</version>
+    </dependency>
+
+
 
   </dependencies>
 
