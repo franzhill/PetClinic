@@ -61,7 +61,7 @@ public class PerformanceProfiler
     /**
      * When logging the joinPoint i.e. the method we're profiling, 
      * also print the arguments it was called with.
-     * Warning: don't log them unless needed — some args might be sensitive or huge.
+     * Hint: don't log them unless needed — some args might be sensitive or huge.
      */
     private static final boolean PRINT_ARGS_FOR_JOIN_POINT = false;
 
@@ -120,8 +120,6 @@ public class PerformanceProfiler
             String[] queries = stats.getQueries();
 
 
-            //#String joinPointInfo = joinPoint.getSignature();
-
             // Print info on the method (join point) that is being profiled:
 
             // Instead of printing full object contents (which might be large or sensitive),
@@ -145,20 +143,6 @@ public class PerformanceProfiler
                      joinPointPrint
             );
 
-/*
-Optional<String> slowestQuery = Arrays.stream(queries)
-    .max(Comparator.comparingDouble(stats::getQueryExecutionMaxTime));
-
-slowestQuery.ifPresent(q -> log.warn("Slowest query: [{}] took {} ms", q, stats.getQueryExecutionMaxTime(q)));
-
-
-            log.debug("Longest query: {}", stats.getQueryExecutionMaxTimeQuery());
-
-            log.debug("Query count: {}, Slowest: [{}] in {} ms",
-                    stats.getQueryExecutionCount(),
-                    stats.getQueryExecutionMaxTimeQuery(),
-                    stats.getQueryExecutionMaxTime());
-*/
 
             if (queryCount > 10) 
             {   log.debug("Top queries: {}", Arrays.stream(queries).limit(2).toList());

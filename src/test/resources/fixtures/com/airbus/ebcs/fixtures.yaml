@@ -1,0 +1,26 @@
+
+
+fixtures:
+  - name: common.create_bcs
+    method: POST
+    endpoint: /businessContractSheet
+    # Optional.
+    # Accepts int, list of ints, "2xx"/"4xx", "200-204", "200,204".
+    expectedStatus: 201
+    payload:  >
+      {
+        "contractualStep": [70],
+        "subregionId": 1,
+        "buyers": ["1-12A-1965", "1-10D6XL"],
+        "contracts": []
+      }
+    # Save variables in accessible variables.
+    # List of varaname: json path inside the return payload
+    save: 
+      bcsId_1: $.id
+
+  - name: common.delete_bcs
+    method: DELETE
+    endpoint: /businessContractSheet/{{bcsId_1}}/delete
+    expectedStatus: 200
+

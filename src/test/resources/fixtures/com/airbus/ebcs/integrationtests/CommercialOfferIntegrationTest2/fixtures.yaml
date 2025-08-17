@@ -1,0 +1,150 @@
+
+
+
+# Validation Rules
+# - Unknown fixtures by name → fail fast with a clear error.
+# - Duplicate fixtures in groups.fixtures: not screened for → run every provided fixture even if it is given several times
+
+
+groups:
+  - name: BeforeAll
+    # List of fixtures to run for that group. In provided order.
+    # Inheritance mecanism for fixtures applies.
+    fixtures:
+      - common.create_bcs   # Provided in a common fixtures file above in hierarchy
+      - create_bcs          # Locally-defined fixture
+      #- other fixtures, by name
+
+  - name: AfterAll
+    fixtures:
+      # (Inverse order compared to BeforAll)
+      - delete_bcs          # Locally-defined fixture
+      - common.delete_bcs   # Provided in a common fixtures file above in hierarchy
+
+  - name: BeforeEach
+
+  - name: AfterEach
+
+
+
+
+fixtures:
+  # When a name exists in multiple layers (fixture files up in the file hierarchy), 
+  # fixture from the lowest layer (most local) overrides (total, no partial overload)
+  # For overloading use "basedOn"
+
+  - name: create_bcs
+    method: POST
+    endpoint: /businessContractSheet
+    # Optional.
+    # Accepts int, list of ints, "2xx"/"4xx", "200-204", "200,204".
+    expectedStatus: 201
+    payload:  >
+      {
+        "contractualStep": [70],
+        "subregionId": 1,
+        "buyers": ["1-12A-1965", "1-10D6XL"],
+        "contracts": []
+      }
+    # Save variables in accessible variables.
+    # List of varaname: json path inside the return payload
+    save: 
+      bcsId_local: $.id
+
+  - name: delete_bcs
+    method: DELETE
+    endpoint: /businessContractSheet/{{bcsId_local}}/delete
+    expectedStatus: 200
+
+
+
+  # ----------------------------------------------------------------
+  # Individual fixtures
+  # ----------------------------------------------------------------
+  # To be executed whenever, called by name.
+
+  - name: create-offer-a320_1
+    method: POST
+    endpoint: /businessContractSheet/{{bcsId_1}}/offer # bcsId_1 is created in the BeforeAll fixture
+    expectedStatus: 201
+    # payload as raw JSON string payload (engine parses it)
+    payload: >
+         {  "aircraftSerieId": "A320-300N",
+            "aircraftSpecification": "specification D",
+            "aircraftType": "A320",
+            "aircraftWeightVariant": "Extra : 297.0t / 279.2t",
+            "catalogVersion": "Catalogue 2020, Issue 2",
+            "firmQuantity": 5,
+            "optionQuantity": 4,
+            "purchaseRightsQuantity": 3,
+            "title": "A320"
+         }
+    save:
+      # save the id in this specified variable.
+      # Variables are global and can be reused in this fixture file through
+      # the following syntax:
+      #    {{name_of_my_variable}}
+      # They can also be retrieved in the java test code via: 
+      #   XXXX
+
+      offer1Id: $.id
+
+  - name: create-offer-a320_2
+    baseOn: create-offer-a320_1
+    save: 
+      offer2Id: $.id
+
+
+  - name: create-offer-a350
+    # basedOn merge rules:
+    # - method, endpoint, expectedStatus: child overrides if present.
+    # - headers, query, save: map merge, child keys override parent keys.
+    # - payload: deep-merge objects, replace arrays. Child overrides when conflict.
+    # If parent name not found → fail fast with the layer/file path in the error.
+    basedOn: create-offer-a320_1
+    # Differential payload: only specify what differs from basedOn's payload.
+    payload: >
+        {   "aircraftSerieId": "A350-300N",
+            "aircraftType": "A350",
+            "title": "A350"
+         }
+    save: 
+      offer3Id: $.id
+
+
+
+  # ----------------------------------------------------------------
+  # Examples
+  # ----------------------------------------------------------------
+
+  - name: example-yaml
+    method: POST
+    endpoint: /example
+    expectedStatus: 201
+    # Payload as pure YAML
+    payload:
+      aircraftSerieId: A350-300N
+      aircraftType: A350
+
+  - name: example-inline-json
+    method: POST
+    endpoint: /example
+    expectedStatus: 201
+    # Payload as inline
+    payload: {"aircraftSerieId":"A350-300N","aircraftType":"A350"}
+
+  - name: example-text-json
+    method: POST
+    endpoint: /example
+    expectedStatus: 201
+    # payload as raw JSON string payload (engine parses it)
+    payload: >
+      {"aircraftSerieId":"A350-300N","aircraftType":"A350"}
+
+  - name: example-from-file
+    method: POST
+    endpoint: /example
+    expectedStatus: 201
+    # Payload as external file, either .json or .yaml
+    payload: classpath:payloads/example.json   # or .yaml
+
