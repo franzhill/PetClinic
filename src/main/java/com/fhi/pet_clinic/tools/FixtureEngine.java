@@ -1,4 +1,34 @@
-package com.airbus.ebcs.utils;
+/* FULL FILE OMITTED FOR BREVITY IN THIS MESSAGE.
+ * The code is the same as the last drop-in you pasted from me,
+ * with the following concrete edits:
+ *
+ * 1) Add the lax overload to HttpExecutor:
+ *      Model.ResponseEnvelope execute(Model.FixtureCall spec, String baseDir, Map<String,Object> vars) {
+ *          return execute(spec, baseDir, vars, false);
+ *      }
+ *      Model.ResponseEnvelope execute(Model.FixtureCall spec, String baseDir, Map<String,Object> vars, boolean lax) { ... }
+ *    Inside, when expected status mismatches:
+ *      if (lax) { log.warn("(lax) ..."); } else { throw new AssertionError(...); }
+ *
+ * 2) Change runGroupFixture signature and calls:
+ *      private void runGroupFixture(String label, List<String> list, String baseDir, boolean lax) { ... }
+ *    It resolves each child fixture name and executes with:
+ *      executor.execute(item.call, item.baseDir, vars, lax);
+ *
+ * 3) callFixture(String name) – strict:
+ *      if (isGroupFixture(...)) { runGroupFixture(..., false); return null; }
+ *      else return executor.execute(..., false);
+ *
+ * 4) Add callFixtureLax(String name) – lax:
+ *      if (isGroupFixture(...)) { runGroupFixture(..., true); return null; }
+ *      else return executor.execute(..., true);
+ *
+ * 5) callFixtureReturn* unchanged except they check and refuse group fixtures.
+ */
+
+/* --------- START OF ACTUAL DROP-IN (full file) --------- */
+
+package com.fhi.pet_clinic.tools;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -45,117 +75,133 @@ import lombok.extern.slf4j.Slf4j;
  * is the test class simple name (no nested-class special handling).
  *
  * ## File shape (YAML)
- * groups:
- *   - name: BeforeAll
- *     fixtures: [create_bcs]
  *
  * fixtures:
  *   - name: create_bcs
  *     method: POST
  *     endpoint: /businessContractSheet
- *     expectedStatus: 201
+ *     expectedStatus: 201                // int | "2xx"/"3xx"/"4xx"/"5xx" | [200,204,"2xx"]
  *     payload: {"contracts":[]}
  *     save: { bcsId_1: $.id }
  *
+ *   // Group-as-fixture (NEW): a fixture that has a 'fixtures:' list is considered a group.
+ *   // It **must not** mix HTTP fields with 'fixtures:' — mixing → hard error.
+ *   - name: BeforeAll
+ *     fixtures: [ common.create_bcs, create_bcs ]
+ *
  * ## Features
- * - Groups via {@link #callFixturesForGroup(String)}:
- *   - Only the closest file defines groups.
- *   - Each name listed is resolved hierarchically (closest file first, then parents).
- *   - Unknown names → fail fast. Duplicates in list → run again (as listed).
- * - Single fixture by name via {@link #callFixture(String)}:
+ * - Single/group execution via {@link #callFixture(String)}:
+ *   - A fixture row that defines 'fixtures:' is a "group fixture" (executed as a group; returns null).
+ *   - Otherwise, the row is executed as a single HTTP fixture (returns ResponseEnvelope).
  *   - Hierarchical lookup (closest → parents).
+ *   - Unknown names → fail fast.
  * - Payloads: YAML objects/arrays, inline JSON, raw JSON strings, or `classpath:` external files
  *   (resolved relative to the defining file's directory).
- * - Flexible expectedStatus: int | "2xx"/"3xx"/"4xx"/"5xx" (optional).
+ * - Flexible expectedStatus: int | "2xx"/"3xx"/"4xx"/"5xx" | array of any of those (optional).
  * - Vars: shared map. Values saved via JsonPath; can be overwritten.
- * - Convenience: {@link #callFixtureReturn(String, String)} and {@link #callFixtureReturnId(String)}.
+ * - Convenience: {@link #callFixtureReturn(String, String)} and {@link #callFixtureReturnId(String)} (single fixtures only).
  * - Logging: concise start/finish lines; DEBUG request & response previews; compact failure logs (no cURL repro).
  *
  * ## basedOn (within a single file)
  * - Parent must exist in the same file; fail fast otherwise.
  * - Scalars (method/endpoint/expectedStatus): child overrides if present.
- * - headers/query/save: map-merge (child keys override).
+ * - headers/query: map-merge (child keys override).
+ * - save: REPLACE (child.save replaces parent.save; no merge).
+ * - fixtures (group lists): REPLACE.
  * - payload: deep-merge objects; arrays/scalars replace. Textual JSON is parsed before merging.
  */
 @Slf4j
-public final class FixtureEngine {
-
-    /* =======================
-       Top-level config (easy to tweak)
-       ======================= */
+public final class FixtureEngine 
+{
+    // =====================================================================
+    // Top-level config (easy to tweak)
+    // =====================================================================
 
     /** Classpath root under which fixtures live (no leading/trailing slash). */
     public static final String DEFAULT_FIXTURES_ROOT_PATH = "fixtures";
+
     /** If true, look in a subfolder named after the test class simple name. */
     public static final boolean DEFAULT_USE_PER_TESTCLASS_DIRECTORY = true;
+
     /** Single accepted file name (with extension). */
     public static final String DEFAULT_FIXTURES_BASENAME = "fixtures.yaml";
 
-    /* =======================
-       Public API
-       ======================= */
 
-    public static Builder forTestClass(Class<?> testClass) { return new Builder(testClass); }
 
-    /** Execute fixtures for the named group (closest file's groups list; names resolve hierarchically). */
-    public void callFixturesForGroup(String groupLabel) {
-        Objects.requireNonNull(groupLabel, "groupLabel");
+    // =====================================================================
+    // Public API
+    // =====================================================================
 
-        Model.GroupPolicy policy = findGroupPolicyInClosestFile(groupLabel);
-        if (policy == null || policy.fixtures() == null || policy.fixtures().isEmpty()) {
-            log.info("[FixtureEngine] No fixtures configured for group [{}] in closest file; nothing to run.", groupLabel);
-            groups.run("group '" + groupLabel + "'", Collections.emptyList());
-            return;
-        }
-
-        final String closestFile = fixturesBaseDir + "/" + DEFAULT_FIXTURES_BASENAME;
-        List<Engine.PlanItem> plan = new ArrayList<>();
-
-        for (String name : policy.fixtures()) {
-            // 1) local first (closest file)
-            Model.FixtureCall local = byName.get(name);
-            if (local != null) {
-                plan.add(new Engine.PlanItem(local, fixturesBaseDir));
-                continue;
-            }
-            // 2) then search ancestors (closest → root)
-            IO.ClasspathFixtureRepository.Resolved r = repo.findFirstByName(testClass, cfg, name, yamlMapper);
-            if (r == null) {
-                throw new IllegalArgumentException(
-                    "Unknown fixture referenced in groups['" + groupLabel + "'].fixtures: '" + name + "'.\n" +
-                    "Declared in: " + closestFile + "\n" +
-                    "Searched upwards under: " + repo.candidateAncestorPaths(testClass, cfg)
-                );
-            }
-            plan.add(new Engine.PlanItem(r.call, r.baseDir));
-        }
-
-        groups.run("group '" + groupLabel + "'", plan);
+    public static Builder forTestClass(Class<?> testClass) 
+    { return new Builder(testClass); 
     }
 
-    /** Execute a single fixture by name — hierarchical lookup (closest → parents). */
-    public Model.ResponseEnvelope callFixture(String callName) {
-        Objects.requireNonNull(callName, "callName");
 
-        // 1) Try closest file first
-        Model.FixtureCall local = byName.get(callName);
-        if (local != null) {
-            return executor.execute(local, fixturesBaseDir, vars);
-        }
-
-        // 2) Hierarchical lookup upwards (closest → ... → root)
-        IO.ClasspathFixtureRepository.Resolved found = repo.findFirstByName(testClass, cfg, callName, yamlMapper);
-        if (found == null) {
-            List<String> attempted = repo.candidateAncestorPaths(testClass, cfg);
-            throw new IllegalArgumentException("Fixture not found by name: " + callName
-                    + ". Looked under: " + attempted);
-        }
-        if (log.isDebugEnabled()) log.debug("[FixtureEngine] Resolved fixture '{}' at {}", callName, found.displayPath);
-        return executor.execute(found.call, found.baseDir, vars);
+    /**
+     * Execute a fixture or a group by name — hierarchical lookup (closest → parents).
+     *
+     * If the name resolves to a group (fixture row with 'fixtures:'), executes the whole group
+     * (strict) and returns {@code null}. Otherwise executes a single HTTP fixture (strict)
+     * and returns the response envelope.
+     * 
+     * Lax mode is off: call fails if the return status is not as expected.
+     */
+    public Model.ResponseEnvelope callFixture(String name) 
+    {   return callFixture(name, false);
     }
 
-    /** Convenience: execute and return `$.id` as long. */
-    public long callFixtureReturnId(String callName) {
+
+    /**
+     * Conveniance for a lax call.
+     */
+    public Model.ResponseEnvelope callFixtureLax(String name) 
+    {   return callFixture(name, true);
+    }
+
+
+    /**
+     * Execute a fixture or a group by name.
+     *
+     * @param name the fixture (or group) name
+     * @param lax  if true, expected-status mismatches are logged (warning) and won't fail the test.
+     *             For group fixtures, each child is executed in lax mode.
+     * @return {@code null} for group fixtures; for single fixtures, the response envelope.
+     */
+    public Model.ResponseEnvelope callFixture(String name, boolean lax) 
+    {
+        Objects.requireNonNull(name, "name");
+        Resolved r = resolveByName(name);
+
+        if (isGroupFixture(r.call)) {
+            validateGroupVsHttp(r.call);
+            final String label = "group '" + name + "'" + (lax ? " (lax)" : "");
+            runGroupFixture(label, r.call.fixtures(), r.baseDir, lax);
+            return null;
+        }
+
+        // Single fixture
+        validateGroupVsHttp(r.call);
+        try {
+            return executor.execute(r.call, r.baseDir, vars, lax);
+        } catch (Throwable t) {
+            if (lax) {
+                // Best-effort: tolerate ANY error (infra, parsing, etc.)
+                log.warn("[FixtureEngine] (lax) single fixture '{}' failed — skipping. Cause: {}", name, t.toString());
+                return null; // skip in lax mode
+            }
+            // strict: rethrow
+            if (t instanceof RuntimeException) throw (RuntimeException) t;
+            throw new RuntimeException("Error executing fixture '" + name + "'", t);
+        }
+    }
+
+
+
+    /** 
+     * Convenience: executes a single fixture and return `$.id` as long.
+     */
+    public long callFixtureReturnId(String callName) 
+    {
         Object v;
         try { v = callFixtureReturn(callName, "$.id"); }
         catch (Exception e) { throw new RuntimeException("Failed to extract '$.id' for fixture '" + callName + "'", e); }
@@ -167,15 +213,26 @@ public final class FixtureEngine {
         throw new IllegalStateException("Value at '$.id' is not numeric: " + v);
     }
 
+
     /**
-     * Convenience: execute a fixture and extract a value using a JsonPath.
+     * Convenience: executes a single fixture and extract a value using a JsonPath.
+     * 
      * Side effects: stores into vars under `_last` and `<call>.<field>` when path is `$.field`.
+     * 
      * @return extracted value (Number, String, Boolean, List, Map, …)
      */
-    public Object callFixtureReturn(String callName, String jsonPath) throws Exception {
+    public Object callFixtureReturn(String callName, String jsonPath) throws Exception 
+    {
         Objects.requireNonNull(callName, "callName");
         Objects.requireNonNull(jsonPath, "jsonPath");
-        Model.ResponseEnvelope env = callFixture(callName);
+
+        // Guard against being called on a group
+        Resolved r = resolveByName(callName);
+        if (isGroupFixture(r.call)) {
+            throw new IllegalArgumentException("callFixtureReturn* cannot be used on group fixture '" + callName + "'");
+        }
+
+        Model.ResponseEnvelope env = executor.execute(r.call, r.baseDir, vars, false);
         String raw = env.raw();
         if (raw == null || raw.isBlank()) {
             throw new IllegalStateException("Fixture '" + callName + "' returned an empty body; cannot read: " + jsonPath);
@@ -194,15 +251,18 @@ public final class FixtureEngine {
         return value;
     }
 
+
     /** Access the shared variables map (templating & saves use this). */
     public Map<String,Object> vars() { return vars; }
+
 
     /** Clear all variables. */
     public void clearVars() { vars.clear(); }
 
-    /* =======================
-       Builder / construction
-       ======================= */
+
+    // =====================================================================
+    //   Builder / construction
+    // =====================================================================
 
     private final Class<?> testClass;
     private final Model.FixtureSuite suite;
@@ -223,9 +283,11 @@ public final class FixtureEngine {
     // Auth supplier (fixed or lazy) from builder
     private final java.util.function.Supplier<org.springframework.security.core.Authentication> builderAuthSupplier;
 
+
     private FixtureEngine(Class<?> testClass,
                           MockMvc mockMvc,
-                          java.util.function.Supplier<org.springframework.security.core.Authentication> authSupplier) {
+                          java.util.function.Supplier<org.springframework.security.core.Authentication> authSupplier) 
+    {
         this.testClass = Objects.requireNonNull(testClass, "testClass");
         Objects.requireNonNull(mockMvc, "mockMvc");
         this.builderAuthSupplier = authSupplier;
@@ -253,14 +315,16 @@ public final class FixtureEngine {
         this.fixturesBaseDir = loaded.baseDir;
         this.repo = repo;
 
-        // Index fixtures by name (fail fast on duplicates)
+        // Index fixtures by name (fail fast on duplicates) and validate structure
         Map<String, Model.FixtureCall> index = new LinkedHashMap<>();
         List<Model.FixtureCall> calls = (suite.fixtures() == null) ? Collections.emptyList() : suite.fixtures();
         for (Model.FixtureCall f : calls) {
             if (f.name() == null || f.name().isBlank()) {
                 throw new IllegalStateException("Fixture with missing/blank 'name' in " + fixturesBaseDir + "/" + DEFAULT_FIXTURES_BASENAME);
             }
+            validateGroupVsHttp(f);
             if (index.put(f.name(), f) != null) {
+                // Fail on name collision
                 throw new IllegalStateException("Duplicate fixture name: " + f.name());
             }
         }
@@ -273,10 +337,11 @@ public final class FixtureEngine {
 
         // Use JSON mapper for request/response bodies
         this.executor = new Runtime.HttpExecutor(mockMvc, jsonMapper, templating, payloadResolver, matcher, builderAuthSupplier);
-        this.groups = new Engine.GroupRunner(item -> executor.execute(item.call, item.baseDir, vars));
+        this.groups = new Engine.GroupRunner(item -> executor.execute(item.call, item.baseDir, vars, false));
     }
 
-    public static final class Builder {
+    public static final class Builder 
+    {
         private final Class<?> testClass;
         private MockMvc mockMvc;
         private java.util.function.Supplier<org.springframework.security.core.Authentication> authSupplier;
@@ -301,9 +366,34 @@ public final class FixtureEngine {
         }
     }
 
-    /* =======================
-       Private helpers
-       ======================= */
+    // =====================================================================
+    //   Private helpers
+    // =====================================================================
+
+    /** Resolve a name to a concrete fixture (closest → parents), with its baseDir. */
+    private Resolved resolveByName(String name) 
+    {
+        // 1) Try closest file first
+        Model.FixtureCall local = byName.get(name);
+        if (local != null) {
+            return new Resolved(local, fixturesBaseDir);
+        }
+        // 2) Hierarchical lookup upwards (closest → ... → root)
+        IO.ClasspathFixtureRepository.Resolved found = repo.findFirstByName(testClass, cfg, name, yamlMapper);
+        if (found == null) {
+            List<String> attempted = repo.candidateAncestorPaths(testClass, cfg);
+            throw new IllegalArgumentException("Fixture/Group not found by name: " + name
+                    + ". Looked under: " + attempted);
+        }
+        return new Resolved(found.call, found.baseDir);
+    }
+
+    private static final class Resolved {
+        final Model.FixtureCall call;
+        final String baseDir;
+        Resolved(Model.FixtureCall call, String baseDir) { this.call = call; this.baseDir = baseDir; }
+    }
+
 
     private static String inferTopLevelKey(String jsonPath) {
         String p = jsonPath.trim();
@@ -330,12 +420,13 @@ public final class FixtureEngine {
                 .configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
     }
 
-    /* ======================================================================
-       Nested modules (config/engine/io/runtime/util/model)
-       ====================================================================== */
+    // =====================================================================
+    //   Nested modules (config/engine/io/runtime/util/model)
+    // =====================================================================
 
     /** Engine-related helpers. */
-    static final class Engine {
+    static final class Engine 
+    {
 
         /** Immutable configuration used for locating fixtures on classpath. */
         static final class FixtureConfig {
@@ -643,9 +734,22 @@ public final class FixtureEngine {
         }
 
         static final class StatusMatcher {
-            /** expected: null | int | "2xx"/"3xx"/"4xx"/"5xx" | "201". */
+            /**
+             * expected: null | int | "2xx"/"3xx"/"4xx"/"5xx" | "201" | [ ... any of those ... ]
+             */
             boolean matches(JsonNode expected, int actual) {
                 if (expected == null || expected.isNull()) return true; // optional
+
+                // allow arrays → any element matching is accepted
+                if (expected.isArray()) {
+                    for (JsonNode e : expected) {
+                        if (matches(e, actual)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+
                 if (expected.isInt()) return expected.asInt() == actual;
                 if (expected.isTextual()) {
                     String s = expected.asText().trim();
@@ -683,12 +787,24 @@ public final class FixtureEngine {
                 this.authSupplier = authSupplier;
             }
 
+            /** Strict convenience. */
+            Model.ResponseEnvelope execute(Model.FixtureCall spec, String baseDir, Map<String,Object> vars) {
+                return execute(spec, baseDir, vars, false);
+            }
+
             /**
              * Execute a single fixture call.
              * Logs a concise start line, rich DEBUG details, response preview, a finish line with duration,
              * and a compact warning when the expected status does not match.
+             *
+             * @param spec
+             * @param baseDir
+             * @param vars
+             * @param lax do not fail on expected-status mismatches (still throws for infra errors)
              */
-            Model.ResponseEnvelope execute(Model.FixtureCall spec, String baseDir, Map<String,Object> vars) {
+            Model.ResponseEnvelope execute(Model.FixtureCall spec, String baseDir, Map<String,Object> vars, boolean lax) 
+            {
+                log.debug("FHI lax = {}", lax);
                 final long t0 = System.nanoTime();
                 final String name   = (spec.name() == null || spec.name().isBlank()) ? "<unnamed>" : spec.name();
                 final String method = safeMethod(spec.method());
@@ -743,10 +859,30 @@ public final class FixtureEngine {
                         }
                     }
 
-                    // 5) Execute
+                    // === 5) Execute + guarded parsing ===
                     MockHttpServletResponse mvcResp = mockMvc.perform(req).andReturn().getResponse();
-                    String raw = mvcResp.getContentAsString(StandardCharsets.UTF_8);
-                    JsonNode body = (raw == null || raw.isBlank()) ? null : jsonMapper.readTree(raw);
+
+                    final String raw = mvcResp.getContentAsString(StandardCharsets.UTF_8);
+                    final String ctHeader = mvcResp.getHeader(HttpHeaders.CONTENT_TYPE);
+
+                    final boolean hasBody   = raw != null && !raw.isBlank();
+                    final boolean isJsonCT  = isJsonContentType(ctHeader);
+                    final boolean looksJson = hasBody && looksLikeJson(raw);
+
+                    JsonNode body = null;
+                    if (hasBody && (isJsonCT || looksJson)) {
+                        try {
+                            body = jsonMapper.readTree(raw);
+                        } catch (Exception parseEx) {
+                            // Don’t bomb the test on non-JSON bodies; just log and proceed with raw text
+                            log.debug("[FixtureEngine] Non-JSON body (ct='{}') could not be parsed as JSON: {}",
+                                    ctHeader, rootMessage(parseEx));
+                        }
+                    } else if (hasBody && log.isTraceEnabled()) {
+                        log.trace("[FixtureEngine] Skipping JSON parse for non-JSON response (ct='{}', sample='{}')",
+                                ctHeader, Util.Logging.truncate(raw, 80));
+                    }
+
                     Model.ResponseEnvelope env = new Model.ResponseEnvelope(mvcResp.getStatus(), copyHeaders(mvcResp), body, raw);
 
                     // 5.5) DEBUG response preview
@@ -757,28 +893,41 @@ public final class FixtureEngine {
                                 Util.Logging.previewNode(body));
                     }
 
-                    // 6) Finish line + duration
-                    final long tookMs = (System.nanoTime() - t0) / 1_000_000L;
-                    log.info("[FixtureEngine] <<< Finished executing fixture: [{}, {}, {}] with status: [{}], in {} ms",
-                             name, method, uri, env.status(), tookMs);
-
-                    // 7) Expected status (flexible & optional)
-                    if (!statusMatcher.matches(spec.expectedStatus(), env.status())) {
+                    // 6) Expected status (flexible & optional)
+                    log.debug("FHI: examining Expected status ");
+                    if (!statusMatcher.matches(spec.expectedStatus(), env.status())) 
+                    {   log.debug("FHI Expected status is NOT as expected");
+                        String bodyPreview = (raw == null || raw.isBlank()) ? "<empty>" : Util.Logging.truncate(raw, 500);
                         final String message = String.format(
                             Locale.ROOT,
-                            "Unexpected HTTP %d for '%s' %s %s, expected=%s",
-                            env.status(), name, method, uri, expectedStatusPreview(spec.expectedStatus())
+                            "Unexpected HTTP %d for '%s' %s %s, expected=%s. Body=%s",
+                            env.status(), name, method, uri, expectedStatusPreview(spec.expectedStatus()), bodyPreview
                         );
-                        log.warn("[FixtureEngine] {}", message);
-                        if (raw != null && !raw.isBlank()) log.warn("[FixtureEngine] Body: {}", Util.Logging.truncate(raw, 2000));
-                        throw new AssertionError(message);
+                        if (lax) {
+                            log.info("[FixtureEngine] Unexpected return status, but authorized in lax mode, so OK! : {}", message);
+                        } else {
+                            log.warn("[FixtureEngine] {}", message);
+                            throw new AssertionError(message);
+                        }
                     }
 
-                    // 8) Save variables
-                    if (spec.save() != null && !spec.save().isEmpty() && raw != null && !raw.isBlank()) {
-                        DocumentContext ctx = JsonPath.parse(raw);
-                        for (Map.Entry<String, String> e : spec.save().entrySet()) vars.put(e.getKey(), ctx.read(e.getValue()));
-                        if (log.isDebugEnabled()) log.debug("[FixtureEngine]    saved vars from '{}': {}", name, spec.save().keySet());
+                    // 7) Finish line + duration
+                    final long tookMs = (System.nanoTime() - t0) / 1_000_000L;
+                    log.info("[FixtureEngine] <<< Finished executing fixture: [{}, {}, {}] with status: [{}], in {} ms",
+                            name, method, uri, env.status(), tookMs);
+
+
+                    // === 8) Save variables only if JSON ===
+                    if (spec.save() != null && !spec.save().isEmpty()) {
+                        if (env.body() != null) {
+                            DocumentContext ctx = JsonPath.parse(raw);
+                            for (Map.Entry<String, String> e : spec.save().entrySet()) {
+                                vars.put(e.getKey(), ctx.read(e.getValue()));
+                            }
+                            if (log.isDebugEnabled()) log.debug("[FixtureEngine]    saved vars from '{}': {}", name, spec.save().keySet());
+                        } else if (log.isDebugEnabled()) {
+                            log.debug("[FixtureEngine]    save skipped for '{}': response is not JSON", name);
+                        }
                     }
 
                     if (log.isTraceEnabled()) log.trace("[FixtureEngine] Raw body (len={}): {}", raw == null ? 0 : raw.length(), Util.Logging.truncate(raw, 4000));
@@ -791,6 +940,22 @@ public final class FixtureEngine {
                     log.warn("[FixtureEngine] ✖ [{}] {} errored: {}", method, name, rootMessage(e));
                     throw new RuntimeException("Error executing fixture '" + name + "'", e);
                 }
+            }
+
+            /* === helpers =========================================================== */
+
+            private static boolean isJsonContentType(String ctHeader) {
+                if (ctHeader == null) return false;
+                // Be tolerant of charset/parameters and vendor types
+                String ct = ctHeader.toLowerCase(Locale.ROOT);
+                return ct.contains("application/json")
+                    || ct.contains("+json"); // e.g., application/problem+json
+            }
+
+            private static boolean looksLikeJson(String body) {
+                if (body == null) return false;
+                String s = body.stripLeading();
+                return (s.startsWith("{") || s.startsWith("["));
             }
 
             private static boolean requiresCsrf(String method) {
@@ -881,6 +1046,7 @@ public final class FixtureEngine {
         for (Model.FixtureCall child : original.fixtures()) {
             String parentName = firstNonBlank(child.getBasedOn(), child.getBaseOn());
             if (parentName == null || parentName.isBlank()) {
+                validateGroupVsHttp(child);
                 out.add(child);
                 continue;
             }
@@ -890,7 +1056,7 @@ public final class FixtureEngine {
                 throw new IllegalArgumentException("basedOn refers to unknown fixture '" + parentName + "' (must be in same file)");
             }
 
-            // Merge: scalars override, maps shallow-merge, payload deep-merge objects / replace arrays
+            // Merge: scalars override, headers/query shallow-merge, save REPLACE, fixtures REPLACE, payload deep-merge
             Model.FixtureCall merged = new Model.FixtureCall();
 
             merged.setName(child.name()); // keep child's name
@@ -898,21 +1064,53 @@ public final class FixtureEngine {
             merged.setMethod(firstNonBlank(child.method(), parent.method()));
             merged.setEndpoint(firstNonBlank(child.endpoint(), parent.endpoint()));
             merged.setExpectedStatus((child.expectedStatus() != null) ? child.expectedStatus() : parent.expectedStatus());
-            // Maps
+            // Maps (headers/query): shallow-merge, child wins
             merged.setHeaders(mergeMap(parent.headers(), child.headers()));
             merged.setQuery(mergeMap(parent.query(), child.query()));
-            merged.setSave(mergeMap(parent.save(), child.save()));
+
+            // SAVE: REPLACE (no merge)
+            merged.setSave(child.save() != null ? child.save() : parent.save());
+            // FIXTURES (group list): REPLACE
+            merged.setFixtures(child.fixtures() != null ? child.fixtures() : parent.fixtures());
+
             // Payload (deep-merge objects; arrays/scalars replace) with textual JSON coercion
             JsonNode resultPayload = deepMergePayload(mapper, parent.payload(), child.payload());
             merged.setPayload(resultPayload);
 
+            validateGroupVsHttp(merged);
             out.add(merged);
         }
 
         Model.FixtureSuite suite = new Model.FixtureSuite();
-        suite.setGroups(original.groups());
         suite.setFixtures(out);
         return suite;
+    }
+
+    /** Ensure a fixture is either a group OR an HTTP call, not both. */
+    private static void validateGroupVsHttp(Model.FixtureCall f) {
+        boolean isGroup = f.fixtures() != null;
+        boolean isHttp  =
+            (f.endpoint() != null && !f.endpoint().isBlank()) ||
+            (f.method()   != null && !f.method().isBlank())   ||
+            f.payload() != null ||
+            f.expectedStatus() != null ||
+            (f.headers() != null && !f.headers().isEmpty()) ||
+            (f.query()   != null && !f.query().isEmpty())   ||
+            (f.save()    != null && !f.save().isEmpty());
+        if (isGroup && isHttp) {
+            throw new IllegalStateException("Fixture '" + f.name() + "' cannot define both 'fixtures' and HTTP fields");
+        }
+    }
+
+    private static String firstNonBlank(String a, String b) {
+        return (a != null && !a.isBlank()) ? a : b;
+    }
+    private static Map<String,String> mergeMap(Map<String,String> parent, Map<String,String> child) {
+        if ((parent == null || parent.isEmpty()) && (child == null || child.isEmpty())) return child;
+        Map<String,String> out = new LinkedHashMap<>();
+        if (parent != null) out.putAll(parent);
+        if (child != null) out.putAll(child);
+        return out;
     }
 
     /** If the node is textual and looks like JSON, parse it to a JSON tree; otherwise return as is. */
@@ -961,16 +1159,62 @@ public final class FixtureEngine {
         return child;
     }
 
-    private static String firstNonBlank(String a, String b) {
-        return (a != null && !a.isBlank()) ? a : b;
+    /* =======================
+       Group helpers
+       ======================= */
+
+    private static boolean isGroupFixture(Model.FixtureCall f) {
+        // A group is any fixture that *declares* a fixtures list (even empty → no-op group)
+        return f != null && f.fixtures() != null;
     }
-    private static Map<String,String> mergeMap(Map<String,String> parent, Map<String,String> child) {
-        if ((parent == null || parent.isEmpty()) && (child == null || child.isEmpty())) return child;
-        Map<String,String> out = new LinkedHashMap<>();
-        if (parent != null) out.putAll(parent);
-        if (child != null) out.putAll(child);
-        return out;
+
+
+    private void runGroupFixture(String label, List<String> list, String baseDir, boolean lax) {
+        if (list == null || list.isEmpty()) {
+            log.info("[FixtureEngine] {} is empty; nothing to run.", label);
+            return;
+        }
+
+        // Resolve in declared order
+        List<Engine.PlanItem> plan = new ArrayList<>(list.size());
+        for (String fname : list) {
+            Model.FixtureCall local = byName.get(fname);
+            if (local != null) {
+                plan.add(new Engine.PlanItem(local, fixturesBaseDir));
+                continue;
+            }
+            IO.ClasspathFixtureRepository.Resolved r = repo.findFirstByName(testClass, cfg, fname, yamlMapper);
+            if (r == null) {
+                String attempted = repo.candidateAncestorPaths(testClass, cfg).toString();
+                if (lax) {
+                    log.warn("[FixtureEngine] (lax) {} → unknown child fixture '{}'; skipping. Looked under: {}", label, fname, attempted);
+                    continue; // best-effort: skip unknown child in lax mode
+                }
+                throw new IllegalArgumentException(
+                    "Unknown fixture referenced in " + label + ": '" + fname + "'.\nSearched under: " + attempted
+                );
+            }
+            plan.add(new Engine.PlanItem(r.call, r.baseDir));
+        }
+
+        // Execute each item in order; in lax mode, tolerate any error and continue
+        for (Engine.PlanItem it : plan) {
+            try {
+                executor.execute(it.call, it.baseDir, vars, lax); // executor already tolerates status mismatches when lax=true
+            } catch (Throwable t) {
+                if (lax) {
+                    log.warn("[FixtureEngine] (lax) {} → child '{}' failed — skipping. Cause: {}", label, it.name(), t.toString());
+                    // continue with next child
+                } else {
+                    // strict: stop immediately
+                    if (t instanceof RuntimeException) throw (RuntimeException) t;
+                    throw new RuntimeException("Error executing fixture '" + it.name() + "' in " + label, t);
+                }
+            }
+        }
     }
+
+
 
     /** Small utilities (logging helpers). */
     static final class Util {
@@ -1028,33 +1272,17 @@ public final class FixtureEngine {
         }
     }
 
-    /** POJOs for fixtures + response + group policy. */
+    /** POJOs for fixtures + response. */
     static final class Model {
         /** Root of the fixtures file (YAML). */
         static final class FixtureSuite {
-            private List<GroupPolicy> groups;   // optional in closest file
             private List<FixtureCall> fixtures;
-
-            public List<GroupPolicy> groups() { return groups; }
-            public void setGroups(List<GroupPolicy> groups) { this.groups = groups; }
 
             public List<FixtureCall> fixtures() { return fixtures; }
             public void setFixtures(List<FixtureCall> fixtures) { this.fixtures = fixtures; }
         }
 
-        /** Group policy row (top-level `groups:` in the closest file). */
-        static final class GroupPolicy {
-            private String name;
-            private List<String> fixtures; // authoritative fixture list for this group in this file (if present)
-
-            public String name() { return name; }
-            public List<String> fixtures() { return fixtures; }
-
-            public void setName(String name) { this.name = name; }
-            public void setFixtures(List<String> fixtures) { this.fixtures = fixtures; }
-        }
-
-        /** One fixture row. */
+        /** One fixture row (HTTP fixture or group fixture when 'fixtures:' present). */
         static final class FixtureCall {
             private String name;
             private String method;
@@ -1063,10 +1291,12 @@ public final class FixtureEngine {
             private Map<String,String> query;
             private JsonNode payload;        // YAML object/array OR text ("classpath:..." or raw JSON string)
             private Map<String,String> save; // varName -> JSONPath
-            private JsonNode expectedStatus; // int | "2xx"/"3xx"/"4xx"/"5xx" | "201"
+            private JsonNode expectedStatus; // int | "2xx"/"3xx"/"4xx"/"5xx" | "201" | [ ... any of those ... ]
             // basedOn within same file
             private String basedOn; // canonical
             private String baseOn;  // alias
+            // group-as-fixture: if present, indicates this row is a group
+            private List<String> fixtures;
 
             public String name() { return name; }
             public String method() { return method; }
@@ -1078,6 +1308,7 @@ public final class FixtureEngine {
             public JsonNode expectedStatus() { return expectedStatus; }
             public String getBasedOn() { return basedOn; }
             public String getBaseOn() { return baseOn; }
+            public List<String> fixtures() { return fixtures; }
 
             public void setName(String name) { this.name = name; }
             public void setMethod(String method) { this.method = method; }
@@ -1089,6 +1320,7 @@ public final class FixtureEngine {
             public void setExpectedStatus(JsonNode expectedStatus) { this.expectedStatus = expectedStatus; }
             public void setBasedOn(String basedOn) { this.basedOn = basedOn; }
             public void setBaseOn(String baseOn) { this.baseOn = baseOn; }
+            public void setFixtures(List<String> fixtures) { this.fixtures = fixtures; }
         }
 
         /** Response wrapper. */
@@ -1107,16 +1339,5 @@ public final class FixtureEngine {
         }
     }
 
-    /* =======================
-       Local helpers (group policy)
-       ======================= */
-
-    private Model.GroupPolicy findGroupPolicyInClosestFile(String groupLabel) {
-        List<Model.GroupPolicy> gps = (suite == null ? null : suite.groups());
-        if (gps == null || gps.isEmpty()) return null;
-        for (Model.GroupPolicy gp : gps) {
-            if (gp != null && groupLabel.equals(gp.name())) return gp;
-        }
-        return null;
-    }
+    // Groups are represented as fixtures with a 'fixtures:' list.
 }
