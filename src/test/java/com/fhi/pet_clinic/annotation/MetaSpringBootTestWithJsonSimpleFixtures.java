@@ -1,12 +1,14 @@
-package com.fhi.pet_clinic.fixtures_fmwk.springfixtureloader.annotation;
+package com.fhi.pet_clinic.annotation;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
+import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
@@ -15,8 +17,8 @@ import org.springframework.test.context.TestExecutionListeners;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.fhi.pet_clinic.config.SpringTestConfig;
-import com.fhi.pet_clinic.fixtures_fmwk.annotation.Fixtures;
-import com.fhi.pet_clinic.fixtures_fmwk.springfixtureloader.FixtureTestExecutionListener;
+import com.fhi.pet_clinic.tools.json_simple_fixtures.annotation.Fixtures;
+import com.fhi.pet_clinic.tools.json_simple_fixtures.springfixtureloader.FixtureTestExecutionListener;
 
 
  /**
@@ -83,6 +85,14 @@ import com.fhi.pet_clinic.fixtures_fmwk.springfixtureloader.FixtureTestExecution
     mergeMode = TestExecutionListeners.MergeMode.MERGE_WITH_DEFAULTS
 )
 
+
+// Ensures test methods are run in a specific order using @Order(n)
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+
+
+//REMOVE Since this annotation is in /src/main and not in /src/test, we cannot 'factorize' and 
+//REMOVE place the following import here.
+//REMOVE If needed this import will have to be placed specifically on the test class.
 // Imports additional Spring test configuration, including beans required during tests 
 // (e.g., fixture loader, test-specific overrides, or mock beans).
 // In particular, this includes the GenericFixtureLoader and any related support infrastructure.
@@ -103,5 +113,5 @@ import com.fhi.pet_clinic.fixtures_fmwk.springfixtureloader.FixtureTestExecution
 // - In IntelliJ: Edit Run Configuration → Tags → Include/Exclude specific tags
 @Tag("SpringIntegrationTest")
 
-public @interface SpringIntegrationTest 
+public @interface MetaSpringBootTestWithJsonSimpleFixtures
 {}

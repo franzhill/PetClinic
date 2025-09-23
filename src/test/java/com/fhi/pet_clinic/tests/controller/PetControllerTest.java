@@ -14,11 +14,11 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fhi.pet_clinic.fixtures_fmwk.annotation.Fixtures;
-import com.fhi.pet_clinic.fixtures_fmwk.springfixtureloader.annotation.SpringIntegrationTest;
+import com.fhi.pet_clinic.annotation.MetaSpringBootTestWithJsonSimpleFixtures;
 import com.fhi.pet_clinic.model.Owner;
 import com.fhi.pet_clinic.model.Pet;
 import com.fhi.pet_clinic.model.Species;
+import com.fhi.pet_clinic.tools.json_simple_fixtures.annotation.Fixtures;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -30,8 +30,7 @@ import lombok.extern.slf4j.Slf4j;
  * $ mvn clean test -Dtest=PetControllerTest
  */
 
- // Declares a Spring Boot integration test with transactional fixture-based data loading
-@SpringIntegrationTest
+@MetaSpringBootTestWithJsonSimpleFixtures
 
 // Loads the JSON fixtures for the given entities, in the given order.
 // With PER_CLASS lifecycle, fixtures are loaded once per class and cleaned via rollback.

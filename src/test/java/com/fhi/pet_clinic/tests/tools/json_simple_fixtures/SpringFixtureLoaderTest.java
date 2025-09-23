@@ -1,36 +1,31 @@
-package com.fhi.pet_clinic.tests.fixtures;
+package com.fhi.pet_clinic.tests.tools.json_simple_fixtures;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 
-import com.fhi.pet_clinic.fixtures_fmwk.annotation.Fixtures;
-import com.fhi.pet_clinic.fixtures_fmwk.springfixtureloader.annotation.SpringIntegrationTest;
+import com.fhi.pet_clinic.annotation.MetaSpringBootTestWithJsonSimpleFixtures;
 import com.fhi.pet_clinic.model.Owner;
 import com.fhi.pet_clinic.model.Pet;
 import com.fhi.pet_clinic.model.Species;
 import com.fhi.pet_clinic.repo.OwnerRepository;
 import com.fhi.pet_clinic.repo.PetRepository;
+import com.fhi.pet_clinic.tools.json_simple_fixtures.annotation.Fixtures;
 
 import lombok.extern.slf4j.Slf4j;
 
 
 // Declares a Spring Boot integration test with transactional fixture-based data loading
-@SpringIntegrationTest
+@MetaSpringBootTestWithJsonSimpleFixtures
 
 // Loads the JSON fixtures for the given entities, in the given order.
 // With PER_CLASS lifecycle, fixtures are loaded once per class and cleaned via rollback.
 @Fixtures(value = { Species.class, Owner.class, Pet.class }, 
           lifecycle = Fixtures.Lifecycle.PER_CLASS)
-
-// Ensures test methods are run in a specific order using @Order(n)
-@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 
 @Slf4j
 class SpringFixtureLoaderTest 

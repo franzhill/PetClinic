@@ -20,12 +20,12 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fhi.pet_clinic.dto.OwnerDto;
-import com.fhi.pet_clinic.fixtures_fmwk.annotation.Fixtures;
-import com.fhi.pet_clinic.fixtures_fmwk.junitfixtureloader.FixtureExtension;
 import com.fhi.pet_clinic.model.Owner;
 import com.fhi.pet_clinic.model.Pet;
 import com.fhi.pet_clinic.repo.OwnerRepository;
 import com.fhi.pet_clinic.repo.PetRepository;
+import com.fhi.pet_clinic.tools.json_simple_fixtures.annotation.Fixtures;
+import com.fhi.pet_clinic.tools.json_simple_fixtures.junitfixtureloader.FixtureExtension;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -71,7 +71,7 @@ import lombok.extern.slf4j.Slf4j;
 @ExtendWith(FixtureExtension.class)
 
 @Slf4j
-class OwnerControllerIntegrationTest 
+class OwnerControllerTest 
 {
    @Autowired
    private MockMvc mockMvc;

@@ -1,15 +1,15 @@
-package com.airbus.ebcs.integrationtests;
+package com.fhi.pet_clinic.integrationtests;
 
-import com.airbus.ebcs.domain.entity.AirbusUser;
-import com.airbus.ebcs.utils.FixtureEngine;
-import com.airbus.ebcs.repository.AirbusUserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fhi.pet_clinic.tools.fixture_engine.FixtureEngine;
+
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -53,9 +53,6 @@ public abstract class ParentIntegrationTest
    /** Shared ObjectMapper for reading responses if needed by tests. */
    @Autowired protected ObjectMapper objectMapper;
 
-   /** Repository used only to resolve the authenticated test user. */
-   @Autowired protected AirbusUserRepository airbusUserRepository;
-
    /** Engine: loads fixtures.yaml for the concrete subclass and runs calls. */
    protected FixtureEngine fx;
 
@@ -87,26 +84,37 @@ public abstract class ParentIntegrationTest
                .build();
 
       // Run "BeforeAll" fixtures group defined in the closest fixtures.yaml (if any).
-      fx.callFixturesForGroup("BeforeAll");
+      fx.callFixture("BeforeAll");
    }
 
 
    @AfterAll
    void teardownBase() 
    {  // Run "AfterAll" fixtures group defined in the closest fixtures.yaml (if any).
-      fx.callFixturesForGroup("AfterAll");
+      fx.callFixture("AfterAll");
    }
 
 
    @BeforeEach
    void perTestBase() 
-   {  fx.callFixturesForGroup("BeforeEach");
+   {  fx.callFixture("BeforeEach");
+   }
+
+
+   /**
+    * Tip
+    * Spring Security wipes the SecurityContext between tests; if you actually 
+    * need a context for each test method, set it in @BeforeEach as well:
+    */
+   @BeforeEach
+   void reauthenticate() {
+   SecurityContextHolder.getContext().setAuthentication(getTestAuthentication());
    }
 
 
    @AfterEach
    void afterTestBase() 
-   {  fx.callFixturesForGroup("AfterEach");
+   {  fx.callFixture("AfterEach");
    }
 
 
@@ -119,12 +127,11 @@ public abstract class ParentIntegrationTest
     * Builds the {@link Authentication} used by tests (simple local user).
     * Subclasses can override to customize user/authorities.
     */
-   protected Authentication getTestAuthentication() 
-   {
-      final AirbusUser user = airbusUserRepository.findUserByUserId(TEST_USER);
-      if (user == null) {
-         throw new IllegalStateException("Test user '" + TEST_USER + "' not found in AirbusUserRepository.");
-      }
-      return new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities());
+   protected Authentication getTestAuthentication() {
+      return new UsernamePasswordAuthenticationToken(
+            TEST_USER,                       // principal as a String
+            "N/A",                           // credentials unused
+            java.util.List.of(new SimpleGrantedAuthority("ROLE_USER"))
+      );
    }
 }

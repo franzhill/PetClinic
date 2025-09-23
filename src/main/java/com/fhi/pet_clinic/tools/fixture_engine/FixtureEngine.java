@@ -28,7 +28,7 @@
 
 /* --------- START OF ACTUAL DROP-IN (full file) --------- */
 
-package com.fhi.pet_clinic.tools;
+package com.fhi.pet_clinic.tools.fixture_engine;
 
 import java.io.IOException;
 import java.io.InputStream;

@@ -25,8 +25,8 @@
     </dependency>
 
     <dependency>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-web</artifactId>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
     </dependency>
 
     <!-- 
@@ -54,15 +54,111 @@
       <scope>runtime</scope>
     </dependency>
 
+    <!-- Standard test stack (JUnit 5, Spring Test, AssertJ, Hamcrest, JsonPath test use, etc.) -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>
     </dependency>
 
-    <!-- Avoids having to generate boilerplate code by autogenerating it.
-         No need to specify version it is managed by the spring boot parent.
+    <!-- Web/app security -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-security</artifactId>
+    </dependency>
+
+    <!-- Spring Security test support:
+        - Provides annotations like @WithMockUser, @WithUserDetails, etc.
+        - MockMvc integration helpers (SecurityMockMvcRequestPostProcessors)
+        - Utilities for testing method security and request authorization
+        NOTE: Scope is 'provided' because FixtureEngine references these from src/main,
+              but you don't want them packaged in the runtime JAR. They are also available to tests.
     -->
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-test</artifactId>
+      <scope>provided</scope>
+    </dependency>
+
+    <!-- Spring Test (MockMvc, org.springframework.mock.web.*, etc.)
+        This is usually provided by XXXXX with the 'test' scope, 
+        however we want it in the 'provided' scope because fixture fmwks/engines 
+        using it are placed in src/main/java. and not in src/test.
+        scope 'provided' = available at compile/test time, not packaged in the final JAR. 
+    -->
+    <dependency>
+      <groupId>org.springframework</groupId>
+      <artifactId>spring-test</artifactId>
+      <scope>provided</scope>
+      <exclusions>
+        <!-- keep JUnit 4 off the main classpath -->
+        <exclusion>
+          <groupId>junit</groupId>
+          <artifactId>junit</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+
+    <!-- Spring Test (MockMvc, org.springframework.mock.web.*, etc.)
+        Usually comes transitively from spring-boot-starter-test (with scope 'test').
+        Here we use scope 'provided' because fixture frameworks/engines that use it
+        live under src/main/java and must compile, but we don't want it packaged.
+        'provided' = available at compile/test time, not packaged in the final JAR.
+    -->
+    <dependency>
+      <groupId>org.springframework</groupId>
+      <artifactId>spring-test</artifactId>
+      <scope>provided</scope>
+      <exclusions>
+        <!-- keep JUnit 4 off the main classpath -->
+        <exclusion>
+          <groupId>junit</groupId>
+          <artifactId>junit</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+
+    <!-- @AutoConfigureMockMvc and other test auto-config annotations.
+        Usually comes from spring-boot-starter-test (transitively) with scope 'test'.
+        We declare it as 'provided' for the same reason as above.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-test-autoconfigure</artifactId>
+      <scope>provided</scope>
+    </dependency>
+
+    <!-- JUnit Jupiter API (annotations + extension interfaces like BeforeEachCallback,
+        ExtensionContext, Tag, TestInstance, …).
+        Usually comes from spring-boot-starter-test with scope 'test'.
+        We need it as 'provided' because code in src/main references these types.
+    -->
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter-api</artifactId>
+      <scope>provided</scope>
+    </dependency>
+
+    <!-- JsonPath (used by FixtureEngine in src/main).
+        Usually comes from spring-boot-starter-test with scope 'test'.
+        Declared as 'provided' so main code compiles without bundling it into the JAR.
+    -->
+    <dependency>
+      <groupId>com.jayway.jsonpath</groupId>
+      <artifactId>json-path</artifactId>
+      <scope>provided</scope>
+    </dependency>
+
+
+    <!-- YAML (needed by FixtureEngine in main) -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.dataformat</groupId>
+      <artifactId>jackson-dataformat-yaml</artifactId>
+      <scope>provided</scope>
+    </dependency>
+
+    <!-- Avoids having to generate boilerplate code by autogenerating it.
+        No need to specify version it is managed by the spring boot parent. -->
     <dependency>
       <groupId>org.projectlombok</groupId>
       <artifactId>lombok</artifactId>
@@ -71,9 +167,8 @@
 
     <!-- To read json files -->
     <dependency>
-        <groupId>com.fasterxml.jackson.core</groupId>
-        <artifactId>jackson-databind</artifactId>
-        <!--<version>2.17.1</version> <!- - or latest stable -->
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
     </dependency>
 
     <!--  Adds support for Java 8 Date & Time API types (e.g. LocalDate, LocalDateTime) in Jackson
@@ -82,8 +177,7 @@
           - Without this, you get exceptions like:
               com.fasterxml.jackson.databind.exc.InvalidDefinitionException: 
               Java 8 date/time type `java.time.LocalDate` not supported by default
-          This module must be registered on your ObjectMapper manually (unless Spring Boot 
-          auto-config does it).
+          This module must be registered on your ObjectMapper manually (unless Spring Boot auto-config does it).
     -->
     <dependency>
       <groupId>com.fasterxml.jackson.datatype</groupId>
@@ -91,10 +185,10 @@
     </dependency>
 
     <!-- Hibernate second-level caching support via JCache (JSR-107) 
-         This is the standard cache abstraction used by Hibernate to plug in 
-         various cache providers .
-         Spring Boot will automatically detect the JCache API (javax.cache) 
-         and its EhCache implementation (ehcache) if both are on the classpath.
+        This is the standard cache abstraction used by Hibernate to plug in 
+        various cache providers .
+        Spring Boot will automatically detect the JCache API (javax.cache) 
+        and its EhCache implementation (ehcache) if both are on the classpath.
     -->
     <dependency>
       <groupId>javax.cache</groupId>
@@ -103,36 +197,28 @@
     </dependency>
 
     <!-- EhCache 3.x: a production-grade JCache-compliant caching provider
-         This is the actual implementation used behind the JSR-107 (JCache) API 
-    -->
+        This is the actual implementation used behind the JSR-107 (JCache) API  -->
     <dependency>
       <groupId>org.ehcache</groupId>
       <artifactId>ehcache</artifactId>
-      <version>3.10.8</version>  <!-- ehcache should be 3.x — version 3.10.8 is stable as of mid-2025 -->
+      <version>3.10.8</version>
     </dependency>
 
     <!-- Optional (but useful): Allows Hibernate to auto-discover JCache configuration 
-         Not required in all setups, but improves integration in Spring Boot 
-    -->
+        Not required in all setups, but improves integration in Spring Boot 
+        NOTE: version should match hibernate-core (managed by the Boot parent). -->
     <dependency>
       <groupId>org.hibernate</groupId>
       <artifactId>hibernate-jcache</artifactId>
-      <version>${hibernate.version}</version> <!-- should match hibernate-core version (check BOM or parent POM) -->
+      <version>${hibernate.version}</version>
     </dependency>
 
-    <!-- Datasource Proxy: Intercepts JDBC calls to log SQL, parameters,
-          execution times, and caller stack traces. 
-          Used for profiling performance and tracking
-          N+1 queries, slow queries, and tracing SQL back to Java methods.
-    -->
+    <!-- Datasource Proxy: Intercepts JDBC calls to log SQL, parameters, execution times, and caller stack traces. -->
     <dependency>
-        <groupId>net.ttddyy</groupId>
-        <artifactId>datasource-proxy</artifactId>
-        <version>1.9</version>
+      <groupId>net.ttddyy</groupId>
+      <artifactId>datasource-proxy</artifactId>
+      <version>1.9</version>
     </dependency>
-
-
-
   </dependencies>
 
 

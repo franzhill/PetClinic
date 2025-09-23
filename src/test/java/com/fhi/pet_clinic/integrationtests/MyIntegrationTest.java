@@ -1,4 +1,4 @@
-package com.airbus.ebcs.integrationtests;
+package com.fhi.pet_clinic.integrationtests;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
@@ -12,10 +12,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 
-import com.airbus.ebcs.domain.entity.CommercialOffer;
-import com.airbus.ebcs.domain.entity.Offer;
-import com.airbus.ebcs.repository.CommercialOfferRepository;
-import com.airbus.ebcs.repository.OfferRepository;
 
 /**
  * Run with:
@@ -26,15 +22,8 @@ import com.airbus.ebcs.repository.OfferRepository;
  * - FixtureEngine boot + BeforeAll/AfterAll group execution
  * - Auth wiring per request
  */
-class CommercialOfferIntegrationTest2 extends ParentIntegrationTest 
+class MyIntegrationTest extends ParentIntegrationTest 
 {
-   // Test-specific constants
-   public static final long A320_PROGRAM_ID = 36L;
-   public static final long A350_PROGRAM_ID = 37L;
-
-   @Autowired private OfferRepository offerRepository;
-   @Autowired private CommercialOfferRepository commercialOfferRepository;
-
 
    @Test
    void example() throws Exception 
@@ -53,6 +42,7 @@ class CommercialOfferIntegrationTest2 extends ParentIntegrationTest
     @Test
     void checkCommercialOfferCreateOffer() throws Exception 
     {
+/*
         // WHEN: offers are created via fixtures
         long offer1Id = fx.callFixtureReturnId("create-offer-a320_1");
         long offer2Id = fx.callFixtureReturnId("create-offer-a320_2");
@@ -89,6 +79,7 @@ class CommercialOfferIntegrationTest2 extends ParentIntegrationTest
         assertThat(oCo3).isPresent().get()
             .extracting(co -> co.getAircraftProgram().getId())
             .isEqualTo(A350_PROGRAM_ID);
+*/
     }
 
     // If you ever want per-test fixture groups, just override the hooks:

@@ -1,4 +1,4 @@
-package com.fhi.pet_clinic.tests.fixtures;
+package com.fhi.pet_clinic.tests.tools.json_simple_fixtures;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -10,13 +10,17 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.annotation.Transactional;
 
-import com.fhi.pet_clinic.fixtures_fmwk.annotation.Fixtures;
-import com.fhi.pet_clinic.fixtures_fmwk.junitfixtureloader.FixtureExtension;
+
+import com.fhi.pet_clinic.annotation.MetaSpringBootTestWithJsonSimpleFixtures;
 import com.fhi.pet_clinic.model.Owner;
 import com.fhi.pet_clinic.model.Pet;
 import com.fhi.pet_clinic.repo.OwnerRepository;
 import com.fhi.pet_clinic.repo.PetRepository;
+import com.fhi.pet_clinic.tools.json_simple_fixtures.annotation.Fixtures;
+import com.fhi.pet_clinic.tools.json_simple_fixtures.junitfixtureloader.FixtureExtension;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -27,46 +31,15 @@ import lombok.extern.slf4j.Slf4j;
  */
 
 
-// Starts the full application context (like a mini Spring Boot app) for testing
-// when the test class is initialized.
-// So once per test class, not before each test.
-// That context is shared across all test methods in the class.
-@SpringBootTest
-
-// This tells Spring to destroy and recreate the entire application context after the test class.
-// It’s heavy (slow), but guarantees a clean state.
-// Use case:
-// - You don’t want to write manual purging logic.
-// - You're OK with slower test startup.
-//# @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
-
-// Also remember that:
-// If using an in-memory H2 database (which is often the case for Integration testing)
-// with spring.jpa.hibernate.ddl-auto=create-drop, then:
-// - the database is created from scratch before each test class
-// - it is automatically dropped afterward
-
-// Ensures JUnit uses a single instance of the test class => the same instance is reused
-// for all test methods, which enables @BeforeAll methods to be non-static (and lets 
-// you carry state between tests if needed).
-@TestInstance(TestInstance.Lifecycle.PER_CLASS)
-
-// Ensures test methods are run in a specific order using @Order(n)
-@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
-
-// Automatically configures MockMvc for testing HTTP endpoints
-@AutoConfigureMockMvc
-
-// Loads the fixtures for the given entities, in the given order.
-@Fixtures({ Owner.class, Pet.class })
-
 // Extends the JUnit 5 test lifecycle to provide custom behavior during test execution —
 // Here we're extending with the custom defined fixture mechanism, and read the @Fixtures
 // annotation to handle fixture loading seamlessly.
 @ExtendWith(FixtureExtension.class)
 
-@Slf4j
+// Loads the fixtures for the given entities, in the given order.
+@Fixtures(value = { Owner.class, Pet.class }, lifecycle = Fixtures.Lifecycle.PER_METHOD)
 
+@Slf4j
 class JUnitFixtureLoaderTest 
 {
     @Autowired
