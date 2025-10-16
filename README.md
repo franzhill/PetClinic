@@ -8,6 +8,10 @@ It also hosts a collection of focused exercises on Spring and Hibernate that I r
 
 <br />
 
+Work in constant progress!
+
+<br />
+
 ##  Philosophy & Guiding Principles
 
 - ⚖️ **Thoughtful trade-offs over dogma** <br />
