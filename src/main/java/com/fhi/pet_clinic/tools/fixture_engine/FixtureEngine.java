@@ -1,4 +1,3 @@
-
 package com.fhi.pet_clinic.tools.fixture_engine;
 
 import java.util.function.BiFunction;
@@ -2010,7 +2009,7 @@ public final class FixtureEngine
         }
 
         /** Response wrapper. */
-        static final class ResponseEnvelope {
+        public static final class ResponseEnvelope {
             private final int status;
             private final Map<String, List<String>> headers;
             private final JsonNode body;
