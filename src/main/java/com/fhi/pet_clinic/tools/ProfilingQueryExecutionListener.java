@@ -13,7 +13,7 @@ import net.ttddyy.dsproxy.listener.QueryExecutionListener;
 /**
  * SQL query execution listener for the datasource-proxy performance profiler.
  *
- * <p>This listener is registered on the proxied DataSource usedfor performance profiling
+ * <p>This listener is registered on the proxied DataSource used for performance profiling
  * allowing for tracing and analysis of SQL usage patterns.
  *
  * <p>It attempts to identify the application-level method that triggered the SQL statement,

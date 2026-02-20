@@ -1,4 +1,4 @@
-package com.fhi.pet_clinic.tools.json_simple_fixtures.annotation;
+package com.fhi.libraries.json_simple_fixtures.annotation;
 
 import java.lang.annotation.*;
 

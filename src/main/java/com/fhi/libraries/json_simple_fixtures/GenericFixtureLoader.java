@@ -1,4 +1,4 @@
-package com.fhi.pet_clinic.tools.json_simple_fixtures;
+package com.fhi.libraries.json_simple_fixtures;
 
 import java.io.IOException;
 import java.io.InputStream;

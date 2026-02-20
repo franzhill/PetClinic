@@ -1,17 +1,17 @@
 # FixtureEngine — README
 
-**FixtureEngine** is a lightweight, copy-paste-friendly utility for driving Spring `MockMvc` integration tests from YAML fixture files.  
+**FixtureEngine** is a lightweight, configuration-oriented, Spring `MockMvc`-based utility designed to facilitate and automate JUnit test set-up.
 
-It provides a declarative way to describe test setup and teardown steps (fixtures) and execute them consistently across your tests.
+It provides a declarative way to describe test setup steps, aka "fixtures", necessary to set up the context of a JUnit test before performing the core test logic.
 
-Instead of scattering `MockMvc` calls and JSON boilerplate throughout tests, they can be centralized in YAML files, and then called by name from within the test code. This makes tests shorter, more readable, and easier to maintain.
+Instead of scattering `MockMvc` calls and JSON boilerplate throughout the tests themselves, FixtureEngine centralizes and configures the set-up steps in YAML files, which can then be executed on demand from within the test itself. This makes tests shorter, more readable, and easier to maintain.
 
 
 
 ## TL;DR
 
-- A **fixture** is a declarative configuration for an HTTP call executed via `MockMvc`.
-- Fixtures are defined in `fixtures.yaml` files (one next to your test class; see path rules below).
+- A **fixture** is a declarative configuration for an HTTP call executed via `MockMvc`. (the term is popular in the Python ecosystem)
+- Fixtures are defined in `fixtures.yaml` files (next to your test class; see path rules below).
 - Fixtures are callable from JUnit tests.
 - In your JUnit tests, build the engine with:  
   `FixtureEngine.forTestClass(getClass()).mockMvc(mockMvc).authentication(auth).build()`
@@ -25,6 +25,50 @@ Instead of scattering `MockMvc` calls and JSON boilerplate throughout tests, the
 
 <br />
 
+
+## 0) NEW
+
+1. Multipart Support
+The most significant addition is the Multipart capability. The README mentions payloads as YAML, JSON, or classpath: files, but the engine now has a dedicated MultipartDef model and logic to handle complex uploads.
+
+Multiple Parts: It can handle mixed parts (e.g., a "json" metadata part alongside a "file" binary part).
+
+Auto-detection: It automatically removes explicit Content-Type headers to let MockMvc generate the correct multipart boundary.
+
+File Handling: It can read raw bytes from the classpath for file types, allowing for non-textual uploads like PDFs or PNGs.
+
+2. Hierarchical vars: Loading at Boot
+While the README discusses setting variables via save: or Java code, the engine now supports a top-level vars: section inside the fixtures.yaml files themselves.
+
+Static Seeding: These variables are loaded when the engine is constructed.
+
+Hierarchical Overrides: Just like fixtures, a vars: map in a "closer" (lower-level) file completely replaces the map from a higher-level file.
+
+3. Advanced Variable Accessors (Java API)
+The Java API has become much more robust than the README suggests:
+
+varsGetLong(key): Automatically handles conversions between Integer, Long, and String.
+
+varsGetList(key, elementType): A powerful typed list retriever that handles numeric conversion magic (e.g., converting a list of Integer from JSON into a List<Long>).
+
+varsView(): Provides a live, unmodifiable view of the variables.
+
+4. Per-Call Variable Overrides
+The callFixture(String name, Map<String, Object> callScoped) method allows for "ephemeral" variables.
+
+Shadowing: These variables shadow global ones for a single call without overwriting them permanently.
+
+Persistence on Save: Interestingly, even during a scoped call, any save: block still writes back to the global variables, ensuring IDs aren't lost.
+
+5. Flexible jsonPathMode
+The engine now supports a jsonPathLax (or "Lenient") configuration.
+
+Lax Mode: If enabled, JsonPath returns null for missing paths or typos rather than throwing a PathNotFoundException.
+
+Switchable: This can be toggled per call or via setJsonPathConfig.
+
+6. Legacy url Alias
+The FixtureCall model now includes a url field as an alias for endpoint, specifically to support legacy fixtures that might still use the older naming convention.
 
 
 ## 1) YAML fixture file

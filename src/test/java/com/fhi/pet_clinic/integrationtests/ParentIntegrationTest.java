@@ -1,7 +1,7 @@
 package com.fhi.pet_clinic.integrationtests;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fhi.pet_clinic.tools.fixture_engine.FixtureEngine;
+import com.fhi.libraries.fixture_engine.FixtureEngine;
 
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;

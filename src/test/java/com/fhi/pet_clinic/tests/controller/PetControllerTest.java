@@ -14,11 +14,11 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fhi.libraries.json_simple_fixtures.annotation.Fixtures;
 import com.fhi.pet_clinic.annotation.MetaSpringBootTestWithJsonSimpleFixtures;
 import com.fhi.pet_clinic.model.Owner;
 import com.fhi.pet_clinic.model.Pet;
 import com.fhi.pet_clinic.model.Species;
-import com.fhi.pet_clinic.tools.json_simple_fixtures.annotation.Fixtures;
 
 import lombok.extern.slf4j.Slf4j;
 

@@ -1,4 +1,4 @@
-package com.fhi.pet_clinic.tools.json_simple_fixtures.springfixtureloader;
+package com.fhi.libraries.json_simple_fixtures.springfixtureloader;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -8,8 +8,8 @@ import org.springframework.test.context.TestContext;
 import org.springframework.test.context.support.AbstractTestExecutionListener;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.fhi.pet_clinic.tools.json_simple_fixtures.GenericFixtureLoader;
-import com.fhi.pet_clinic.tools.json_simple_fixtures.annotation.Fixtures;
+import com.fhi.libraries.json_simple_fixtures.GenericFixtureLoader;
+import com.fhi.libraries.json_simple_fixtures.annotation.Fixtures;
 
 import lombok.extern.slf4j.Slf4j;
 

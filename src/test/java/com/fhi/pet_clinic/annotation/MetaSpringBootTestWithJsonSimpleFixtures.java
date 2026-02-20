@@ -16,9 +16,9 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestExecutionListeners;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.fhi.libraries.json_simple_fixtures.annotation.Fixtures;
+import com.fhi.libraries.json_simple_fixtures.springfixtureloader.FixtureTestExecutionListener;
 import com.fhi.pet_clinic.config.SpringTestConfig;
-import com.fhi.pet_clinic.tools.json_simple_fixtures.annotation.Fixtures;
-import com.fhi.pet_clinic.tools.json_simple_fixtures.springfixtureloader.FixtureTestExecutionListener;
 
 
  /**

@@ -13,14 +13,13 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
-
+import com.fhi.libraries.json_simple_fixtures.annotation.Fixtures;
+import com.fhi.libraries.json_simple_fixtures.junitfixtureloader.FixtureExtension;
 import com.fhi.pet_clinic.annotation.MetaSpringBootTestWithJsonSimpleFixtures;
 import com.fhi.pet_clinic.model.Owner;
 import com.fhi.pet_clinic.model.Pet;
 import com.fhi.pet_clinic.repo.OwnerRepository;
 import com.fhi.pet_clinic.repo.PetRepository;
-import com.fhi.pet_clinic.tools.json_simple_fixtures.annotation.Fixtures;
-import com.fhi.pet_clinic.tools.json_simple_fixtures.junitfixtureloader.FixtureExtension;
 
 import lombok.extern.slf4j.Slf4j;
 

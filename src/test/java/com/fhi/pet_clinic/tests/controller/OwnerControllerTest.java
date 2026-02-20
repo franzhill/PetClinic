@@ -19,13 +19,13 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fhi.libraries.json_simple_fixtures.annotation.Fixtures;
+import com.fhi.libraries.json_simple_fixtures.junitfixtureloader.FixtureExtension;
 import com.fhi.pet_clinic.dto.OwnerDto;
 import com.fhi.pet_clinic.model.Owner;
 import com.fhi.pet_clinic.model.Pet;
 import com.fhi.pet_clinic.repo.OwnerRepository;
 import com.fhi.pet_clinic.repo.PetRepository;
-import com.fhi.pet_clinic.tools.json_simple_fixtures.annotation.Fixtures;
-import com.fhi.pet_clinic.tools.json_simple_fixtures.junitfixtureloader.FixtureExtension;
 
 import lombok.extern.slf4j.Slf4j;
 

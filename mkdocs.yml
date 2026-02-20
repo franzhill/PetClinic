@@ -1,0 +1,18 @@
+site_name: PetClinic
+theme:
+  name: material
+  palette:
+    primary: indigo
+
+nav:
+  - Home: index.md
+  - Moxter:
+      - Introduction: moxter/index.md  # provide a "broader view" of the documentation is through the sidebar. This allows users to see all chapters from any page they are on.
+      - First Simple Example: moxter/first_simple_example.md
+      - Core Syntax: moxter/fixtures.md
+      - Inheritance (basedOn): moxter/fixtures.md#basedon
+      - Variables: moxter/variables.md
+      - Features:
+         - Multipart: moxter/multipart.md
+         - Lax Modes: moxter/index.md#lax-mode
+      - Cookbook: moxter/examples.md
