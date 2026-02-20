@@ -1,17 +1,23 @@
-name: docs
-on:
-  push:
-    branches:
-      - main
 permissions:
   contents: write
+  pages: write      # Required for the handshake
+  id-token: write   # Required for the handshake
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v4
-        with:
-          python-version: 3.x
+      - uses: actions/setup-python@v5
       - run: pip install mkdocs-material
-      - run: mkdocs gh-deploy --force
+      - run: mkdocs build
+      
+      # THIS IS THE CRITICAL MISSING PIECE:
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/ # MkDocs puts the website here
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4 # This triggers the system workflow
