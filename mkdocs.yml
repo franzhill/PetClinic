@@ -1,4 +1,6 @@
 site_name: PetClinic
+site_url: https://franzhill.github.io/PetClinic/
+
 theme:
   name: material
   palette:

@@ -8,7 +8,13 @@ It also hosts a collection of focused exercises on Spring and Hibernate that I r
 
 <br />
 
-Work in constant progress!
+
+![Status](https://img.shields.io/badge/status-active_development-orange?style=flat-square&logo=github)
+
+<br />
+
+> [!TIP]
+> **Explore the full documentation:** [franzhill.github.io/PetClinic](https://franzhill.github.io/PetClinic/)
 
 <br />
 
