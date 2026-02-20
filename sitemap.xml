@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url>
+         <loc>https://franzhill.github.io/PetClinic/</loc>
+         <lastmod>2026-02-20</lastmod>
+    </url>
+    <url>
+         <loc>https://franzhill.github.io/PetClinic/json_simple_fixtures/</loc>
+         <lastmod>2026-02-20</lastmod>
+    </url>
+    <url>
+         <loc>https://franzhill.github.io/PetClinic/profiling_hibernate/</loc>
+         <lastmod>2026-02-20</lastmod>
+    </url>
+    <url>
+         <loc>https://franzhill.github.io/PetClinic/template/</loc>
+         <lastmod>2026-02-20</lastmod>
+    </url>
+    <url>
+         <loc>https://franzhill.github.io/PetClinic/testing/</loc>
+         <lastmod>2026-02-20</lastmod>
+    </url>
+    <url>
+         <loc>https://franzhill.github.io/PetClinic/design_discussions/dto_vs_entity/</loc>
+         <lastmod>2026-02-20</lastmod>
+    </url>
+    <url>
+         <loc>https://franzhill.github.io/PetClinic/moxter/</loc>
+         <lastmod>2026-02-20</lastmod>
+    </url>
+    <url>
+         <loc>https://franzhill.github.io/PetClinic/moxter/first_simple_example/</loc>
+         <lastmod>2026-02-20</lastmod>
+    </url>
+</urlset>

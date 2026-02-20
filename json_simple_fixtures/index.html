@@ -1,0 +1,1105 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://franzhill.github.io/PetClinic/json_simple_fixtures/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.2">
+    
+    
+      
+        <title>Fixture Loading Mechanism for Integration Tests - PetClinic</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#fixture-loading-mechanism-for-integration-tests" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="PetClinic" class="md-header__button md-logo" aria-label="PetClinic" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            PetClinic
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Fixture Loading Mechanism for Integration Tests
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="PetClinic" class="md-nav__button md-logo" aria-label="PetClinic" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    PetClinic
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Moxter
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Moxter
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../moxter/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../moxter/first_simple_example/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Simple Example
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../moxter/fixtures.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Syntax
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../moxter/fixtures.md#basedon" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Inheritance (basedOn)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../moxter/variables.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_6" id="__nav_2_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Features
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Features
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../moxter/multipart.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multipart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../moxter/index.md#lax-mode" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lax Modes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../moxter/examples.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cookbook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-spring-transactional-fixture-loading-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt; 1. Spring Transactional Fixture Loading (Recommended)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="&gt; 1. Spring Transactional Fixture Loading (Recommended)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; Summary
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-to-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; How to use
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#loading-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; Loading lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; How It Works
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#caveats-with-the-spring-transactional-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; Caveats with the Spring Transactional Strategy
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="&gt;&gt; Caveats with the Spring Transactional Strategy">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-default-propagation-required-joins-the-test-transaction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1) Default propagation (REQUIRED) — joins the test transaction ✅
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-requires_new-or-manual-transactiontemplate-commits-despite-outer-rollback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2) REQUIRES_NEW or manual TransactionTemplate — commits despite outer rollback ⚠️
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-nested-propagation-savepoints-if-supported" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3) NESTED propagation — savepoints (if supported) ✅
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-async-different-threads-no-participation-in-test-tx" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4) Async / different threads — no participation in test TX ⚠️
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-read-only-transactions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5) Read-only transactions 🛈
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-junit-fixture-loading-first-strategy-i-developped" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt; 2. JUnit Fixture Loading (first strategy I developped)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="&gt; 2. JUnit Fixture Loading (first strategy I developped)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#summary_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; Summary
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-to-use_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; How to use
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#loading-lifecycle_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; Loading lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#purging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; Purging
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-it-works_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; How it works
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-common-to-both-fixture-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt; 3. Common to both: Fixture Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-comparison-between-the-two" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt; 4. Comparison between the two
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="&gt; 4. Comparison between the two">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#junit-fixture-loading-extension-based" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; JUnit Fixture Loading (Extension-based)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="fixture-loading-mechanism-for-integration-tests">Fixture Loading Mechanism for Integration Tests</h1>
+<p>The fixture framework I am currently working on aims at providing a structured and flexible 
+mechanism for loading test fixtures into the database during (before) integration 
+tests.</p>
+<p>I started off with one strategy, then tried out another one.
+So there are <strong>two distinct possible strategies</strong>.
+- SpringFixtureLoader
+- JUnitFixtureLoader</p>
+<p><br />
+<br /></p>
+<h2 id="1-spring-transactional-fixture-loading-recommended">&gt; 1. Spring Transactional Fixture Loading (Recommended)</h2>
+<h3 id="summary">&gt;&gt; Summary</h3>
+<p>Fixtures are loaded <em>inside the Spring context</em> and <em>within the test transaction</em>, so that:</p>
+<ul>
+<li>They are rolled back after each test</li>
+<li>No manual purge is needed</li>
+<li>Test classes remain clean and isolated</li>
+</ul>
+<h3 id="how-to-use">&gt;&gt; How to use</h3>
+<p>A meta annotation was created to encapsulate other annotations and simplify things:</p>
+<pre><code class="language-java">@MetaSpringBootTestWithJsonSimpleFixtures
+@Fixtures({ Owner.class, Pet.class })
+class MyIntegrationTest {
+    // Each test runs with fresh data and leaves no residue.
+}
+</code></pre>
+<p>Alternatively, if you prefer not to use the meta-annotation, the important annotations are:</p>
+<pre><code class="language-java">@SpringBootTest
+@Transactional
+@TestExecutionListeners(
+    value = FixtureTestExecutionListener.class,
+    mergeMode = TestExecutionListeners.MergeMode.MERGE_WITH_DEFAULTS
+)
+@Fixtures({ Owner.class, Pet.class })
+class MyIntegrationTest { ... }
+</code></pre>
+<h3 id="loading-lifecycle">&gt;&gt; Loading lifecycle</h3>
+<p>Optional control is given on when the fixtures are loaded with <code>Fixtures.Lifecycle</code> (<code>PER_METHOD</code> or <code>PER_CLASS</code>)
+  The default  is <code>PER_METHOD</code>.  </p>
+<p>Example:</p>
+<pre><code class="language-java">@Fixtures(value = { Owner.class, Pet.class }, lifecycle = Fixtures.Lifecycle.PER_CLASS)
+</code></pre>
+<h3 id="how-it-works">&gt;&gt; How It Works</h3>
+<ul>
+<li>A "fixture loading" execution listener (aka "fixture loader") is registered as a <strong>Spring <code>TestExecutionListener</code></strong>.  </li>
+<li>Spring’s testing framework wraps each test method in a <strong>transaction</strong> when <code>@Transactional</code> is present.  </li>
+<li>The fixture loader <strong>hooks into the Spring test lifecycle</strong> (right after the <code>ApplicationContext</code> is prepared, before the test method executes).  </li>
+<li>At that point, it:</li>
+<li>Opens the test transaction.  </li>
+<li>Loads the requested fixture files/entities into the database.  </li>
+<li>Hands control back to the test.  </li>
+<li>When the test finishes, Spring <strong>rolls back the transaction automatically</strong> → all inserted fixtures vanish, leaving the DB clean.  </li>
+</ul>
+<p>👉 This is why you never need a purge step: Spring guarantees full rollback isolation.</p>
+<p><br /></p>
+<h3 id="caveats-with-the-spring-transactional-strategy">&gt;&gt; Caveats with the Spring Transactional Strategy</h3>
+<p>When the <strong>code under test</strong> starts/participates in its <strong>own transactions</strong>, results may differ from the simple “everything rolls back” mental model. Key cases:</p>
+<h4 id="1-default-propagation-required-joins-the-test-transaction">1) Default propagation (<code>REQUIRED</code>) — joins the test transaction ✅</h4>
+<ul>
+<li>Most <code>@Transactional</code> methods use <strong><code>Propagation.REQUIRED</code></strong> (the default).  </li>
+<li>They <strong>join the test method’s transaction</strong>, so <strong>all writes are rolled back</strong> at the end of the test.  </li>
+<li><strong>Implication:</strong> You cannot observe a real commit inside the same test transaction. If you need to assert post‑commit effects (e.g., visibility to another thread/connection), you must end the test transaction first (see below).</li>
+</ul>
+<h4 id="2-requires_new-or-manual-transactiontemplate-commits-despite-outer-rollback">2) <code>REQUIRES_NEW</code> or manual <code>TransactionTemplate</code> — commits despite outer rollback ⚠️</h4>
+<ul>
+<li>Methods using <strong><code>Propagation.REQUIRES_NEW</code></strong> or an explicit <strong><code>TransactionTemplate</code></strong> start a <strong>separate transaction</strong> that <strong>commits independently</strong>.  </li>
+<li>Even if the <strong>test method</strong> is rolled back, the <strong>inner <code>REQUIRES_NEW</code> work may persist</strong> → <strong>dirty DB after test</strong>.</li>
+<li><strong>Mitigations (pick what fits best):</strong></li>
+<li><strong>Prefer REQUIRED in tests:</strong> Provide a test‑only bean/config that downgrades <code>REQUIRES_NEW</code> to <code>REQUIRED</code> for the code path under test (profile-based or conditional AOP).  </li>
+<li><strong>Explicit cleanup:</strong> Use a targeted cleanup in <code>@AfterEach</code> (truncate affected tables) or <code>@Sql(executionPhase = AFTER_TEST_METHOD, scripts = "...")</code>.  </li>
+<li>
+<p><strong>Transactional choreography with <code>TestTransaction</code>:</strong>
+    ```java
+    // End the test transaction before invoking the code that must really commit:
+    if (TestTransaction.isActive()) {
+        // We typically want isolation; rollback current fixtures to avoid cross-talk
+        TestTransaction.flagForRollback();
+        TestTransaction.end();
+    }</p>
+<p>// Now invoke service method that uses REQUIRES_NEW or real commits
+service.performCriticalCommit();</p>
+<p>// Optionally start a fresh test transaction for assertions/cleanup
+TestTransaction.start();
+// assert DB state, then rely on rollback at test end
+```
+  - <strong>Fallback:</strong> For a small subset of scenarios, use the <strong>JUnit (non-transactional)</strong> strategy + explicit purge to mirror production commit behavior.</p>
+</li>
+</ul>
+<h4 id="3-nested-propagation-savepoints-if-supported">3) <code>NESTED</code> propagation — savepoints (if supported) ✅</h4>
+<ul>
+<li>With <strong><code>Propagation.NESTED</code></strong>, Spring uses <strong>savepoints</strong> (driver dependent).  </li>
+<li>An <strong>outer rollback rolls back nested work as well</strong> → typically safe in tests.</li>
+</ul>
+<h4 id="4-async-different-threads-no-participation-in-test-tx">4) Async / different threads — no participation in test TX ⚠️</h4>
+<ul>
+<li>Work run via <code>@Async</code>, scheduler threads, or separate executors <strong>does not join</strong> the test transaction by default.  </li>
+<li>Such work may <strong>commit independently</strong> and persist. Consider disabling async in tests, using synchronous executors, or providing explicit cleanup.</li>
+</ul>
+<h4 id="5-read-only-transactions">5) Read-only transactions 🛈</h4>
+<ul>
+<li>If the test (or code under test) uses <code>@Transactional(readOnly = true)</code>, some providers may <strong>optimize away writes</strong> or throw exceptions. Ensure write paths are not annotated read-only in tests that insert fixtures.</li>
+</ul>
+<p><strong>Rule of thumb:</strong><br />
+- If everything uses <strong><code>REQUIRED</code></strong>, the Spring strategy provides perfect isolation.<br />
+- If any path uses <strong><code>REQUIRES_NEW</code> / async / manual transactions</strong>, add one of the mitigations above to avoid residue or false assertions.</p>
+<p><br />
+<br /></p>
+<h2 id="2-junit-fixture-loading-first-strategy-i-developped">&gt; 2. JUnit Fixture Loading (first strategy I developped)</h2>
+<h3 id="summary_1">&gt;&gt; Summary</h3>
+<p>Fixtures are loaded using a JUnit 5 extension that hooks into <code>@BeforeEach</code> or <code>@BeforeAll</code>.
+This is the first strategy that I developed, however it does not natively support "purging"
+the DB after each test. This can be done, but I haven't got round to it, since the Spring 
+transactional strategy seemed better.</p>
+<h3 id="how-to-use_1">&gt;&gt; How to use</h3>
+<pre><code class="language-java">@ExtendWith(FixtureExtension.class)
+@Fixtures(value = { Owner.class, Pet.class }, lifecycle = Fixtures.Lifecycle.PER_METHOD)
+class MyTest {
+    // Fixtures are loaded outside of Spring’s transaction mechanism
+}
+</code></pre>
+<h3 id="loading-lifecycle_1">&gt;&gt; Loading lifecycle</h3>
+<p>Optional control is given on when the fixtures are loaded with <code>Fixtures.Lifecycle</code> (<code>PER_METHOD</code> or <code>PER_CLASS</code>)
+  The default  is <code>PER_METHOD</code>.</p>
+<h3 id="purging">&gt;&gt; Purging</h3>
+<p>Since there's no rollback or DB purging, cleanup must be managed "by hand" if needed</p>
+<h3 id="how-it-works_1">&gt;&gt; How it works</h3>
+<ul>
+<li>The <code>FixtureExtension</code> is a <strong>JUnit 5 extension</strong>.  </li>
+<li>It hooks into the <strong>JUnit lifecycle callbacks</strong>:  </li>
+<li><code>beforeEach</code> → loads fixtures before each test method.  </li>
+<li><code>beforeAll</code> → loads fixtures once per test class.  </li>
+<li>No Spring transaction is involved, so the data is <strong>committed directly to the database</strong>.  </li>
+<li>That means:</li>
+<li>Data will persist across tests unless you clean it manually.  </li>
+<li>You can still control timing (<code>PER_METHOD</code> vs <code>PER_CLASS</code>), but not rollback.  </li>
+</ul>
+<p>👉 This is why the Spring version is preferred: it leverages the built-in transaction management that Spring already provides.</p>
+<p><br />
+<br /></p>
+<h2 id="3-common-to-both-fixture-configuration">&gt; 3. Common to both: Fixture Configuration</h2>
+<p>Fixtures are declared in JSON and stored in:</p>
+<pre><code>src/test/resources/json_simple_fixtures/tests/&lt;TestClassName&gt;/&lt;EntityClass&gt;.json
+</code></pre>
+<p>For example:</p>
+<pre><code>src/test/resources/json_simple_fixtures/tests/MyIntegrationTest/Owner.json
+</code></pre>
+<p>Fixtures must be listed in the correct order if there are relationships:</p>
+<pre><code class="language-java">@Fixtures({ Owner.class, Pet.class })
+</code></pre>
+<p><br />
+<br /></p>
+<h2 id="4-comparison-between-the-two">&gt; 4. Comparison between the two</h2>
+<p><br /></p>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>SpringFixtureLoader</th>
+<th>JUnitFixtureLoader</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Managed by Spring</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td>Transaction rollback</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td>Automatic fixture cleanup</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td>Requires <code>@ExtendWith</code></td>
+<td>No</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>Recommended for most tests</td>
+<td>Yes</td>
+<td>No (use only if needed)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="junit-fixture-loading-extension-based">&gt;&gt; JUnit Fixture Loading (Extension-based)</h3>
+<hr />
+<ul>
+<li>The <code>FixtureExtension</code> is a <strong>JUnit 5 extension</strong>.  </li>
+<li>It hooks into the <strong>JUnit lifecycle callbacks</strong>:  </li>
+<li><code>beforeEach</code> → loads fixtures before each test method.  </li>
+<li><code>beforeAll</code> → loads fixtures once per test class.  </li>
+<li>No Spring transaction is involved, so the data is <strong>committed directly to the database</strong>.  </li>
+<li>That means:</li>
+<li>Data will persist across tests unless you clean it manually.  </li>
+<li>You can still control timing (<code>PER_METHOD</code> vs <code>PER_CLASS</code>), but not rollback.  </li>
+</ul>
+<p>👉 This is why the Spring version is preferred: it leverages the built-in transaction management that Spring already provides.</p>
+<hr />
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": [], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,995 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://franzhill.github.io/PetClinic/profiling_hibernate/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.2">
+    
+    
+      
+        <title>SQL Profiling and Performance Diagnostics - PetClinic</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#sql-profiling-and-performance-diagnostics" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="PetClinic" class="md-header__button md-logo" aria-label="PetClinic" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            PetClinic
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              SQL Profiling and Performance Diagnostics
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="PetClinic" class="md-nav__button md-logo" aria-label="PetClinic" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    PetClinic
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Moxter
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Moxter
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../moxter/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../moxter/first_simple_example/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Simple Example
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../moxter/fixtures.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Syntax
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../moxter/fixtures.md#basedon" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Inheritance (basedOn)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../moxter/variables.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_6" id="__nav_2_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Features
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Features
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../moxter/multipart.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multipart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../moxter/index.md#lax-mode" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lax Modes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../moxter/examples.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cookbook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-performance-profiler-hibernate-statistics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt; 1. Performance Profiler (Hibernate statistics)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="&gt; 1. Performance Profiler (Hibernate statistics)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; Strategy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; How it works
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; Example output
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#enabling-and-disabling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; Enabling and disabling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#strengthslimitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; Strengths/Limitations
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-jdbc-sql-profiling-via-datasource-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt; 2. JDBC SQL Profiling via datasource-proxy
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="&gt; 2. JDBC SQL Profiling via datasource-proxy">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#strategy_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; Strategy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-it-works_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; How it works
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#required-maven-dependency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; Required Maven dependency
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#output-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; Output example
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#enabling-and-disabling_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; Enabling and disabling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#strengthslimitations_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; Strengths/Limitations
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-summary-comparison" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt; 3. Summary Comparison
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-final-thoughts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt; 4. Final thoughts
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="sql-profiling-and-performance-diagnostics">SQL Profiling and Performance Diagnostics</h1>
+<p>This project includes two complementary profiling mechanisms that enhance visibility into SQL query behavior and ORM performance:</p>
+<ol>
+<li><strong>Performance Profiler (Hibernate Statistics)</strong> – "descending": trace how many requests domain level methods have generated.</li>
+<li><strong>JDBC SQL Proxy Logging</strong> – trace what domain level method generated individual SQL queries</li>
+</ol>
+<p>These tools can prove highly helpful during development and diagnostics to help identify performance bottlenecks and detect inefficient database access patterns.  </p>
+<p>Both mechanisms are opt-in and non-invasive.</p>
+<p><strong>Why is this useful?</strong>  </p>
+<blockquote>
+<p>Hibernate abstracts away SQL – which is great, until performance issues arise.
+But once they do, just enabling <code>org.hibernate.SQL</code> logs shows what SQL is executed, not who triggered it.<br />
+These tools make it possible to <strong>link domain methods to actual SQL queries played against the DB.</strong>
+Understanding <strong>who triggers which SQL</strong>, and <strong>how often</strong>, comes in as essential for:
+- Detecting <strong>N+1 query problems</strong>
+- Profiling <strong>slow queries</strong>
+- Understanding <strong>ORM caching behavior</strong>
+- Tracing code paths that result in SQL calls</p>
+</blockquote>
+<p><br /></p>
+<h2 id="1-performance-profiler-hibernate-statistics">&gt; 1. Performance Profiler (Hibernate statistics)</h2>
+<h3 id="strategy">&gt;&gt; Strategy</h3>
+<hr />
+<p>Collect and log <strong>high-level Hibernate metrics</strong> like:</p>
+<ul>
+<li>Number of SQL queries executed per transaction</li>
+<li>Second-level cache hits/misses</li>
+<li>Entity load/fetch count</li>
+</ul>
+<p>This gives us a <strong>global view</strong> of ORM activity.
+<br /></p>
+<h3 id="how-it-works">&gt;&gt; How it works</h3>
+<hr />
+<p>A Spring <code>@Aspect</code> is defined and wraps method execution (usually on service classes) to capture Hibernate metrics before and after method calls.</p>
+<p>It uses:
+- Hibernate <code>SessionFactory.getStatistics()</code>
+- Java reflection to log method/class
+- Execution time and query count before/after method call</p>
+<p>The Aspect logs these different statistics, providing <strong>method-level performance snapshots.</strong></p>
+<h3 id="example-output">&gt;&gt; Example output</h3>
+<hr />
+<pre><code>PROFILING (Hibernate stats)--- Method CustomerQueryServiceImpl.findAllAccountByBu took 152 ms, triggered 8 SQL queries, 7 entities loaded, 5 collections loaded
+</code></pre>
+<h3 id="enabling-and-disabling">&gt;&gt; Enabling and disabling</h3>
+<hr />
+<p>In app config file (application.yaml e.g.):</p>
+<pre><code class="language-yaml">profiling:
+  performance:
+    enabled: true
+    logLinePrefix: &quot;PROFILING (Hibernate stats)---&quot;
+</code></pre>
+<h3 id="strengthslimitations">&gt;&gt; Strengths/Limitations</h3>
+<hr />
+<p>✅ Shows cumulative ORM cost of high-level methods<br />
+✅ Exposes cache efficiency<br />
+✅ Helps detect query spam<br />
+❌ Doesn't show actual SQL<br />
+❌ No per-query granularity  </p>
+<p><br /></p>
+<h2 id="2-jdbc-sql-profiling-via-datasource-proxy">&gt; 2. JDBC SQL Profiling via <code>datasource-proxy</code></h2>
+<h3 id="strategy_1">&gt;&gt; Strategy</h3>
+<hr />
+<p>Intercept <strong>every actual SQL statement</strong> executed at JDBC level, and log:</p>
+<ul>
+<li>The <strong>SQL</strong></li>
+<li>The <strong>execution time (ms)</strong></li>
+<li>The <strong>Java class, method, and line number</strong> that triggered it</li>
+</ul>
+<p>This is <strong>code-aware</strong> profiling: it bridges the gap between SQL and your business logic.</p>
+<p><br /></p>
+<h3 id="how-it-works_1">&gt;&gt; How it works</h3>
+<hr />
+<p>See DataSourceProxyConfig.java.  </p>
+<ul>
+<li>A proxy wraps the <code>DataSource</code> using [datasource-proxy] (https://github.com/ttddyy/datasource-proxy)</li>
+<li>The proxy is registered as the primary <code>DataSource</code> (via <code>@Primary</code>)</li>
+<li>A custom <code>QueryExecutionListener</code> logs details after each SQL execution</li>
+<li>To avoid a circular dependency (Liquibase needs a DataSource early), an additional non-proxied <code>liquibaseDataSource</code> is defined</li>
+</ul>
+<h3 id="required-maven-dependency">&gt;&gt; Required Maven dependency</h3>
+<hr />
+<pre><code class="language-xml">&lt;dependency&gt;
+    &lt;groupId&gt;net.ttddyy&lt;/groupId&gt;
+    &lt;artifactId&gt;datasource-proxy&lt;/artifactId&gt;
+    &lt;version&gt;1.9&lt;/version&gt;
+&lt;/dependency&gt;
+</code></pre>
+<h3 id="output-example">&gt;&gt; Output example</h3>
+<hr />
+<pre><code>PROFILING (dataproxy)--- SQL executed (11 ms) from [CustomerQueryServiceImpl:findAllAccountByBu:70]
+SELECT * FROM customer WHERE region = 'EU'
+</code></pre>
+<h3 id="enabling-and-disabling_1">&gt;&gt; Enabling and disabling</h3>
+<hr />
+<p>In app config file (application.yaml e.g.):</p>
+<pre><code class="language-yaml">profiling:
+  sql:
+    enabled: true
+    logLinePrefix: &quot;PROFILING (dataproxy)---&quot;
+</code></pre>
+<h3 id="strengthslimitations_1">&gt;&gt; Strengths/Limitations</h3>
+<hr />
+<p>✅ Logs every SQL<br />
+✅ Associates queries to the triggering code<br />
+✅ Measures latency per query<br />
+✅ Works across Hibernate, JPA, JdbcTemplate, etc.<br />
+❌ Cannot introspect ORM-level events (cache, flush, etc.)<br />
+❌ Log volume can be high  </p>
+<p><br /></p>
+<h2 id="3-summary-comparison">&gt; 3. Summary Comparison</h2>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>Performance Profiler (Hibernate statistics)</th>
+<th>SQL Proxy (<code>datasource-proxy</code>)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SQL visibility</td>
+<td>❌ No</td>
+<td>✅ Yes</td>
+</tr>
+<tr>
+<td>Execution timing</td>
+<td>❌ No</td>
+<td>✅ Yes</td>
+</tr>
+<tr>
+<td>Shows triggering class/method</td>
+<td>❌ No</td>
+<td>✅ Yes</td>
+</tr>
+<tr>
+<td>ORM cache, flush, lazy loading info</td>
+<td>✅ Yes</td>
+<td>❌ No</td>
+</tr>
+<tr>
+<td>Tracks total query counts</td>
+<td>✅ Yes</td>
+<td>❌ Not directly</td>
+</tr>
+<tr>
+<td>Easily filtered in logs</td>
+<td>✅ Yes (log prefix customizable)</td>
+<td>✅ Yes (log prefix customizable)</td>
+</tr>
+</tbody>
+</table>
+<p><br /></p>
+<h2 id="4-final-thoughts">&gt; 4. Final thoughts</h2>
+<p>These two tools operate at different layers but together give a <strong>complete view</strong> of:</p>
+<ul>
+<li>What SQL was executed  </li>
+<li>Where in the code it was triggered  </li>
+<li>How long it took  </li>
+<li>What Hibernate was doing under the hood  </li>
+</ul>
+<p>Use them during feature development, refactoring, or performance tuning.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": [], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

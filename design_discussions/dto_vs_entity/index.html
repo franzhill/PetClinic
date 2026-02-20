@@ -1,0 +1,1322 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://franzhill.github.io/PetClinic/design_discussions/dto_vs_entity/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.2">
+    
+    
+      
+        <title>DTO vs Entity Mapping Strategy – Balancing Boilerplate and Clean Design - PetClinic</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#dto-vs-entity-mapping-strategy-balancing-boilerplate-and-clean-design" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="PetClinic" class="md-header__button md-logo" aria-label="PetClinic" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            PetClinic
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              DTO vs Entity Mapping Strategy – Balancing Boilerplate and Clean Design
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="PetClinic" class="md-nav__button md-logo" aria-label="PetClinic" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    PetClinic
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Moxter
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Moxter
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../moxter/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../moxter/first_simple_example/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Simple Example
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../moxter/fixtures.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Syntax
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../moxter/fixtures.md#basedon" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Inheritance (basedOn)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../moxter/variables.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_6" id="__nav_2_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Features
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Features
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../moxter/multipart.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multipart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../moxter/index.md#lax-mode" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lax Modes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../moxter/examples.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cookbook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#using-entities-directly-instead-of-dtos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt; Using Entities Directly Instead of DTOs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="&gt; Using Entities Directly Instead of DTOs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#techniques" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; Techniques
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pros" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ✅ Pros
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cons" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ❌ Cons
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-records-and-projections-to-reduce-dto-boilerplate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt; Using Records and Projections to Reduce DTO Boilerplate
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="&gt; Using Records and Projections to Reduce DTO Boilerplate">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#java-records-for-dtos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; Java Records for DTOs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="&gt;&gt; Java Records for DTOs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pros_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ✅ Pros
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cons_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ❌ Cons
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interface-based-projections-read-only-dtos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; Interface-based Projections (Read-Only DTOs)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="&gt;&gt; Interface-based Projections (Read-Only DTOs)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pros_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ✅ Pros
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cons_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ❌ Cons
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; Summary
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-separate-dtos-data-transfer-objects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt; Using Separate DTOs (Data Transfer Objects)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="&gt; Using Separate DTOs (Data Transfer Objects)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pros_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ✅ Pros
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cons_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ❌ Cons
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-needs-to-be-done-when-using-dtos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt; What Needs to Be Done When Using DTOs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="&gt; What Needs to Be Done When Using DTOs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mapping-strategies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; Mapping Strategies
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="&gt;&gt; Mapping Strategies">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mapstruct-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt;&gt; MapStruct (Recommended)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#modelmapper" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt;&gt; ModelMapper
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#case-study-mapping-a-string-to-an-entity-species" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt; Case Study: Mapping a String to an Entity (Species)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="&gt;&gt; Case Study: Mapping a String to an Entity (Species)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-we-want-to-achieve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt;&gt; What We Want to Achieve
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#strategies-to-resolve-a-string-to-an-entity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt;&gt; Strategies to Resolve a String to an Entity
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="&gt;&gt;&gt; Strategies to Resolve a String to an Entity">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#option-1-enrich-in-the-service-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt;&gt;&gt; Option 1: Enrich in the Service Layer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-2-use-mappingexpression-in-mapstruct" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt;&gt;&gt; Option 2: Use @Mapping(expression = "...") in MapStruct
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-3-custom-json-deserializer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt;&gt;&gt; Option 3: Custom JSON Deserializer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-4-spring-initbinder-with-propertyeditor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt;&gt;&gt; Option 4: Spring @InitBinder with PropertyEditor
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#summary_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt;&gt;&gt; Summary
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#final-approach-chosen-for-this-project" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        &gt; Final Approach Chosen for This Project
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="dto-vs-entity-mapping-strategy-balancing-boilerplate-and-clean-design">DTO vs Entity Mapping Strategy – Balancing Boilerplate and Clean Design</h1>
+<p>True to my principle of trying to limit boilerplate code as much as possible, I’ve explored several approaches to handle request mapping between incoming payloads and our domain model. As always, there’s no perfect solution — only trade-offs.</p>
+<p>The fundamental tension is this:</p>
+<blockquote>
+<p>Most DTOs are nearly identical to their Entity counterparts, so duplicating field definitions and writing mapping logic feels wasteful.<br />
+But exposing Entities directly is risky, especially in APIs shared with clients or frontends.</p>
+</blockquote>
+<p><br /></p>
+<h2 id="using-entities-directly-instead-of-dtos">&gt; Using Entities Directly Instead of DTOs</h2>
+<p>This means making the JPA entity double as the API payload class.</p>
+<h3 id="techniques">&gt;&gt; Techniques</h3>
+<hr />
+<ul>
+<li>With <strong>Jackson</strong>:</li>
+<li>Use <code>@JsonIgnore</code>, <code>@JsonProperty(access = WRITE_ONLY)</code>, etc.</li>
+<li>
+<p>Use <code>@Transient</code> for fields not persisted but needed at the API level.</p>
+</li>
+<li>
+<p>With <strong>GSON</strong>:</p>
+</li>
+<li>Use <code>@Expose</code> to control which fields participate in (de)serialization.</li>
+</ul>
+<h3 id="pros">✅ Pros</h3>
+<ul>
+<li><strong>Minimal boilerplate</strong> — no need to write or maintain separate DTOs.</li>
+<li>Especially useful when DTOs and Entities are 90% identical (which is <strong>very often</strong> the case).</li>
+<li>Works well for internal projects or quick-and-dirty endpoints.</li>
+<li>Automatic deserialization with almost no setup.</li>
+</ul>
+<h3 id="cons">❌ Cons</h3>
+<ul>
+<li><strong>Mixes concerns</strong> — Entities now serve multiple roles (persistence + API contract).</li>
+<li>Difficult to control what is exposed vs writable vs internal.</li>
+<li>Hard to evolve without breaking consumers (since persistence changes may leak into the API).</li>
+<li><strong>Doesn’t play well with OpenAPI generation</strong> — auto-generated schema will reflect JPA internals.</li>
+</ul>
+<p><br /></p>
+<h2 id="using-records-and-projections-to-reduce-dto-boilerplate">&gt; Using Records and Projections to Reduce DTO Boilerplate</h2>
+<h3 id="java-records-for-dtos">&gt;&gt; Java Records for DTOs</h3>
+<hr />
+<p>Java records are a concise way to declare immutable data carriers — a perfect fit for simple request/response DTOs.<br />
+However they are also primarily intended for read-only data and aren't ideal when you need mutable objects for writes, updates, or JPA-managed entities.</p>
+<pre><code class="language-java">public record PetCreateDto(
+    String name,
+    LocalDate birthDate,
+    String sex,
+    String species,
+    Long ownerId,
+    String coatColor,
+    String eyeColor,
+    Double degeneracyScore
+) {}
+</code></pre>
+<h4 id="pros_1">✅ Pros</h4>
+<ul>
+<li>✅ Ultra-concise — no getters/setters/constructors/equals/hashCode/<code>toString</code> to write.</li>
+<li>✅ Immutability by default — great for clean functional-style code.</li>
+<li>✅ Works well with Jackson, OpenAPI generators (as long as compatible).</li>
+<li>✅ Encourages clear, flat, intention-revealing DTOs.</li>
+</ul>
+<h4 id="cons_1">❌ Cons</h4>
+<ul>
+<li>❌ Only really suited for Read-only</li>
+<li>❌ No field-level annotations allowed inside the record declaration (e.g. <code>@NotNull</code>, <code>@JsonProperty</code>, etc.) — you have to annotate the compact constructor or fields externally.</li>
+<li>❌ Not ideal for very large or deeply nested DTOs.</li>
+<li>⚠️ Not all code generators support them equally well (check OpenAPI version compatibility).</li>
+</ul>
+<p><br /></p>
+<blockquote>
+<p>💡 Use records when DTOs are flat, simple, and immutable — they shine for request payloads and projections.</p>
+</blockquote>
+<p><br /></p>
+<h3 id="interface-based-projections-read-only-dtos">&gt;&gt; Interface-based Projections (Read-Only DTOs)</h3>
+<hr />
+<p>Spring Data JPA supports defining projections as interfaces that only expose selected fields of an entity — <strong>without writing full DTO classes</strong>.</p>
+<pre><code class="language-java">public interface PetSummary {
+    String getName();
+    String getSpeciesName();
+}
+</code></pre>
+<p>And in the repository:</p>
+<pre><code class="language-java">List&lt;PetSummary&gt; findByOwnerId(Long ownerId);
+</code></pre>
+<p>Spring will automatically:
+- Generate a proxy that reads only the needed fields.
+- Avoid loading the full entity unless necessary.</p>
+<h4 id="pros_2">✅ Pros</h4>
+<ul>
+<li>✅ No boilerplate — just declare what you need.</li>
+<li>✅ Extremely useful for API read models (summaries, lists, etc.).</li>
+<li>✅ Encourages separation of read/write models (CQRS-like).</li>
+</ul>
+<h4 id="cons_2">❌ Cons</h4>
+<ul>
+<li>❌ Read-only — can’t be used for deserialization or mutation.</li>
+<li>❌ No logic allowed — no methods, just getters.</li>
+<li>❌ Fragile if your field names change in the entity.</li>
+<li>⚠️ Not well-suited for deep or nested object graphs.</li>
+</ul>
+<p><br /></p>
+<blockquote>
+<p>💡 Ideal for paginated tables, read-only views, summaries, and frontend optimization.</p>
+</blockquote>
+<p><br /></p>
+<h3 id="summary">&gt;&gt; Summary</h3>
+<hr />
+<table>
+<thead>
+<tr>
+<th>Use case</th>
+<th>Strategy</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>✅ Clean, flat request DTOs</td>
+<td>Use <code>record</code></td>
+</tr>
+<tr>
+<td>✅ Projection of specific fields from Entity</td>
+<td>Use <code>interface</code>-based Spring projections</td>
+</tr>
+<tr>
+<td>❌ Mutable request payloads with validation logic</td>
+<td>Stick with standard class-based DTOs</td>
+</tr>
+</tbody>
+</table>
+<p>Both techniques can <strong>reduce boilerplate</strong> and <strong>improve clarity</strong>, especially when paired with MapStruct or other structured mapping approaches.</p>
+<p><br /></p>
+<h2 id="using-separate-dtos-data-transfer-objects">&gt; Using Separate DTOs (Data Transfer Objects)</h2>
+<p>This is the industry-favored approach (warning! this does not mean it's necessarily the best. Remember EJBs?): DTOs represent the API schema, while Entities remain persistence-only.</p>
+<h3 id="pros_3">✅ Pros</h3>
+<ul>
+<li><strong>Clean separation of layers</strong> — API contracts are decoupled from internal model.</li>
+<li><strong>Compatible with OpenAPI generator</strong> — DTOs can be auto-generated from the spec.</li>
+<li><strong>Reusable in frontends</strong> — same DTO classes can power client-side types (TS/JS).</li>
+<li>Easier to control validation and serialization.</li>
+</ul>
+<h3 id="cons_3">❌ Cons</h3>
+<ul>
+<li><strong>Boilerplate mapping logic</strong> — especially when the DTO and Entity have matching fields.</li>
+<li>Extra layer of maintenance when the domain model changes.</li>
+<li>May feel like overkill for small apps or simple forms.</li>
+</ul>
+<p><br /></p>
+<h2 id="what-needs-to-be-done-when-using-dtos">&gt; What Needs to Be Done When Using DTOs</h2>
+<p>We’ll need a <strong>mapping layer</strong> to translate between DTO and Entity.</p>
+<h3 id="mapping-strategies">&gt;&gt; Mapping Strategies</h3>
+<hr />
+<h4 id="mapstruct-recommended">&gt;&gt;&gt; MapStruct (Recommended)</h4>
+<hr />
+<ul>
+<li>Compile-time code generation.</li>
+<li>Clean, fast, and easy to test.</li>
+<li>Supports repository injection via abstract class.</li>
+<li>Works great with Spring.</li>
+</ul>
+<p>Example:</p>
+<pre><code class="language-java">@Mapper(componentModel = &quot;spring&quot;)
+public abstract class PetMapper {
+    @Autowired SpeciesRepository speciesRepo;
+    @Mapping(target = &quot;species&quot;, expression = &quot;java(speciesRepo.findByName(dto.getSpecies()).orElseThrow())&quot;)
+    public abstract Pet toEntity(PetCreateDto dto);
+}
+</code></pre>
+<h4 id="modelmapper">&gt;&gt;&gt; ModelMapper</h4>
+<hr />
+<ul>
+<li>Reflection-based.</li>
+<li>Less verbose, but <strong>slower and less safe</strong>.</li>
+<li>Difficult to inject services or repositories.</li>
+<li>Runtime config needed for enrichment logic.</li>
+</ul>
+<p><br /></p>
+<h3 id="case-study-mapping-a-string-to-an-entity-species">&gt;&gt; Case Study: Mapping a String to an Entity (<code>Species</code>)</h3>
+<hr />
+<h4 id="what-we-want-to-achieve">&gt;&gt;&gt; What We Want to Achieve</h4>
+<hr />
+<p>Rather than forcing API consumers to send opaque database IDs like:</p>
+<pre><code class="language-json">{
+  &quot;speciesId&quot;: 345
+}
+</code></pre>
+<p>…we'd like to let them simply send:</p>
+<pre><code class="language-json">{
+  &quot;species&quot;: &quot;DOG&quot;
+}
+</code></pre>
+<p>This is:
+- More intuitive for clients (who likely don’t care about internal DB IDs)
+- Easier to debug and test
+- More readable in logs, Postman, and OpenAPI docs
+- More stable across environments (IDs can change, names generally don’t)</p>
+<p>We want this <code>species</code> string (e.g. <code>"DOG"</code>) to be resolved internally into a <code>Species</code> JPA entity, and injected into the resulting domain object.</p>
+<h4 id="strategies-to-resolve-a-string-to-an-entity">&gt;&gt;&gt; Strategies to Resolve a String to an Entity</h4>
+<hr />
+<h5 id="option-1-enrich-in-the-service-layer">&gt;&gt;&gt;&gt; Option 1: Enrich in the Service Layer</h5>
+<hr />
+<p>In this approach, a clear distinction is kept between:</p>
+<ul>
+<li><code>PetCreateDto</code>: the OpenAPI-generated DTO received from the client, with simple fields like <code>String species</code>, <code>Long ownerId</code>.</li>
+<li><code>Pet</code>: the JPA entity model, which expects full references (<code>Species</code>, <code>Owner</code>).</li>
+</ul>
+<p>A mapper (e.g. MapStruct) is used to copy the simple fields from <code>PetCreateDto</code> into a partially constructed <code>Pet</code> object, and then enrich that object inside the <code>PetService</code> before saving it.<br />
+This is where the translation happens:</p>
+<pre><code class="language-java">public Pet createPet(PetCreateDto dto) 
+{
+    Pet pet = petMapper.toEntity(dto); // Maps simple fields, species still null
+
+    Species species = speciesRepository.findByNameIgnoreCase(dto.getSpecies())
+                                       .orElseThrow(
+                                        () -&gt; new IllegalArgumentException(
+                                             &quot;Unknown  species: &quot; + dto.getSpecies()));
+    pet.setSpecies(species);
+    return petRepository.save(pet);
+}
+</code></pre>
+<p>✅ Simple and explicit — each step is clear and under your control.<br />
+✅ No Spring binding magic — avoids confusion caused by @InitBinder, custom deserializers, etc.<br />
+✅ Easy to debug and log — you can log unresolved species names or fallback behavior.<br />
+❌ Slightly more verbose — enrichment code lives in the service layer, and may repeat across similar services if not factored out.<br />
+❌ Split logic — mapping and enrichment are separated, which can feel less cohesive than having it all in one place (e.g. in the mapper).  </p>
+<blockquote>
+<p>This approach works well when clarity is valued handling a bit of logic in the service is not a problem. It also makes unit testing easier by keeping repository access and enrichment explicit and injectable.</p>
+</blockquote>
+<p><br /></p>
+<h5 id="option-2-use-mappingexpression-in-mapstruct">&gt;&gt;&gt;&gt; Option 2: Use <code>@Mapping(expression = "...")</code> in MapStruct</h5>
+<hr />
+<p>The enrichment logic is pushed into the mapper itself:</p>
+<pre><code class="language-java">@Mapper(componentModel = &quot;spring&quot;)
+public abstract class PetMapper 
+{
+    @Autowired SpeciesRepository speciesRepo;
+
+    @Mapping(target = &quot;species&quot;, 
+             expression = &quot;java(speciesRepo.findByNameIgnoreCase(dto.getSpecies()).orElseThrow())&quot;)
+    public abstract Pet toEntity(PetCreateDto dto);
+}
+</code></pre>
+<p>✅ Keeps service layer ultra-minimal<br />
+✅ All mapping logic lives in one place<br />
+⚠️ Slightly harder to unit test<br />
+⚠️ Can feel "magic" if abused</p>
+<p><br /></p>
+<h5 id="option-3-custom-json-deserializer">&gt;&gt;&gt;&gt; Option 3: Custom JSON Deserializer</h5>
+<hr />
+<p>Attach a <code>@JsonDeserialize(using = ...)</code> to the <code>species</code> field and resolve the entity in the deserializer.</p>
+<pre><code class="language-java">public class Pet
+{   ...
+    @JsonDeserialize(using = SpeciesDeserializer.class)
+    private Species species;
+</code></pre>
+<p>❌ Doesn't play well with Spring DI (you don’t get your repository injected)<br />
+❌ Adds complexity to serialization logic<br />
+✅ Works for enum-style value mapping (not full entities)</p>
+<p><br /></p>
+<h5 id="option-4-spring-initbinder-with-propertyeditor">&gt;&gt;&gt;&gt; Option 4: Spring <code>@InitBinder</code> with <code>PropertyEditor</code></h5>
+<hr />
+<p>A custom editor for <code>Species</code> is registered that resolves a string into an entity:</p>
+<pre><code class="language-java">@InitBinder
+public void initBinder(WebDataBinder binder)
+{
+    binder.registerCustomEditor(Species.class, new SpeciesEditor(speciesRepository));
+}
+</code></pre>
+<p>⚠️ Works only for fields bound via <code>@RequestParam</code> or if the DTO directly contains a <code>Species</code> object<br />
+❌ Not triggered when DTOs use <code>String species</code><br />
+✅ Clean Spring idiom — but better suited to simpler types or legacy code</p>
+<p><br /></p>
+<h4 id="summary_1">&gt;&gt;&gt; Summary</h4>
+<hr />
+<p>Using business-friendly identifiers (like <code>"DOG"</code> instead of <code>345</code>) improves API usability and readability. For enrichment, we found that <strong>MapStruct with repository injection</strong> offered the best balance of cleanliness, safety, and developer happiness.</p>
+<p><br /></p>
+<h2 id="final-approach-chosen-for-this-project">&gt; Final Approach Chosen for This Project</h2>
+<p>After evaluating the above, the following seems like the best compromise:</p>
+<blockquote>
+<p><strong>OpenAPI-generated DTOs + MapStruct abstract class</strong></p>
+</blockquote>
+<p><strong>Why?</strong></p>
+<ul>
+<li>Keeps DTOs aligned with the OpenAPI contract (automated, client-friendly).</li>
+<li>Avoids writing mapping boilerplate — MapStruct does the heavy lifting.</li>
+<li>Injects repositories directly in the mapper for field enrichment (<code>Species</code>, <code>Owner</code>, etc.).</li>
+<li>All logic is centralized and testable.</li>
+<li>Maintains clean layering between API and persistence.</li>
+</ul>
+<pre><code class="language-java">@Mapper(componentModel = &quot;spring&quot;)
+public abstract class PetMapper 
+{
+    @Autowired SpeciesRepository speciesRepo;
+    @Autowired OwnerRepository ownerRepo;
+
+    @Mapping(target = &quot;species&quot;, expression = &quot;java(speciesRepo.findByNameIgnoreCase(dto.getSpecies()).orElseThrow())&quot;)
+    @Mapping(target = &quot;owner&quot;, expression = &quot;java(ownerRepo.findById(dto.getOwnerId()).orElseThrow())&quot;)
+    public abstract Pet toEntity(PetCreateDto dto);
+}
+</code></pre>
+<blockquote>
+<p>This gives us a pragmatic balance between developer productivity and clean architecture.<br />
+One mapper, no manual setters, zero surprises.</p>
+</blockquote>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
