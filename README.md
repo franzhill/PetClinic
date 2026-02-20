@@ -11,7 +11,7 @@ It also hosts a collection of focused exercises on Spring and Hibernate that I r
 Work in constant progress!
 
 <br />
-Full documentation: [https://franzhill.github.io/PetClinic][https://franzhill.github.io/PetClinic]
+Full documentation: [https://franzhill.github.io/PetClinic/](https://franzhill.github.io/PetClinic/)
 
 <br />
 
