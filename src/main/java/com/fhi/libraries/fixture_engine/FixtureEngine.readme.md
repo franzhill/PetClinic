@@ -301,7 +301,7 @@ fixtures:
     expectedStatus: 201
 ```
 
-### Resolution behavior
+### 3.3) Resolution behavior
 - `fx.callFixture("create_order")` in `OrderApiIT` resolves to the **closest** definition:
   - first looks in `.../order/OrderApiIT/fixtures.yaml` (no match),
   - then `.../order/fixtures.yaml` (**match — used**),

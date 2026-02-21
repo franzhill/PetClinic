@@ -39,7 +39,7 @@ import com.fhi.pet_clinic.config.SpringTestConfig;
 // when the test class is initialized.
 // So once per test class, not before each test.
 // That context is shared across all test methods in the class.
-@SpringBootTest
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.MOCK)  // Uses a mock servlet environment (do not launch an embedded server).
 
 // This tells Spring to destroy and recreate the entire application context after the test class.
 // It’s heavy (slow), but guarantees a clean state.

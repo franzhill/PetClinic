@@ -1,11 +1,22 @@
 # Introduction
 
 
-**Moxter** (previously **FixtureEngine**) is a lightweight, configuration-oriented, Spring `MockMvc`-based utility designed to facilitate and automate JUnit test set-up.
+**Moxter** (previously **FixtureEngine**) is a lightweight, standalone, configuration-oriented framework that leverages Spring's `MockMvc` to facilitate and rationalize the setting up of JUnit automated tests.
 
-It provides a declarative way to describe test setup steps, aka "fixtures", necessary to set up the context of a JUnit test before performing the core test logic.
+It provides a declarative way to describe test setup steps - sometimes referred to as "fixtures", especially in the Python ecosystem - necessary to set up the context in which the core JUnit test logic should perform, relying on calls to your exposed REST API to do so.
 
-Instead of scattering `MockMvc` calls and JSON boilerplate throughout the tests themselves, FixtureEngine centralizes and configures the set-up steps in YAML files, which can then be executed on demand from within the test itself. This makes tests shorter, more readable, and easier to maintain.
+## The Problem: Setup Fatigue
+Instead of setting up pre-test contexts "by hand" via scattered `MockMvc` calls and JSON boilerplate throughout the tests themselves, **Moxter** centralizes and configures these steps in YAML files. 
+These can then be executed on demand from within the test itself.
+
+
+## Why use Moxter?
+Using **Moxter** provides several key advantages for maintainable test suites:
+- **Shorter, Cleaner Tests**: Your JUnit tests focus purely on the core assertions rather than the "plumbing" of setup.
+- **Readability**: YAML provides a clean, human-readable format for describing data and API interactions.
+- **Maintainability**: When an API endpoint changes, you update the YAML fixture in one place rather than hunting through dozens of Java test files.
+- **Reusability**: Fixtures can be shared across multiple test classes or even chained together to form complex scenarios.
+
 
 <br /><br />
 

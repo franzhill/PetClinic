@@ -15,10 +15,10 @@ Both mechanisms are opt-in and non-invasive.
 But once they do, just enabling `org.hibernate.SQL` logs shows what SQL is executed, not who triggered it.  
 These tools make it possible to **link domain methods to actual SQL queries played against the DB.**
 Understanding **who triggers which SQL**, and **how often**, comes in as essential for:
->- Detecting **N+1 query problems**
->- Profiling **slow queries**
->- Understanding **ORM caching behavior**
->- Tracing code paths that result in SQL calls
+> - Detecting **N+1 query problems**
+> - Profiling **slow queries**
+> - Understanding **ORM caching behavior**
+> - Tracing code paths that result in SQL calls
 
 <br />
 
