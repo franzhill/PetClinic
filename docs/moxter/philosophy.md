@@ -1,7 +1,8 @@
 # Moxter Philosophy
 
-**Moxter** is a backend automated testing framework built on the belief that for most business applications, **integration testing** (the "Black Box approach") provides a higher return on investment than granular **unit testing**. By leveraging the Spring MockMvc framework, **Moxter** encourages you to treat and test your application as a "Black Box".
+**Moxter** is a backend automated testing framework built on the belief that for most business applications, **integration testing** (the "Black Box approach") provides a higher return on investment than granular **unit testing**. By leveraging tools like Spring MockMvc and SpringBootTest, **Moxter** encourages you to treat and test your Spring backend API as a "Black Box".
 
+<br />
 
 ## The Core Concept: the Black Box Approach
 Instead of testing individual Java methods in isolation with Mockito, **Moxter** encourages you to interact with the system (your backend) through its "natural" interface: the REST API.
@@ -13,6 +14,8 @@ Instead of testing individual Java methods in isolation with Mockito, **Moxter**
 - **High value business scenarios**: by interacting with the interface just like an end-user would, this approach excels at setting up and testing real-life, complex user-level scenarios, thus providing a level of confidence in the correctness of the business value that isolated unit tests cannot match.
 
 
+<br />
+
 ## Integration vs. Unit Testing: what we mean
 In the scope of automated backend testing, we adopt the following understanding:
 
@@ -21,7 +24,7 @@ In the scope of automated backend testing, we adopt the following understanding:
 - **Integration Testing (Moxter style)**: Focuses on testing the contract of your REST API, engaging the whole chain of internal components (Controller → Service → Repository → Database) as a single unit. <br />
 **It's still just automated "mvn test"**: **Moxter** tests are standard JUnit tests. They run during the standard `mvn test` phase alongside any other unit tests.
 
-
+<br />
 
 ## Advantages of the Black Box approach
 Testing from the outside offers several natural benefits:
@@ -34,12 +37,12 @@ Testing from the outside offers several natural benefits:
 
 - **Human Readable**: YAML fixtures serve as "Living Documentation" of how the API is actually supposed to behave.
 
-- **Spring-Native**: Moxter uses the actual Spring Application Context, meaning your security configurations, filters, and database constraints are actually being exercised.
+- **Spring-Native**: **Moxter** uses the actual Spring Application Context, meaning your security configurations, filters, and database constraints are actually being exercised.
 
 - **Better Stability**: While changing the API contract *could* require updating the integration tests too, a well-designed API contract is inherently more stable than the internal private methods of a service.
 
 
-
+<br />
 
 
 ## What about performance?
@@ -55,10 +58,10 @@ The result is a test suite that:
 
 **In short**: the extra seconds spent on context startup are reclaimed ten-fold by the time saved not writing and maintaining complex mock setups.
 
-
+<br />
 
 ## Final Note: A Balanced Testing Strategy
-While Moxter champions the Black Box approach for business logic and API workflows, it is important to recognize that Unit Tests have their own distinct strengths.
+While **Moxter** champions the Black Box approach for business logic and API workflows, it is important to recognize that Unit Tests have their own distinct strengths.
 
 ### When to use Unit Testing (Mockito)
 Unit tests remain the superior choice for:
