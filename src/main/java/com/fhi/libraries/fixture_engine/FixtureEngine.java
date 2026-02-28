@@ -9,6 +9,13 @@ import java.net.URI;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.AbstractMap;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -372,7 +379,7 @@ public final class FixtureEngine
     }
 
     /**
-     * Convenience: Get a variable as a String.
+     * Convenience: Get a variable from the Fixture Engine context variables map, as a String.
      * Delegates to the generic varsGet() for type safety and error handling.
      */
     public String varsGetString(String key) {
@@ -380,8 +387,10 @@ public final class FixtureEngine
     }
 
     /**
-     * Convenience: Get a variable as a Long, handling Integer/Long/String 
+     * Convenience: Get a variable from the Fixture Engine context variables map, as a Long, handling Integer/Long/String 
      * conversions automatically.
+     * 
+     * @param key The name variable
      */
     public Long varsGetLong(String key) {
         if (!vars.containsKey(key)) {
@@ -409,6 +418,59 @@ public final class FixtureEngine
             (val == null ? "null" : val.getClass().getSimpleName()) + ")"
         );
     }
+
+    /**
+     * Retrieves a variable from the Fixture Engine context variables map, and attempts to parse it into an {@link Instant}.
+     * 
+     * This method is designed to be "painless" by automatically trying several 
+     * common ISO-8601 formats (Instant, ZonedDateTime, and OffsetDateTime).
+     * 
+     * @param key The name of the captured variable
+     * @return The parsed {@link Instant}, or {@code null} if the variable doesn't exist
+     * @throws DateTimeParseException if the string cannot be parsed by standard ISO formats
+     * @throws ClassCastException if the variable is not a String
+     */
+    public Instant varsGetInstant(String key) {
+        String value = varsGetString(key);
+        if (value == null) {
+            return null;
+        }
+
+        try {
+            // Priority 1: Direct Instant parsing (e.g., 2026-02-27T18:00:00Z)
+            return Instant.parse(value);
+        } catch (DateTimeParseException e1) {
+            try {
+                // Priority 2: Full ZonedDateTime (e.g., 2026-02-27T18:00:00+01:00[Europe/Paris])
+                return ZonedDateTime.parse(value).toInstant();
+            } catch (DateTimeParseException e2) {
+                // Priority 3: OffsetDateTime (e.g., 2026-02-27T18:00:00+01:00)
+                return OffsetDateTime.parse(value).toInstant();
+            }
+        }
+    }
+
+    /**
+     * Retrieves a variable and parses it into an {@link Instant} using a specific formatter.
+     * 
+     * Use this version for non-standard API date formats (e.g., "dd/MM/yyyy HH:mm").
+     * Note: If the pattern does not contain timezone information, you may need to 
+     * use {@link LocalDateTime} and provide a {@link ZoneId}.
+     * 
+     * @param key The name of the captured variable
+     * @param formatter The custom {@link DateTimeFormatter} to use
+     * @return The parsed {@link Instant}, or {@code null} if the variable doesn't exist
+     */
+    public Instant varsGetInstant(String key, DateTimeFormatter formatter) {
+        String value = varsGetString(key);
+        if (value == null) {
+            return null;
+        }
+        
+        // We parse as a temporal accessor and convert to instant
+        return formatter.parse(value, Instant::from);
+    }
+
 
     /**
      * Convenience: Get a variable as a List of a specific type.
