@@ -1,4 +1,4 @@
-package com.fhi.pet_clinic.integrationtests;
+package com.fhi.pet_clinic.moxter_tests;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fhi.libraries.fixture_engine.FixtureEngine;
@@ -25,24 +25,12 @@ import org.springframework.test.web.servlet.MockMvc;
  *   <li>Run "BeforeAll" / "AfterAll" fixture groups automatically.</li>
  *   <li>Expose a protected {@link #fx} engine and helper {@link #getTestAuthentication()}.</li>
  * </ul>
- *
- * <p>How fixture discovery works (by your engine):</p>
- * <pre>
- * classpath:/integrationtests2/fixtures/{package}/{TestClassName}/fixtures.yaml
- * </pre>
- * where {@code {package}} is the subclass' package as folders and {@code {TestClassName}} is the subclass' simple name.
- *
- * <p>Subclasses can:</p>
- * <ul>
- *   <li>Use {@code fx.callFixture("...")}, {@code fx.callFixtureReturnId("...")} etc.</li>
- *   <li>Override {@link #onBeforeEach()} / {@link #onAfterEach()} to run per-test groups if desired.</li>
- * </ul>
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.MOCK)
 @AutoConfigureMockMvc
 @ActiveProfiles({"test"})
 @TestInstance(TestInstance.Lifecycle.PER_CLASS) // Tells JUnit to create one single instance of the test class for the entire test run of that class => allows non-static @BeforeAll/@AfterAll
-public abstract class ParentIntegrationTest 
+public abstract class ParentMoxterTest
 {
    /** Default test user ID used to build the Authentication. */
    protected static final String TEST_USER = "local";
@@ -79,9 +67,9 @@ public abstract class ParentIntegrationTest
       // Create the fixture engine for this class, providing authentication to
       // use on every fixture call.
       fx = FixtureEngine.forTestClass(getClass())
-               .mockMvc(mockMvc)
-               .authentication(getTestAuthentication())
-               .build();
+                        .mockMvc(mockMvc)
+                        .authentication(getTestAuthentication())
+                        .build();
 
       // Run "BeforeAll" fixtures group defined in the closest fixtures.yaml (if any).
       fx.callFixture("BeforeAll");

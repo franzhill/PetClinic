@@ -1,25 +1,20 @@
 
 
 
-# Validation Rules
-# - Unknown fixtures by name → fail fast with a clear error.
-# - Duplicate fixtures in groups.fixtures: not screened for → run every provided fixture even if it is given several times
-
-
 groups:
   - name: BeforeAll
     # List of fixtures to run for that group. In provided order.
     # Inheritance mecanism for fixtures applies.
     fixtures:
-      - common.create_bcs   # Provided in a common fixtures file above in hierarchy
-      - create_bcs          # Locally-defined fixture
+      - common.create_pet   # Provided in a common fixtures file above in hierarchy
+      - create_pet          # Locally-defined fixture
       #- other fixtures, by name
 
   - name: AfterAll
     fixtures:
       # (Inverse order compared to BeforAll)
-      - delete_bcs          # Locally-defined fixture
-      - common.delete_bcs   # Provided in a common fixtures file above in hierarchy
+      - delete_pet          # Locally-defined fixture
+      - common.delete_pet   # Provided in a common fixtures file above in hierarchy
 
   - name: BeforeEach
 
@@ -33,27 +28,27 @@ fixtures:
   # fixture from the lowest layer (most local) overrides (total, no partial overload)
   # For overloading use "basedOn"
 
-  - name: create_bcs
+  - name: create_pet
     method: POST
-    endpoint: /businessContractSheet
+    endpoint: /pet
     # Optional.
     # Accepts int, list of ints, "2xx"/"4xx", "200-204", "200,204".
     expectedStatus: 201
     payload:  >
       {
-        "contractualStep": [70],
-        "subregionId": 1,
-        "buyers": ["1-12A-1965", "1-10D6XL"],
-        "contracts": []
+        "characteristic1": [70],
+        "characteristic2": 1,
+        "characteristic3": ["1", "2"],
+        "characteristic4": []
       }
     # Save variables in accessible variables.
     # List of varaname: json path inside the return payload
     save: 
-      bcsId_local: $.id
+      petId_local: $.id
 
-  - name: delete_bcs
+  - name: delete_pet
     method: DELETE
-    endpoint: /businessContractSheet/{{bcsId_local}}/delete
+    endpoint: /pet/{{petId_local}}/delete
     expectedStatus: 200
 
 
@@ -63,21 +58,13 @@ fixtures:
   # ----------------------------------------------------------------
   # To be executed whenever, called by name.
 
-  - name: create-offer-a320_1
+  - name: create-account
     method: POST
-    endpoint: /businessContractSheet/{{bcsId_1}}/offer # bcsId_1 is created in the BeforeAll fixture
+    endpoint: /pet/{{petId_1}}/account # petId_1 is created in the BeforeAll fixture
     expectedStatus: 201
     # payload as raw JSON string payload (engine parses it)
     payload: >
-         {  "aircraftSerieId": "A320-300N",
-            "aircraftSpecification": "specification D",
-            "aircraftType": "A320",
-            "aircraftWeightVariant": "Extra : 297.0t / 279.2t",
-            "catalogVersion": "Catalogue 2020, Issue 2",
-            "firmQuantity": 5,
-            "optionQuantity": 4,
-            "purchaseRightsQuantity": 3,
-            "title": "A320"
+         {  "characteristic": "A",
          }
     save:
       # save the id in this specified variable.
@@ -89,25 +76,23 @@ fixtures:
 
       offer1Id: $.id
 
-  - name: create-offer-a320_2
-    baseOn: create-offer-a320_1
+  - name: create-account-2
+    baseOn: create-account
     save: 
       offer2Id: $.id
 
 
-  - name: create-offer-a350
+  - name: create-offer-3
     # basedOn merge rules:
     # - method, endpoint, expectedStatus: child overrides if present.
     # - headers, query, save: map merge, child keys override parent keys.
     # - payload: deep-merge objects, replace arrays. Child overrides when conflict.
     # If parent name not found → fail fast with the layer/file path in the error.
-    basedOn: create-offer-a320_1
+    basedOn: create-account
     # Differential payload: only specify what differs from basedOn's payload.
     payload: >
-        {   "aircraftSerieId": "A350-300N",
-            "aircraftType": "A350",
-            "title": "A350"
-         }
+        {   "characteristic": "B"
+        }
     save: 
       offer3Id: $.id
 
@@ -123,15 +108,15 @@ fixtures:
     expectedStatus: 201
     # Payload as pure YAML
     payload:
-      aircraftSerieId: A350-300N
-      aircraftType: A350
+      characteristic1: A
+      characteristic2: B
 
   - name: example-inline-json
     method: POST
     endpoint: /example
     expectedStatus: 201
     # Payload as inline
-    payload: {"aircraftSerieId":"A350-300N","aircraftType":"A350"}
+    payload: {"characteristic1":"A","characteristic2":"B"}
 
   - name: example-text-json
     method: POST
@@ -139,7 +124,7 @@ fixtures:
     expectedStatus: 201
     # payload as raw JSON string payload (engine parses it)
     payload: >
-      {"aircraftSerieId":"A350-300N","aircraftType":"A350"}
+      {"characteristic1":"A","characteristic2":"B"}
 
   - name: example-from-file
     method: POST

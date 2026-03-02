@@ -21,13 +21,46 @@ This is where **Moxter** comes in: by providing the means to easily define the b
 ## Why use Moxter?
 - **The Sweet Spot**: sitting in between isolated unit tests and external API testing tools, **Moxter** allows you to test real-world scenarios during the standard mvn test phase.
 - **Shorter, Cleaner, Meaningful Tests**: **Moxter** will hide all the boilerplate involved in performing MockMVC calls to your application API, letting Your JUnit tests focus purely on the cinematics of the test scenarios and still exerting standard assertions at will.
-- **Readability**: "Moxtures" (MockMvc calls) are configured in YAML files thus providing a clean, human-readable and reusable brick.
+- **Readability**: "Moxtures" (MockMvc calls) are configured in YAML files thus providing clean, human-readable and reusable bricks.
 - **Maintainability**: When an API endpoint changes, you update the YAML "moxture" in one place rather than hunting through dozens of Java test files.
 - **Reusability**: "Moxtures" can be shared across multiple test classes 
 - **Buildability**: "Moxtures" serve as the fundamental building bricks for advanced test scenarios. You can group multiple moxtures to define new, higher-level moxtures which function just like a simple moxture. Moxtures can be chained together, with the output of one 'fed' into the input of the next one.
 
 
-<br /><br />
+<br />
+<br />
+
+## Where Moxter sits in the testing landscape
+<br />
+
+
+
+| Feature                   | JUnit + Mockito      | JUnit + MockMvc            | JUnit + **Moxter**                  | Postman / Newman and clones |
+| :---                      | :---:                | :---:                      | :---:                               | :---:                       |
+| **Testing Level**         | Unit (Isolated)      | Web Slice/ Integration     | **Web Slice / Integration**         | E2E / System                |
+| **Test "Border"**         | Internal Logic       | API Border                 | **API Border & Internal**           | API Border                  |
+| **Main rationale**        | Prove complex internal logic  | Prove the API contract  | **Prove the API contract**    | Prove the API contract in 'real-life' |
+| **Close to Real-life?**   | 🔴 No                | 🟢 Close (Mock Servlet)   | 🟢 **Close (Mock Servlet)**         | ⭐ Yes (tests an actual deployment) |
+| **Dev Cycle Stage**       | ⭐ Early (Coding)    | ⭐ Early (Coding)         | ⭐ **Early (Coding)**               | 🔴 Late (Post-Deployment)  |
+| **Execution Speed**       | ⭐ Instant           | 🟢 Fast                   | 🟢 **Fast**                         | 🔴 Slow (Needs Server)     |
+| **CI/CD Integration**     | ⭐ Native            | ⭐ Native                 | ⭐ **Native**                       | 🟡 Needs CLI/Wrappers      |
+| **Real-life test scenarios?**| 🔴 No             | 🟡 Manual                 | ⭐ **Good (chaining)**              | ⭐ Good (may need writing JS) |
+| **Checks (assertions)**   | 🟢 Powerful (code)   | 🟢 Powerful (code)        | ⭐ **Powerful (code) and easy (YAML)** | 🟡 Requires writing JS    |
+| **Reuse**                 | N/A                  | 🟡 through functions        | 🟢 **Good (Moxture inheritance)**  | 🟢 Good (Collections/Scripts ... if not too complex) |
+| **Where Tests Live**      | Inside Code          | Inside Code                | **Inside Code (Git)**               | External Tool               |
+| **Who can write tests?**  | 🔴 Devs              | 🔴 Devs                   | 🟡 **Devs and QA (YAML)**           | ⭐ Devs/External (QA, users...)    |
+| **Who can run tests?**    | 🔴 Devs              | 🔴 Devs                   | 🟡 **Devs and QA**                  | ⭐ Anybody (users, POs...)  |
+| **Ease of Creation**      | 🟡 Moderate          | 🟡 Moderate (Boilerplate) | 🟢 **Easier**                       | ⭐ Easy (GUI)                |
+| **Cost of Maintenance**   | 🟡 Moderate          | 🟡 Low (only if API contract changes)  | 🟢 **Lower (only if API contract changes)** | 🟢 Lower (only if API contract changes) |
+| **Documentation value**   | Poor (Code only)     | Poor (Code only)           | 🟢 **Good (Readable)**              | ⭐ Very good (JSON/GUI) |
+
+<br />
+<br />
+
+![Alt text describing the image](/docs/moxter/img/test_pyramid.png "Optional hover title")
+
+<br />
+<br />
 
 
 # TL;DR

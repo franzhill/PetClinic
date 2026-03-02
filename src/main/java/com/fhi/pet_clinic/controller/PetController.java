@@ -69,7 +69,7 @@ public class PetController
     */
    @PostMapping("/mate")
    public ResponseEntity<List<Pet>> matePets(@RequestParam Long motherId,
-                                       @RequestParam Long fatherId) 
+                                             @RequestParam Long fatherId) 
    {
       List<Pet> offspring = petService.mate(motherId, fatherId);
       return ResponseEntity.ok(offspring);

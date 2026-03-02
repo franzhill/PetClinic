@@ -1,0 +1,94 @@
+
+
+fixtures:
+
+  - name: BeforeAll
+    fixtures: 
+      - create_species_dog
+      - create_species_cat
+
+
+  - name: AfterAll
+    fixtures: []
+
+
+  - name: BeforeEach
+    fixtures: []
+
+
+  - name: AfterEach
+    fixtures: []
+
+
+
+  - name: create_species_dog
+    endpoint: "/api/species"
+    method: POST
+    lax: true # Ignores errors if 'Dog' already exists
+    payload: >
+      {
+        "name": "Dog",
+        "expectedLifespan": 12,
+        "avgLitterSize": 4,
+        "fertilityAgeWindow": {
+          "from": 1,
+          "to": 8
+        }
+      }
+
+
+  - name: create_species_cat
+    endpoint: "/api/species"
+    method: POST
+    lax: true # Ignores errors if 'Dog' already exists
+    payload: >
+      {
+        "name": "Cat",
+        "expectedLifespan": 18,
+        "avgLitterSize": 5,
+        "fertilityAgeWindow": {
+          "from": 1,
+          "to": 10
+        }
+      }
+
+
+
+  - name: create_owner
+    endpoint: "/owners"
+    method: POST
+    expectedStatus: 201
+    payload: >
+      {
+        "name": "Tintin"
+      }
+    save:
+      ownerId: "$.id"
+
+
+  - name: create_pet_for_owner
+    endpoint: "/api/pets"
+    method: POST
+    expectedStatus: 201
+    payload: >
+      {
+        "name": "Snowy",
+        "sex": "MALE",
+        "birthDate": "2020-01-01",
+        "species": {
+          "name": "Dog"
+        },
+        "owner": {
+          "id": {{ownerId}}
+        }
+      }
+    save:
+      petId: "$.id"
+      petName: "$.name"
+      petOwnerId: "$.ownerId"
+
+
+  - name: verify_owner_pets
+    endpoint: "/owners/{{ownerId}}/pets"
+    method: GET
+    expectedStatus: 200

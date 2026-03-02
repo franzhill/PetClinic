@@ -16,15 +16,22 @@ at the end of a line.
 `this`
 
 
-
 ![Status](https://img.shields.io/badge/status-active_development-orange?style=flat-square&logo=github)
+
+![Alt text describing the image](path/to/your/image.png "Optional hover title")
+
 
 <br />
 
 > [!TIP]  
 > **Explore the full documentation:** [franzhill.github.io/PetClinic](https://franzhill.github.io/PetClinic/)
 
-⚠️✅❌
+⚠️
+✅❌
+🔴🟡🟢
+⭐
+⚖️🧠✂️🧅📚🏗️🧪🛢️📐🛠️📜🕵️
+
 
 <br />
 

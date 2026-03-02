@@ -49,7 +49,7 @@ Code should teach as well as work. You never know the level of the person who’
 - Package structure reflects clean boundaries (e.g. `api/exception` vs `service/exception`)
 - Alignment with **Clean Architecture** principles
 
-###  🧪 Integration Testing & Fixtures
+### 🧪 Integration Testing & Fixtures
 - Custom fixture framework with support for:
   - Direct DB fixture loading (fast)
   - API-based fixture loading (realistic)
@@ -57,23 +57,23 @@ Code should teach as well as work. You never know the level of the person who’
 - JSON-based fixtures for both setup and expected results
 - Meta-annotations and `TestExecutionListener` integration for declarative tests
 
-###  🛢️ Hibernate & JPA Mechanics
+### 🛢️ Hibernate & JPA Mechanics
 - Lazy vs. eager loading exploration
 - Cascade, orphan removal, and lifecycle behavior
 - Entity modeling for complex domains (e.g. mating logic, fertility window, degeneracy)
 - Exposure to query-related problems (e.g. N+1) and optimization paths
 
-###  📐 Domain-Driven Design Concepts
+### 📐 Domain-Driven Design Concepts
 - Rich domain model with **business rule enforcement**
 - Custom exceptions like `MatingException` with cause codes
 - Clear separation between **use case logic** and **infrastructure concerns**
 
-###  🛠️ Developer Tooling & Diagnostics
+### 🛠️ Developer Tooling & Diagnostics
 - Detailed `logback-spring.xml` with `%M`, `%line`, `%highlight()` for rich logs
 - Environment-specific Spring profiles (`dev`, `test`, `prod`)
 - Didactic Javadoc to explain rationale and design choices
 
-###  📚 Educational Value
+### 📚 Educational Value
 - Expand didactic Javadoc coverage
 - Embed rationale directly in code and configuration
 - Use as a live teaching tool for junior developers
