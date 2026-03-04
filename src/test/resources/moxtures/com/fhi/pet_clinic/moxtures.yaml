@@ -1,23 +1,23 @@
 
 
-fixtures:
+moxtures:
 
   - name: BeforeAll
-    fixtures: 
+    moxtures: 
       - create_species_dog
       - create_species_cat
 
 
   - name: AfterAll
-    fixtures: []
+    moxtures: []
 
 
   - name: BeforeEach
-    fixtures: []
+    moxtures: []
 
 
   - name: AfterEach
-    fixtures: []
+    moxtures: []
 
 
 
@@ -69,9 +69,11 @@ fixtures:
     endpoint: "/api/pets"
     method: POST
     expectedStatus: 201
+    vars:
+      in_petName: "Snowy"
     payload: >
       {
-        "name": "Snowy",
+        "name": {{in_petName}},
         "sex": "MALE",
         "birthDate": "2020-01-01",
         "species": {

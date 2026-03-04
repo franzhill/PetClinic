@@ -1,10 +1,10 @@
-# FixtureEngine — README
+# Moxter — README
 
-**FixtureEngine** is a lightweight, configuration-oriented, Spring `MockMvc`-based utility designed to facilitate and automate JUnit test set-up.
+**Moxter (previously **FixtureEngine**) is a lightweight, configuration-oriented, Spring `MockMvc`-based utility designed to facilitate and automate JUnit test set-up.
 
 It provides a declarative way to describe test setup steps, aka "fixtures", necessary to set up the context of a JUnit test before performing the core test logic.
 
-Instead of scattering `MockMvc` calls and JSON boilerplate throughout the tests themselves, FixtureEngine centralizes and configures the set-up steps in YAML files, which can then be executed on demand from within the test itself. This makes tests shorter, more readable, and easier to maintain.
+Instead of scattering `MockMvc` calls and JSON boilerplate throughout the tests themselves, Moxter centralizes and configures the set-up steps in YAML files, which can then be executed on demand from within the test itself. This makes tests shorter, more readable, and easier to maintain.
 
 
 
@@ -14,7 +14,7 @@ Instead of scattering `MockMvc` calls and JSON boilerplate throughout the tests 
 - Fixtures are defined in `fixtures.yaml` files (next to your test class; see path rules below).
 - Fixtures are callable from JUnit tests.
 - In your JUnit tests, build the engine with:  
-  `FixtureEngine.forTestClass(getClass()).mockMvc(mockMvc).authentication(auth).build()`
+  `Moxter.forTestClass(getClass()).mockMvc(mockMvc).authentication(auth).build()`
 - Then call fixtures by name with:  
   `fx.callFixture("create_bcs")`, `fx.callFixtureReturnId("create-offer")`, …
 - Payloads can be YAML/JSON objects, JSON strings, or `classpath:` includes.
@@ -220,7 +220,7 @@ classpath:/fixtures/{package}/{TestClassName}/fixtures.yaml
 - If the file is missing, you’ll get a clear failure like:
 
 ```
-[FixtureEngine] No fixtures file found for com.example.MyTest
+[Moxter] No fixtures file found for com.example.MyTest
 Expected at: classpath:/integrationtests/fixtures/com/example/MyTest/fixtures.yaml
 Hint: place the file under src/test/resources/integrationtests/fixtures/com/example/MyTest/fixtures.yaml
 ```
@@ -459,7 +459,7 @@ Object title = fx.callFixtureReturn("create_item", "$.title");  // also stashes 
 
 ## 6) Lax mode
 
-The FixtureEngine supports a lax execution mode for fixtures and groups, designed for best-effort cleanup and other scenarios where strictness is not desirable.
+The Moxter supports a lax execution mode for fixtures and groups, designed for best-effort cleanup and other scenarios where strictness is not desirable.
 
 ### How to call
 ```java
@@ -501,7 +501,7 @@ Lax mode for:
 
 - Provide an `Authentication` when building:
   ```java
-  fx = FixtureEngine.forTestClass(getClass())
+  fx = Moxter.forTestClass(getClass())
        .mockMvc(mockMvc)
        .authentication(getTestAuthentication())     // or .authenticationSupplier(this::getTestAuthentication)
        .build();
@@ -531,11 +531,11 @@ public abstract class ParentIntegrationTest
 {
   @Autowired protected MockMvc mockMvc;
   @Autowired protected MyUserRepository myUserRepository;
-  protected FixtureEngine fx;
+  protected Moxter fx;
 
   @BeforeAll
   void bootBase() {
-    fx = FixtureEngine.forTestClass(getClass())
+    fx = Moxter.forTestClass(getClass())
         .mockMvc(mockMvc)
         .authentication(getTestAuthentication())
         .build();
@@ -596,7 +596,7 @@ class MyIntegrationTest extends ParentIntegrationTest
 If you don’t want a base class:
 
 ```java
-FixtureEngine fx = FixtureEngine.forTestClass(getClass())
+Moxter fx = Moxter.forTestClass(getClass())
     .mockMvc(mockMvc)
     .authentication(getTestAuthentication())
     .build();
@@ -880,29 +880,29 @@ Readable, compact logs:
 
 - **Start**:
   ```
-  [FixtureEngine] >>> Executing fixture: [create_bcs, POST, /businessContractSheet]
+  [Moxter] >>> Executing fixture: [create_bcs, POST, /businessContractSheet]
   ```
 - **DEBUG request preview** (if enabled):
   ```
-  [FixtureEngine] more info: expected=201 headers={} query={} vars={...} payload={ ... }
+  [Moxter] more info: expected=201 headers={} query={} vars={...} payload={ ... }
   ```
 - **Response preview** (DEBUG):
   ```
-  [FixtureEngine] response preview: status=201 headers={...} body={...}
+  [Moxter] response preview: status=201 headers={...} body={...}
   ```
 - **Finish**:
   ```
-  [FixtureEngine] <<< Finished executing fixture: [create_bcs, POST, /businessContractSheet] with status: [201], in 187 ms
+  [Moxter] <<< Finished executing fixture: [create_bcs, POST, /businessContractSheet] with status: [201], in 187 ms
   ```
 - **Mismatch**:
   ```
-  [FixtureEngine] Unexpected HTTP 400 for 'create_bcs' POST /businessContractSheet, expected=201
-  [FixtureEngine] Body: {"type":"about:blank","title":"Bad Request",...}
+  [Moxter] Unexpected HTTP 400 for 'create_bcs' POST /businessContractSheet, expected=201
+  [Moxter] Body: {"type":"about:blank","title":"Bad Request",...}
   ```
 
 Enable extra debug traces by running with:
 ```
--Dfixtureengine.debug=true
+-DMoxter.debug=true
 ```
 
 <br />

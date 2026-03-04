@@ -2,7 +2,21 @@
    "java.jdt.ls.vmargs": "-XX:+UseParallelGC -XX:GCTimeRatio=4 -XX:AdaptiveSizePolicyWeight=90 -Dsun.zip.disableMemoryMapping=true -Xmx1G -Xms100m -Xlog:disable",
    "highlight.regexes": 
    {  
-      // Dims @SuppressWarnings ...
+      // Highlight javadoc
+      "(/\\*\\*[\\s\\S]*?\\*/)" : {
+         "decorations": [
+            {
+               //"backgroundColor": "#def2c2",
+               "backgroundColor": "rgba(222, 242, 194, 0.8)",  // using transparency lets mouse selection be visible
+               //"color": "#2e7d32",
+               "isWholeLine": true,
+               "borderRadius": "4px",
+               "fontStyle": "italic"
+            }
+         ]
+      },
+
+      // Dims @ SuppressWarnings ...
       "(@SuppressWarnings\\s*.*)":
       {
          "decorations": [
@@ -14,17 +28,25 @@
          ]
       },
 
-   
       // Dims standard log calls and single-line trace/debug wrappers
       // Captures: log.debug("...")
       //           if(log.isTraceEnabled()){log.trace("...");} ...
-      "(log\\.(trace|debug|info|warn|error)\\s*\\(.*?\\);)":
+      // Warning: a Note on Performance: Regex highlighting that spans many lines
+      //          can occasionally cause a slight UI stutter in very large files. 
+      //          If you notice VSCode lagging while scrolling through 5,000+ line 
+      //          Java classes, you might want to limit the scope, but for most 
+      //           projects, the [\s\S]*? rather than hust .*?  approach is the 
+      //           standard solution for multi-line matching in VSCode.
+      "(log\\.(trace|debug|info|warn|error)\\s*\\([\\s\\S]*?\\);)": 
       {
          "decorations": [
             {
-                  "color": "#444444",   // grey
-                  "opacity": "0.6",
-                  "fontStyle": "italic"
+               //"backgroundColor": "grey", 
+               //    "color": "#444444",   // grey
+               "opacity": "0.6",
+               "fontStyle": "italic",
+               "isWholeLine": false,
+               //"borderRadius": "2px"
             }
          ]
       },
@@ -32,7 +54,7 @@
       {
          "decorations": [
             {
-                  "color": "#444444",
+               //   "color": "#444444",
                   "opacity": "0.6",
                   "fontStyle": "italic"
             }
@@ -42,7 +64,7 @@
       {
          "decorations": [
             {
-                  "color": "#444444",
+             //     "color": "#444444",
                   "opacity": "0.6",
                   "fontStyle": "italic"
             }

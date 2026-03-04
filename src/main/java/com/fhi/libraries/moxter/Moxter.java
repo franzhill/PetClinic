@@ -1,4 +1,4 @@
-package com.fhi.libraries.fixture_engine;
+package com.fhi.libraries.moxter;
 
 import java.util.function.BiFunction;
 import java.util.regex.Matcher;
@@ -60,20 +60,20 @@ import lombok.extern.slf4j.Slf4j;
  * See readme.md file.
  */
 @Slf4j
-public final class FixtureEngine
+public final class Moxter
 {
     // =====================================================================
     // Top-level config (easy to tweak)
     // =====================================================================
 
-    /** Classpath root under which fixtures live (no leading/trailing slash). */
-    public static final String DEFAULT_FIXTURES_ROOT_PATH = "fixtures";
+    /** Classpath root under which moxtures live (no leading/trailing slash). */
+    public static final String DEFAULT_MOXTURES_ROOT_PATH = "moxtures";
 
     /** If true, look in a subfolder named after the test class simple name. */
     public static final boolean DEFAULT_USE_PER_TESTCLASS_DIRECTORY = true;
 
     /** Single accepted file name (with extension). */
-    public static final String DEFAULT_FIXTURES_BASENAME = "fixtures.yaml";
+    public static final String DEFAULT_MOXTURES_BASENAME = "moxtures.yaml";
 
     // Standard Strict Config (throws exception on missing path)
     public static final Configuration JSONPATH_CONF_STRICT = Configuration.defaultConfiguration();
@@ -84,7 +84,7 @@ public final class FixtureEngine
 
 
     // JsonPath Configuration with safe defaults (Lenient)
-    // This is the library that reads JSON paths in the "save" in the yaml fixtures.
+    // This is the library that reads JSON paths in the "save" in the yaml moxtures.
     // With Option.SUPPRESS_EXCEPTIONS:
     //   If parent is null, asking for $.parent.child.value simply returns null.
     //   If you make a typo like $.parnet, it returns null (instead of crashing).
@@ -131,80 +131,146 @@ public final class FixtureEngine
     }
 
     /**
-     * Execute a fixture or a group by name — hierarchical lookup (closest → parents).
+     * Execute a moxture or a group by name — hierarchical lookup (closest → parents).
      *
-     * If the name resolves to a group (fixture row with 'fixtures:'), executes the whole group
-     * (strict) and returns {@code null}. Otherwise executes a single HTTP fixture (strict)
+     * If the name resolves to a group (moxture row with 'moxtures:'), executes the whole group
+     * (strict) and returns {@code null}. Otherwise executes a single HTTP moxture (strict)
      * and returns the response envelope.
      *
      * Lax mode is off: call fails if the return status is not as expected.
      */
-    public Model.ResponseEnvelope callFixture(String name)
-    {   return callFixture(name, false, false);
+    public Model.ResponseEnvelope callMoxture(String name)
+    {   return callMoxture(name, false, false);
     }
 
     /**
      * Conveniance for a lax call.
      */
-    public Model.ResponseEnvelope callFixtureLax(String name)
-    {   return callFixture(name, true, false);
+    public Model.ResponseEnvelope callMoxtureLax(String name)
+    {   return callMoxture(name, true, false);
     }
 
     /**
-     * Execute a fixture or a group by name.
+     * Conveniance for a call without overrides.
+     */
+    public Model.ResponseEnvelope callMoxture(String name, boolean lax, boolean jsonPathLax) 
+    {   // Calls the worker with an empty map for Java overrides
+        return callMoxture(name, lax, jsonPathLax, Collections.emptyMap());
+    }
+
+
+    /**
+     * Conveniance for a call with overrides.
+     */
+    public Model.ResponseEnvelope callMoxture(String name, Map<String, Object> callScopedOverrides) {
+        // Calls the worker with lax=false and our override map
+        return callMoxture(name, false, false, callScopedOverrides);
+    }
+
+
+    /**
+     * Base call method accomodating all features.
+     * 
+     * <p>Allows for a set of per-call variable overrides.
+     * <p>The call-scoped javaOverrides map is applied only for the duration of this call:
+     * <ul>
+     *   <li><b>Reads:</b> when templating, header/query resolution, or payload
+     *       substitution looks up a variable, the engine will check the call-scoped
+     *       overrides first. If the key is not present there, it falls back to the
+     *       engine’s global variables.</li>
+     *   <li><b>Writes:</b> when a moxture specifies a "save:" block, the
+     *       extracted values are always written into the engine’s global variables,
+     *       never into the call-scoped overrides. This ensures saved IDs or tokens
+     *       are available to subsequent moxtures and test code.</li>
+     * </ul>
      *
-     * @param name the fixture (or group) name
+     * <p>The overrides are ephemeral: once the call returns, they are discarded.
+     * Global variables are never modified unless the moxture itself performs a save
+     * operation or the test code calls {@link #varsPut(String, Object)} directly.
+     *
+     * <p>Examples:
+     * <pre>{@code
+     * // Global default
+     * fx.varsPut("buyer", "Alice");
+     *
+     * // Call with temporary override (buyer = Bob)
+     * Map<String,Object> scoped = Map.of("buyer", "Bob", "region", 3);
+     * fx.callMoxture("create_order", scoped);
+     *
+     * // After the call:
+     * //   - "buyer" in global vars is still "Alice"
+     * //   - "region" is not present in global vars
+     * //   - any saved vars (e.g., "orderId") are in global vars
+     * }</pre>
+     *
+     *
+     * @param name the moxture (or group) name
      * @param lax  if true, expected-status mismatches are logged (warning) and won't fail the test.
-     *             For group fixtures, each child is executed in lax mode.
-     * @param jsonPathLax if true, the library that reads JSON paths in the "save" in the yaml fixtures
+     *             For group moxtures, each child is executed in lax mode.
+     * @param jsonPathLax if true, the library that reads JSON paths in the "save" in the yaml moxtures
      *             will have a lax (aka leniant) configuration.
      *             Meaning: If parent is null, asking for $.parent.child.value simply returns null.
      *             If you make a typo like $.parnet, it returns null (instead of crashing).
-     * @return {@code null} for group fixtures; for single fixtures, the response envelope.
+     * @param callScopedOverrides per-call variable overrides (not mutated; keys shadow globals)
+     * @return {@code null} for group moxtures; for single moxtures, the response envelope.
      */
-    public Model.ResponseEnvelope callFixture(String name, boolean lax, boolean jsonPathLax)
-    {
+    public Model.ResponseEnvelope callMoxture(String name, boolean lax, boolean jsonPathLax, Map<String, Object> callScopedOverrides) {
         Objects.requireNonNull(name, "name");
         Resolved r = resolveByName(name);
 
-        if (isGroupFixture(r.call)) {
-            validateGroupVsHttp(r.call);
+        // 1. Prepare the Scoped Map: YAML defaults + Java Overrides
+        Map<String, Object> localScope = new LinkedHashMap<>();
+        if (r.call.getVars() != null) {
+            localScope.putAll(r.call.getVars()); // Moxture-level defaults
+        }
+        if (callScopedOverrides != null) {
+            localScope.putAll(callScopedOverrides);    // Java overrides (wins)
+        }
+
+        // 2. Create the Layered View (Scoped -> Global)
+        Map<String, Object> mergedVars = new CallScopedVars(localScope, this.vars, this::varsPut);
+
+        // Group moxture logic:
+        if (isGroupMoxture(r.call)) {
+            validateMoxture(r.call);
             final String label = "group '" + name + "'" + (lax ? " (lax)" : "");
-            runGroupFixture(label, r.call.getFixtures(), r.baseDir, lax, jsonPathLax);
+            runGroupMoxture(label, r.call.getMoxtures(), r.baseDir, lax, jsonPathLax, mergedVars);
             return null;
         }
 
-        // Single fixture
-        validateGroupVsHttp(r.call);
+        // Single moxture logic:
+        validateMoxture(r.call);
         try {
-            return executor.execute(r.call, r.baseDir, vars, lax, jsonPathLax);
-        } catch (Throwable t) {
+            // Pass mergedVars (which now contains YAML + Java + Globals) to executor
+            return executor.execute(r.call, r.baseDir, mergedVars, lax, jsonPathLax);
+        } 
+        catch (Throwable t) {
             if (lax) {
-                // Best-effort: tolerate ANY error (infra, parsing, etc.)
-                log.warn("[FixtureEngine] (lax) single fixture '{}' failed — skipping. Cause: {}", name, t.toString());
-                return null; // skip in lax mode
+                log.warn("[Moxter] (lax) single moxture '{}' failed — skipping. Cause: {}", name, t.toString());
+                return null;
             }
-            // strict: rethrow
             if (t instanceof RuntimeException) throw (RuntimeException) t;
-            throw new RuntimeException("Error executing fixture '" + name + "'", t);
+            throw new RuntimeException("Error executing moxture '" + name + "'", t);
         }
     }
+
+
 
     /**
      * Alias
      */
     public Model.ResponseEnvelope run(String name)
-    {   return callFixture(name);
+    {   return callMoxture(name);
     }
 
     /**
-     * Convenience: executes a single fixture and return `$.id` as long.
+     * Convenience: executes a single moxture and return `$.id` as long.
      */
-    public long callFixtureReturnId(String callName)
+    public long callMoxtureReturnId(String callName)
     {
         Object v;
-        try { v = callFixtureReturn(callName, "$.id"); }
-        catch (Exception e) { throw new RuntimeException("Failed to extract '$.id' for fixture '" + callName + "'", e); }
+        try { v = callMoxtureReturn(callName, "$.id"); }
+        catch (Exception e) { throw new RuntimeException("Failed to extract '$.id' for moxture '" + callName + "'", e); }
         if (v instanceof Number) return ((Number) v).longValue();
         if (v instanceof String) {
             try { return Long.parseLong((String) v); }
@@ -214,27 +280,27 @@ public final class FixtureEngine
     }
 
     /**
-     * Convenience: executes a single fixture and extract a value using a JsonPath.
+     * Convenience: executes a single moxture and extract a value using a JsonPath.
      *
      * Side effects: none (pure function).
      *
      * @return extracted value (Number, String, Boolean, List, Map, …)
      */
-    public Object callFixtureReturn(String callName, String jsonPath) throws Exception
+    public Object callMoxtureReturn(String callName, String jsonPath) throws Exception
     {
         Objects.requireNonNull(callName, "callName");
         Objects.requireNonNull(jsonPath, "jsonPath");
 
         // Guard against being called on a group
         Resolved r = resolveByName(callName);
-        if (isGroupFixture(r.call)) {
-            throw new IllegalArgumentException("callFixtureReturn* cannot be used on group fixture '" + callName + "'");
+        if (isGroupMoxture(r.call)) {
+            throw new IllegalArgumentException("callMoxtureReturn* cannot be used on group moxture '" + callName + "'");
         }
 
         Model.ResponseEnvelope env = executor.execute(r.call, r.baseDir, vars, false, false);
         String raw = env.raw();
         if (raw == null || raw.isBlank()) {
-            throw new IllegalStateException("Fixture '" + callName + "' returned an empty body; cannot read: " + jsonPath);
+            throw new IllegalStateException("Moxture '" + callName + "' returned an empty body; cannot read: " + jsonPath);
         }
 
         /* Do NOT store return: */
@@ -248,73 +314,32 @@ public final class FixtureEngine
     }
 
 
+
     /**
-     * Execute a fixture (or group) with a set of per-call variable overrides.
-     *
-     * <p>The callScoped map is applied only for the duration of this call:
-     * <ul>
-     *   <li><b>Reads:</b> when templating, header/query resolution, or payload
-     *       substitution looks up a variable, the engine will check the call-scoped
-     *       overrides first. If the key is not present there, it falls back to the
-     *       engine’s global variables.</li>
-     *   <li><b>Writes:</b> when a fixture specifies a "save:" block, the
-     *       extracted values are always written into the engine’s global variables,
-     *       never into the call-scoped overrides. This ensures saved IDs or tokens
-     *       are available to subsequent fixtures and test code.</li>
-     * </ul>
-     *
-     * <p>The overrides are ephemeral: once the call returns, they are discarded.
-     * Global variables are never modified unless the fixture itself performs a save
-     * operation or the test code calls {@link #varsPut(String, Object)} directly.
-     *
-     * <p>Examples:
-     * <pre>{@code
-     * // Global default
-     * fx.varsPut("buyer", "Alice");
-     *
-     * // Call with temporary override (buyer = Bob)
-     * Map<String,Object> scoped = Map.of("buyer", "Bob", "region", 3);
-     * fx.callFixture("create_order", scoped);
-     *
-     * // After the call:
-     * //   - "buyer" in global vars is still "Alice"
-     * //   - "region" is not present in global vars
-     * //   - any saved vars (e.g., "orderId") are in global vars
-     * }</pre>
-     *
-     * @param name       the fixture (or group) name
-     * @param callScoped per-call variable overrides (not mutated; keys shadow globals)
-     * @return {@code null} for group fixtures; for single fixtures, the response envelope
-     * @throws IllegalArgumentException if {@code name} is not found
-     * @throws RuntimeException for execution failures in strict mode
+     * Get a variable defined within the moxture.
      */
-    public Model.ResponseEnvelope callFixture(String name, Map<String,Object> callScoped) {
-        Objects.requireNonNull(name, "name");
-        Objects.requireNonNull(callScoped, "callScoped");
-
-        // Layered view for this call (and group children, if any)
-        Map<String,Object> mergedVars = new CallScopedVars(callScoped, this.vars, this::varsPut);
-
-        Resolved r = resolveByName(name);
-
-        if (isGroupFixture(r.call)) {
-            validateGroupVsHttp(r.call);
-            final String label = "group '" + name + "'";
-            runGroupFixture(label, r.call.getFixtures(), r.baseDir, /*lax*/ false, false, mergedVars);
-            return null;
-        }
-
-        validateGroupVsHttp(r.call);
-        return executor.execute(r.call, r.baseDir, mergedVars, /*lax*/ false, false);
+    public Object moxVar(String moxtureName, String varName) 
+    {   Resolved r = resolveByName(moxtureName);
+        return (r.call.getVars() != null) ? r.call.getVars().get(varName) : null;
     }
 
+
+
+
+
+
+
+
+
+
+
     /**
-     * Clears (empties) the Fixture Engine context variables map.
+     * Clears (empties) the Moxture Engine context variables map.
      */
     public void varsClear() { vars.clear(); }
 
     /**
-     * Put a variable in the Fixture Engine context variables map.
+     * Put a variable in the Moxture Engine context variables map.
      *
      * - Strict mode: throws if the key already exists.
      * - Non-strict: overwrites and logs a WARN if there was a previous value.
@@ -340,7 +365,7 @@ public final class FixtureEngine
     }
 
     /**
-     * Put a variable in the Fixture Engine context variables map, only if absent (never overwrites).
+     * Put a variable in the Moxture Engine context variables map, only if absent (never overwrites).
      *
      * @return true if the value was set; false if a value was already present
      */
@@ -350,7 +375,7 @@ public final class FixtureEngine
     }
 
     /**
-     * Get a variable from the Fixture Engine context variables map.
+     * Get a variable from the Moxture Engine context variables map.
      */
     public Object varsGet(String key) {
         if (!vars.containsKey(key)) {
@@ -360,7 +385,7 @@ public final class FixtureEngine
     }
 
     /**
-     * Get a variable from the Fixture Engine context variables map.
+     * Get a variable from the Moxture Engine context variables map.
      */
     public <T> T varsGet(String key, Class<T> type) {
         if (!vars.containsKey(key)) {
@@ -379,7 +404,7 @@ public final class FixtureEngine
     }
 
     /**
-     * Convenience: Get a variable from the Fixture Engine context variables map, as a String.
+     * Convenience: Get a variable from the Moxture Engine context variables map, as a String.
      * Delegates to the generic varsGet() for type safety and error handling.
      */
     public String varsGetString(String key) {
@@ -387,7 +412,7 @@ public final class FixtureEngine
     }
 
     /**
-     * Convenience: Get a variable from the Fixture Engine context variables map, as a Long, handling Integer/Long/String 
+     * Convenience: Get a variable from the Moxture Engine context variables map, as a Long, handling Integer/Long/String 
      * conversions automatically.
      * 
      * @param key The name variable
@@ -420,7 +445,7 @@ public final class FixtureEngine
     }
 
     /**
-     * Retrieves a variable from the Fixture Engine context variables map, and attempts to parse it into an {@link Instant}.
+     * Retrieves a variable from the Moxture Engine context variables map, and attempts to parse it into an {@link Instant}.
      * 
      * This method is designed to be "painless" by automatically trying several 
      * common ISO-8601 formats (Instant, ZonedDateTime, and OffsetDateTime).
@@ -532,14 +557,14 @@ public final class FixtureEngine
     }
 
     /**
-     * Checks if a variable is present in the Fixture Engine context variables map.
+     * Checks if a variable is present in the Moxture Engine context variables map.
      */
     public boolean varsHas(String key) {
         return vars.containsKey(key);
     }
 
     /**
-     * Returns a live, unmodifiable view of the current Fixture Engine context variables map.
+     * Returns a live, unmodifiable view of the current Moxture Engine context variables map.
      * <p>
      * Any future changes to the underlying vars will be reflected,
      * but callers cannot mutate the map directly.
@@ -576,8 +601,8 @@ public final class FixtureEngine
     // =====================================================================
 
     private final Class<?> testClass;
-    private final Model.FixtureSuite suite;
-    private final Map<String, Model.FixtureCall> byName;
+    private final Model.MoxtureSuite suite;
+    private final Map<String, Model.MoxtureCall> byName;
 
     // Concurrent allows tests to be run in parallel
     //#private final ConcurrentMap<String, Object> vars = new ConcurrentHashMap<>();
@@ -585,11 +610,11 @@ public final class FixtureEngine
 
     private final Runtime.HttpExecutor executor;
     private final Engine.GroupRunner groups;
-    private final String fixturesBaseDir;
+    private final String moxturesBaseDir;
 
     // For hierarchical lookup
-    private final IO.ClasspathFixtureRepository repo;
-    private final Engine.FixtureConfig cfg;
+    private final IO.ClasspathMoxtureRepository repo;
+    private final Engine.MoxtureConfig cfg;
     private final ObjectMapper yamlMapper;
 
     // Keep mapper for HTTP
@@ -600,9 +625,9 @@ public final class FixtureEngine
 
     // ===== Unlimited-depth basedOn materialization cache =====
 
-    /** Key for memoizing materialized fixtures by scope (baseDir) and name. */
+    /** Key for memoizing materialized moxtures by scope (baseDir) and name. */
     private static final class MatKey {
-        final String baseDir; // classpath dir where the fixture is defined
+        final String baseDir; // classpath dir where the moxture is defined
         final String name;
         MatKey(String baseDir, String name) { this.baseDir = baseDir; this.name = name; }
         public boolean equals(Object o){ if(this==o)return true; if(!(o instanceof MatKey))return false;
@@ -612,9 +637,9 @@ public final class FixtureEngine
     }
 
     /** Unlimited-depth, hierarchy-aware cache. */
-    private final Map<MatKey, Model.FixtureCall> materializedCache = new LinkedHashMap<>();
+    private final Map<MatKey, Model.MoxtureCall> materializedCache = new LinkedHashMap<>();
 
-    private FixtureEngine(Class<?> testClass,
+    private Moxter(Class<?> testClass,
                           MockMvc mockMvc,
                           java.util.function.Supplier<org.springframework.security.core.Authentication> authSupplier)
     {
@@ -623,26 +648,26 @@ public final class FixtureEngine
         this.builderAuthSupplier = authSupplier;
 
         // Build minimal config internally
-        Engine.FixtureConfig cfg = new Engine.FixtureConfig(
-                DEFAULT_FIXTURES_ROOT_PATH,
+        Engine.MoxtureConfig cfg = new Engine.MoxtureConfig(
+                DEFAULT_MOXTURES_ROOT_PATH,
                 DEFAULT_USE_PER_TESTCLASS_DIRECTORY,
-                DEFAULT_FIXTURES_BASENAME
+                DEFAULT_MOXTURES_BASENAME
         );
         this.cfg = cfg;
 
-        // YAML for reading fixtures/includes; JSON for HTTP I/O
+        // YAML for reading moxtures/includes; JSON for HTTP I/O
         ObjectMapper yamlMapper = defaultYamlMapper();
         ObjectMapper jsonMapper = defaultJsonMapper();
         this.yamlMapper = yamlMapper;
         this.jsonMapper = jsonMapper;
 
-        // Load closest fixtures file (read with YAML)
-        IO.ClasspathFixtureRepository repo = new IO.ClasspathFixtureRepository(yamlMapper);
-        IO.FixtureRepository.LoadedSuite loaded = repo.loadFor(testClass, cfg);
+        // Load closest moxtures file (read with YAML)
+        IO.ClasspathMoxtureRepository repo = new IO.ClasspathMoxtureRepository(yamlMapper);
+        IO.MoxtureRepository.LoadedSuite loaded = repo.loadFor(testClass, cfg);
 
         // IMPORTANT: keep RAW suite (no pre-materialization at load time)
         this.suite = loaded.suite;
-        this.fixturesBaseDir = loaded.baseDir;
+        this.moxturesBaseDir = loaded.baseDir;
         this.repo = repo;
 
         // === NEW: Load hierarchical vars =======================================
@@ -657,22 +682,22 @@ public final class FixtureEngine
                 }
             }
             if (log.isDebugEnabled()) {
-                log.debug("[FixtureEngine] initial vars loaded: {}", Util.Logging.previewVars(vars));
+                log.debug("[Moxter] initial vars loaded: {}", Util.Logging.previewVars(vars));
             }
         }
         // === END NEW ============================================================
 
-        // Index fixtures by name (fail fast on duplicates) and validate structure
-        Map<String, Model.FixtureCall> index = new LinkedHashMap<>();
-        List<Model.FixtureCall> calls = (suite.fixtures() == null) ? Collections.emptyList() : suite.fixtures();
-        for (Model.FixtureCall f : calls) {
+        // Index moxtures by name (fail fast on duplicates) and validate structure
+        Map<String, Model.MoxtureCall> index = new LinkedHashMap<>();
+        List<Model.MoxtureCall> calls = (suite.moxtures() == null) ? Collections.emptyList() : suite.moxtures();
+        for (Model.MoxtureCall f : calls) {
             if (f.getName() == null || f.getName().isBlank()) {
-                throw new IllegalStateException("Fixture with missing/blank 'name' in " + fixturesBaseDir + "/" + DEFAULT_FIXTURES_BASENAME);
+                throw new IllegalStateException("Moxture with missing/blank 'name' in " + moxturesBaseDir + "/" + DEFAULT_MOXTURES_BASENAME);
             }
-            validateGroupVsHttp(f);
+            validateMoxture(f);
             if (index.put(f.getName(), f) != null) {
                 // Fail on name collision
-                throw new IllegalStateException("Duplicate fixture name: " + f.getName());
+                throw new IllegalStateException("Duplicate moxture name: " + f.getName());
             }
         }
         this.byName = Collections.unmodifiableMap(index);
@@ -708,8 +733,8 @@ public final class FixtureEngine
             return this;
         }
 
-        public FixtureEngine build() {
-            return new FixtureEngine(testClass, mockMvc, authSupplier);
+        public Moxter build() {
+            return new Moxter(testClass, mockMvc, authSupplier);
         }
     }
 
@@ -717,47 +742,47 @@ public final class FixtureEngine
     //   Private helpers
     // =====================================================================
 
-    /** Resolve a name to a concrete, fully materialized fixture (closest → parents), with its baseDir. */
+    /** Resolve a name to a concrete, fully materialized moxture (closest → parents), with its baseDir. */
     private Resolved resolveByName(String name)
     {
         // 1) Try closest file first
-        Model.FixtureCall local = byName.get(name);
+        Model.MoxtureCall local = byName.get(name);
         if (local != null) {
             // Materialize deeply (same-file and cross-file, unlimited depth) from the local file's baseDir
-            Model.FixtureCall mat = materializeDeep(local, fixturesBaseDir, new ArrayDeque<>(), new HashSet<>());
-            return new Resolved(mat, fixturesBaseDir);
+            Model.MoxtureCall mat = materializeDeep(local, moxturesBaseDir, new ArrayDeque<>(), new HashSet<>());
+            return new Resolved(mat, moxturesBaseDir);
         }
 
         // 2) Hierarchical lookup upwards (closest → ... → root) starting from the test class location
-        IO.ClasspathFixtureRepository.Resolved found = repo.findFirstByName(testClass, cfg, name, yamlMapper);
+        IO.ClasspathMoxtureRepository.Resolved found = repo.findFirstByName(testClass, cfg, name, yamlMapper);
         if (found == null) {
             List<String> attempted = repo.candidateAncestorPaths(testClass, cfg);
-            throw new IllegalArgumentException("Fixture/Group not found by name: " + name
+            throw new IllegalArgumentException("Moxture/Group not found by name: " + name
                     + ". Looked under: " + attempted);
         }
 
         // Ensure deep materialization from the found scope
-        Model.FixtureCall mat = materializeDeep(found.call, found.baseDir, new ArrayDeque<>(), new HashSet<>());
+        Model.MoxtureCall mat = materializeDeep(found.call, found.baseDir, new ArrayDeque<>(), new HashSet<>());
         return new Resolved(mat, found.baseDir);
     }
 
     private static final class Resolved {
-        final Model.FixtureCall call;
+        final Model.MoxtureCall call;
         final String baseDir;
-        Resolved(Model.FixtureCall call, String baseDir) { this.call = call; this.baseDir = baseDir; }
+        Resolved(Model.MoxtureCall call, String baseDir) { this.call = call; this.baseDir = baseDir; }
     }
 
     /**
-     * Fully materialize a fixture: follow {@code basedOn} across files to any depth.
+     * Fully materialize a moxture: follow {@code basedOn} across files to any depth.
      * Merges at each step with child precedence, using existing merge rules:
      *  - Scalars: child overrides
      *  - headers/query (maps): shallow merge, child wins
-     *  - save / fixtures (lists-of-names): REPLACE
+     *  - save / moxtures (lists-of-names): REPLACE
      *  - payload: deep-merge objects; arrays/scalars replace
      *
      * Cycle-safe with a visiting set + stack (human-friendly chain on error).
      */
-    private Model.FixtureCall materializeDeep(Model.FixtureCall node,
+    private Model.MoxtureCall materializeDeep(Model.MoxtureCall node,
                                               String nodeBaseDir,
                                               Deque<MatKey> stack,
                                               Set<MatKey> visiting)
@@ -769,12 +794,12 @@ public final class FixtureEngine
         final MatKey key = new MatKey(nodeBaseDir, nodeName);
 
         // Cache
-        Model.FixtureCall cached = materializedCache.get(key);
+        Model.MoxtureCall cached = materializedCache.get(key);
         if (cached != null) return cached;
 
         // No inheritance → normalize + cache
         if (parentName == null || parentName.isBlank()) {
-            Model.FixtureCall normalized = cloneWithoutBasedOn(node);
+            Model.MoxtureCall normalized = cloneWithoutBasedOn(node);
             materializedCache.put(key, normalized);
             return normalized;
         }
@@ -789,42 +814,44 @@ public final class FixtureEngine
         stack.addLast(key);
 
         // Resolve parent by searching from THIS node’s file directory upwards (closest → parents → root)
-        IO.ClasspathFixtureRepository.Resolved parentResolved =
+        IO.ClasspathMoxtureRepository.Resolved parentResolved =
                 repo.findFirstByNameFromBaseDir(testClass, cfg, nodeBaseDir, parentName, yamlMapper);
 
         if (parentResolved == null) {
             String attempted = repo.candidateAncestorPathsFromBaseDir(nodeBaseDir, cfg).toString();
             throw new IllegalArgumentException(
-                "basedOn refers to unknown fixture '" + parentName + "'. Looked under (from " + nodeBaseDir + "): " + attempted
+                "basedOn refers to unknown moxture '" + parentName + "'. Looked under (from " + nodeBaseDir + "): " + attempted
             );
         }
 
         // Recurse
-        Model.FixtureCall materializedParent =
+        Model.MoxtureCall materializedParent =
                 materializeDeep(parentResolved.call, parentResolved.baseDir, stack, visiting);
 
         // Merge parent → child (child overrides)
-        Model.FixtureCall merged = new Model.FixtureCall();
+        Model.MoxtureCall merged = new Model.MoxtureCall();
         merged.setName(node.getName());
         merged.setMethod(firstNonBlank(node.getMethod(), materializedParent.getMethod()));
         merged.setEndpoint(firstNonBlank(node.getEndpoint(), materializedParent.getEndpoint()));
         merged.setExpectedStatus(node.getExpectedStatus() != null ? node.getExpectedStatus() : materializedParent.getExpectedStatus());
         merged.setHeaders(mergeMap(materializedParent.getHeaders(), node.getHeaders()));
+        merged.setVars(mergeMap(materializedParent.getVars(), node.getVars()));
         merged.setQuery(mergeMap(materializedParent.getQuery(), node.getQuery()));
         // For "save": replace instead of merge (no inheritance unless explicitly set on the child)
         merged.setSave(node.getSave() != null ? node.getSave() : materializedParent.getSave());
-        // For "fixtures" (group list): replace instead of merge
-        merged.setFixtures(node.getFixtures() != null ? node.getFixtures() : materializedParent.getFixtures());
+        // For "moxtures" (group list): replace instead of merge
+        merged.setMoxtures(node.getMoxtures() != null ? node.getMoxtures() : materializedParent.getMoxtures());
         merged.setMultipart(node.getMultipart() != null ? node.getMultipart() : materializedParent.getMultipart());
         JsonNode payload = deepMergePayload(yamlMapper, materializedParent.getPayload(), node.getPayload());
         merged.setPayload(payload);
+
 
 
         // Clear inheritance markers on the final node
         merged.setBasedOn(null);
         merged.setBaseOn(null);
 
-        validateGroupVsHttp(merged);
+        validateMoxture(merged);
 
         materializedCache.put(key, merged);
         stack.removeLast();
@@ -833,17 +860,18 @@ public final class FixtureEngine
     }
 
     /** Shallow clone of a call, with basedOn/baseOn cleared. */
-    private static Model.FixtureCall cloneWithoutBasedOn(Model.FixtureCall src) {
-        Model.FixtureCall c = new Model.FixtureCall();
+    private static Model.MoxtureCall cloneWithoutBasedOn(Model.MoxtureCall src) {
+        Model.MoxtureCall c = new Model.MoxtureCall();
         c.setName(src.getName());
         c.setMethod(src.getMethod());
         c.setEndpoint(src.getEndpoint());
         c.setHeaders(src.getHeaders()==null?null:new LinkedHashMap<>(src.getHeaders()));
+        c.setVars(src.getVars() == null ? null : new LinkedHashMap<>(src.getVars()));
         c.setQuery(src.getQuery()==null?null:new LinkedHashMap<>(src.getQuery()));
         c.setPayload(src.getPayload()); // JSON nodes are fine to share for our usage
         c.setSave(src.getSave()==null?null:new LinkedHashMap<>(src.getSave()));
         c.setExpectedStatus(src.getExpectedStatus());
-        c.setFixtures(src.getFixtures()==null?null:new ArrayList<>(src.getFixtures()));
+        c.setMoxtures(src.getMoxtures()==null?null:new ArrayList<>(src.getMoxtures()));
         c.setMultipart(src.getMultipart() == null ? null : new ArrayList<>(src.getMultipart()));
         c.setBasedOn(null);
         c.setBaseOn(null);
@@ -884,13 +912,13 @@ public final class FixtureEngine
     static final class Engine
     {
 
-        /** Immutable configuration used for locating fixtures on classpath. */
-        static final class FixtureConfig {
-            final String rootPath;                // e.g., "integrationtests2/fixtures"
+        /** Immutable configuration used for locating moxtures on classpath. */
+        static final class MoxtureConfig {
+            final String rootPath;                // e.g., "integrationtests2/moxtures"
             final boolean perTestClassDirectory;  // true => add "/{TestClassName}"
-            final String fileName;                // "fixtures.yaml" (includes extension)
+            final String fileName;                // "moxtures.yaml" (includes extension)
 
-            FixtureConfig(String rootPath, boolean perTestClassDirectory, String fileName) {
+            MoxtureConfig(String rootPath, boolean perTestClassDirectory, String fileName) {
                 this.rootPath = trim(rootPath);
                 this.perTestClassDirectory = perTestClassDirectory;
                 this.fileName = trim(fileName);
@@ -906,13 +934,13 @@ public final class FixtureEngine
 
         /** Item scheduled for execution: the resolved call + its defining file's baseDir. */
         static final class PlanItem {
-            final Model.FixtureCall call;
+            final Model.MoxtureCall call;
             final String baseDir;
-            PlanItem(Model.FixtureCall call, String baseDir) { this.call = call; this.baseDir = baseDir; }
+            PlanItem(Model.MoxtureCall call, String baseDir) { this.call = call; this.baseDir = baseDir; }
             String name() { return call.getName(); }
         }
 
-        /** Runs a list of fixtures with ordering + human logs (explicit order). */
+        /** Runs a list of moxtures with ordering + human logs (explicit order). */
         @Slf4j
         static final class GroupRunner {
             interface Exec { Model.ResponseEnvelope run(PlanItem item); }
@@ -921,9 +949,9 @@ public final class FixtureEngine
 
             void run(String groupLabel, List<PlanItem> list) {
                 if (list.isEmpty()) {
-                    log.info("[FixtureEngine] No fixtures found for group [{}].", groupLabel); return;
+                    log.info("[Moxter] No moxtures found for group [{}].", groupLabel); return;
                 }
-                log.debug("[FixtureEngine] Executing group [{}, size: {}, names: {}]", groupLabel, list.size(), names(list));
+                log.debug("[Moxter] Executing group [{}, size: {}, names: {}]", groupLabel, list.size(), names(list));
                 for (PlanItem it : list) {
                     exec.run(it);
                 }
@@ -937,16 +965,16 @@ public final class FixtureEngine
         }
     }
 
-    /** Loading fixtures from classpath. */
+    /** Loading moxtures from classpath. */
     static final class IO {
 
-        interface FixtureRepository {
+        interface MoxtureRepository {
             final class LoadedSuite {
-                public final Model.FixtureSuite suite;
-                public final String baseDir; // classpath folder where the fixtures file lives
-                public LoadedSuite(Model.FixtureSuite suite, String baseDir) { this.suite = suite; this.baseDir = baseDir; }
+                public final Model.MoxtureSuite suite;
+                public final String baseDir; // classpath folder where the moxtures file lives
+                public LoadedSuite(Model.MoxtureSuite suite, String baseDir) { this.suite = suite; this.baseDir = baseDir; }
             }
-            LoadedSuite loadFor(Class<?> testClass, Engine.FixtureConfig cfg);
+            LoadedSuite loadFor(Class<?> testClass, Engine.MoxtureConfig cfg);
         }
 
         /**
@@ -956,45 +984,45 @@ public final class FixtureEngine
          * - If not found, throw with a clear message.
          * - Provides hierarchical name lookup helpers.
          */
-        static final class ClasspathFixtureRepository implements FixtureRepository {
+        static final class ClasspathMoxtureRepository implements MoxtureRepository {
             private final ObjectMapper mapper;
 
-            ClasspathFixtureRepository(ObjectMapper mapper) { this.mapper = mapper; }
+            ClasspathMoxtureRepository(ObjectMapper mapper) { this.mapper = mapper; }
 
-            public LoadedSuite loadFor(Class<?> testClass, Engine.FixtureConfig cfg) {
+            public LoadedSuite loadFor(Class<?> testClass, Engine.MoxtureConfig cfg) {
                 final String classpath = buildClosestClasspath(testClass, cfg);
                 final String displayPath = "classpath:/" + classpath;
 
                 URL url = firstNonNullUrl(
                         Thread.currentThread().getContextClassLoader(),
                         testClass.getClassLoader(),
-                        FixtureEngine.class.getClassLoader(),
+                        Moxter.class.getClassLoader(),
                         classpath
                 );
 
                 if (url == null) {
                     throw new IllegalStateException(
-                        "[FixtureEngine] No fixtures file found for " + testClass.getName() + "\n" +
+                        "[Moxter] No moxtures file found for " + testClass.getName() + "\n" +
                         "Expected at: " + displayPath + "\n" +
                         "Hint: place the file under src/test/resources/" + classpath
                     );
                 }
 
-                if (isDebug()) System.out.println("[FixtureEngine] Loading " + displayPath + " -> " + url);
+                if (isDebug()) System.out.println("[Moxter] Loading " + displayPath + " -> " + url);
 
                 try (InputStream in = url.openStream()) {
-                    Model.FixtureSuite suite = mapper.readValue(in, Model.FixtureSuite.class); // YAML mapper parses JSON too
+                    Model.MoxtureSuite suite = mapper.readValue(in, Model.MoxtureSuite.class); // YAML mapper parses JSON too
                     String baseDir = parentDirOf(classpath);
                     return new LoadedSuite(suite, baseDir);
                 } catch (IOException e) {
-                    throw new RuntimeException("Failed loading fixtures: " + displayPath, e);
+                    throw new RuntimeException("Failed loading moxtures: " + displayPath, e);
                 }
             }
 
             /* ===== Hierarchical lookup (helpers) ===== */
 
             /** Returns candidate ancestor classpaths from closest → root (inclusive). */
-            List<String> candidateAncestorPaths(Class<?> testClass, Engine.FixtureConfig cfg) {
+            List<String> candidateAncestorPaths(Class<?> testClass, Engine.MoxtureConfig cfg) {
                 List<String> out = new ArrayList<>();
                 String pkg = (testClass.getPackageName() == null ? "" : testClass.getPackageName().replace('.', '/'));
 
@@ -1003,7 +1031,7 @@ public final class FixtureEngine
                     out.add(cfg.rootPath + (pkg.isEmpty() ? "" : "/" + pkg) + "/" + testClass.getSimpleName() + "/" + cfg.fileName);
                 }
 
-                // 2) Then each package ancestor level: root/pkg/.../fixtures.yaml → ... → root/fixtures.yaml
+                // 2) Then each package ancestor level: root/pkg/.../moxtures.yaml → ... → root/moxtures.yaml
                 if (!pkg.isEmpty()) {
                     String[] parts = pkg.split("/");
                     for (int i = parts.length; i >= 1; i--) {
@@ -1018,20 +1046,20 @@ public final class FixtureEngine
                 return out;
             }
 
-            /** Finds the first (closest) occurrence of a fixture by name across ancestor files (starting from test package). */
-            Resolved findFirstByName(Class<?> testClass, Engine.FixtureConfig cfg, String name, ObjectMapper yamlMapper) {
+            /** Finds the first (closest) occurrence of a moxture by name across ancestor files (starting from test package). */
+            Resolved findFirstByName(Class<?> testClass, Engine.MoxtureConfig cfg, String name, ObjectMapper yamlMapper) {
                 List<String> candidates = candidateAncestorPaths(testClass, cfg);
                 ClassLoader tccl = Thread.currentThread().getContextClassLoader();
-                ClassLoader fallback = FixtureEngine.class.getClassLoader();
+                ClassLoader fallback = Moxter.class.getClassLoader();
                 for (String cp : candidates) {
                     URL url = firstNonNullUrl(tccl, testClass.getClassLoader(), fallback, cp);
                     if (url == null) continue;
                     try (InputStream in = url.openStream()) {
-                        Model.FixtureSuite raw = yamlMapper.readValue(in, Model.FixtureSuite.class);
-                        if (raw.fixtures() == null || raw.fixtures().isEmpty()) continue;
+                        Model.MoxtureSuite raw = yamlMapper.readValue(in, Model.MoxtureSuite.class);
+                        if (raw.moxtures() == null || raw.moxtures().isEmpty()) continue;
 
                         // NOTE: do NOT materialize here; scan raw and return the raw hit.
-                        for (Model.FixtureCall f : raw.fixtures()) {
+                        for (Model.MoxtureCall f : raw.moxtures()) {
                             if (name.equals(f.getName())) {
                                 String baseDir = parentDirOf(cp);
                                 return new Resolved(f, baseDir, "classpath:/" + cp);
@@ -1045,7 +1073,7 @@ public final class FixtureEngine
             }
 
             /** Returns candidate ancestor classpaths starting at an arbitrary baseDir (closest → root). */
-            List<String> candidateAncestorPathsFromBaseDir(String baseDir, Engine.FixtureConfig cfg) {
+            List<String> candidateAncestorPathsFromBaseDir(String baseDir, Engine.MoxtureConfig cfg) {
                 List<String> out = new ArrayList<>();
                 String cur = (baseDir == null) ? "" : baseDir;
                 while (cur.endsWith("/")) cur = cur.substring(0, cur.length() - 1);
@@ -1065,20 +1093,20 @@ public final class FixtureEngine
                 return out;
             }
 
-            /** Finds the first (closest) occurrence of a fixture by name, starting from an arbitrary baseDir. */
-            Resolved findFirstByNameFromBaseDir(Class<?> testClass, Engine.FixtureConfig cfg,
+            /** Finds the first (closest) occurrence of a moxture by name, starting from an arbitrary baseDir. */
+            Resolved findFirstByNameFromBaseDir(Class<?> testClass, Engine.MoxtureConfig cfg,
                                                 String startBaseDir, String name, ObjectMapper yamlMapper) {
                 List<String> candidates = candidateAncestorPathsFromBaseDir(startBaseDir, cfg);
                 ClassLoader tccl = Thread.currentThread().getContextClassLoader();
-                ClassLoader fallback = FixtureEngine.class.getClassLoader();
+                ClassLoader fallback = Moxter.class.getClassLoader();
                 for (String cp : candidates) {
                     URL url = firstNonNullUrl(tccl, testClass.getClassLoader(), fallback, cp);
                     if (url == null) continue;
                     try (InputStream in = url.openStream()) {
-                        Model.FixtureSuite raw = yamlMapper.readValue(in, Model.FixtureSuite.class);
-                        if (raw.fixtures() == null || raw.fixtures().isEmpty()) continue;
+                        Model.MoxtureSuite raw = yamlMapper.readValue(in, Model.MoxtureSuite.class);
+                        if (raw.moxtures() == null || raw.moxtures().isEmpty()) continue;
 
-                        for (Model.FixtureCall f : raw.fixtures()) {
+                        for (Model.MoxtureCall f : raw.moxtures()) {
                             if (name.equals(f.getName())) {
                                 String baseDir = parentDirOf(cp);
                                 return new Resolved(f, baseDir, "classpath:/" + cp);
@@ -1092,10 +1120,10 @@ public final class FixtureEngine
             }
 
             static final class Resolved {
-                final Model.FixtureCall call;
+                final Model.MoxtureCall call;
                 final String baseDir;
                 final String displayPath;
-                Resolved(Model.FixtureCall call, String baseDir, String displayPath) {
+                Resolved(Model.MoxtureCall call, String baseDir, String displayPath) {
                     this.call = call; this.baseDir = baseDir; this.displayPath = displayPath;
                 }
             }
@@ -1110,12 +1138,12 @@ public final class FixtureEngine
                 return (fallback != null ? fallback.getResource(path) : null);
             }
 
-            private static String buildClosestClasspath(Class<?> testClass, Engine.FixtureConfig cfg) {
+            private static String buildClosestClasspath(Class<?> testClass, Engine.MoxtureConfig cfg) {
                 String pkg = (testClass.getPackageName() == null ? "" : testClass.getPackageName().replace('.', '/'));
                 String classDir = cfg.perTestClassDirectory ? ("/" + testClass.getSimpleName()) : "";
                 String base = (pkg.isEmpty() ? cfg.rootPath : (cfg.rootPath + "/" + pkg)) + classDir + "/";
-                String full = base + cfg.fileName; // EXACT file name (e.g., "fixtures.yaml")
-                if (isDebug()) System.out.println("[FixtureEngine] Expecting fixtures at: classpath:/" + full + " for " + testClass.getName());
+                String full = base + cfg.fileName; // EXACT file name (e.g., "moxtures.yaml")
+                if (isDebug()) System.out.println("[Moxter] Expecting moxtures at: classpath:/" + full + " for " + testClass.getName());
                 return full;
             }
 
@@ -1124,7 +1152,7 @@ public final class FixtureEngine
                 return (i > 0) ? path.substring(0, i) : "";
             }
             private static boolean isDebug() {
-                return "true".equalsIgnoreCase(System.getProperty("fixtureengine.debug", "false"));
+                return "true".equalsIgnoreCase(System.getProperty("Moxter.debug", "false"));
             }
         }
     }
@@ -1251,9 +1279,9 @@ public final class FixtureEngine
                         matcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
                     } else {
                         // Warning for missing variable
-                        log.warn("[FixtureEngine] Interpolation warning: Variable '{{}}' found in payload " +
+                        log.warn("[Moxter] Interpolation warning: Variable '{{}}' found in payload " +
                                  "but missing from vars! (Leaving as-is). This will probably cause the " +
-                                 "fixture cal to fail.", key);
+                                 "moxture cal to fail.", key);
 
                         // Keep the original {{key}} in the text so the error is visible in the output/logs
                         matcher.appendReplacement(sb, Matcher.quoteReplacement(matcher.group(0)));
@@ -1273,7 +1301,7 @@ public final class FixtureEngine
                 ClassLoader tccl = Thread.currentThread().getContextClassLoader();
                 if (tccl != null) url = tccl.getResource(path);
                 if (url == null) {
-                    ClassLoader fallback = FixtureEngine.class.getClassLoader();
+                    ClassLoader fallback = Moxter.class.getClassLoader();
                     if (fallback != null) url = fallback.getResource(path);
                 }
 
@@ -1311,14 +1339,14 @@ public final class FixtureEngine
             }
 
             private JsonNode loadClasspathPayload(String baseDir, String rawPath) throws IOException {
-                // Relative to the fixtures file directory unless absolute "/..."
+                // Relative to the moxtures file directory unless absolute "/..."
                 String path = rawPath.startsWith("/") ? rawPath.substring(1) : (baseDir + "/" + rawPath);
 
                 URL url = null;
                 ClassLoader tccl = Thread.currentThread().getContextClassLoader();
                 if (tccl != null) url = tccl.getResource(path);
                 if (url == null) {
-                    ClassLoader fallback = FixtureEngine.class.getClassLoader();
+                    ClassLoader fallback = Moxter.class.getClassLoader();
                     if (fallback != null) url = fallback.getResource(path);
                 }
 
@@ -1415,12 +1443,12 @@ public final class FixtureEngine
             }
 
             /** Strict convenience. */
-            Model.ResponseEnvelope execute(Model.FixtureCall spec, String baseDir, Map<String,Object> vars) {
+            Model.ResponseEnvelope execute(Model.MoxtureCall spec, String baseDir, Map<String,Object> vars) {
                 return execute(spec, baseDir, vars, false, false);
             }
 
             /**
-             * Execute a single fixture call.
+             * Execute a single moxture call.
              * Logs a concise start line, rich DEBUG details, response preview, a finish line with duration,
              * and a compact warning when the expected status does not match.
              *
@@ -1428,9 +1456,9 @@ public final class FixtureEngine
              * @param baseDir
              * @param vars
              * @param lax do not fail on expected-status mismatches (still throws for infra errors)
-             * @param jsonPathLax see callFixture(...)
+             * @param jsonPathLax see callMoxture(...)
              */
-            Model.ResponseEnvelope execute(Model.FixtureCall spec, String baseDir, 
+            Model.ResponseEnvelope execute(Model.MoxtureCall spec, String baseDir, 
                                            Map<String,Object> vars, boolean lax,
                                            boolean jsonPathLax 
                                         )
@@ -1446,7 +1474,7 @@ public final class FixtureEngine
                 try {
                     // Endpoint must be present after materialization
                     if (spec.getEndpoint() == null || spec.getEndpoint().isBlank()) {
-                        throw new IllegalArgumentException("Fixture '" + name + "' has no 'endpoint' after basedOn resolution. " +
+                        throw new IllegalArgumentException("Moxture '" + name + "' has no 'endpoint' after basedOn resolution. " +
                                 "Check that its base defines 'endpoint' (or legacy 'url').");
                     }
 
@@ -1460,17 +1488,17 @@ public final class FixtureEngine
                     final JsonNode payloadNode = payloads.resolve(spec.getPayload(), baseDir, vars, tpl);
 
                     // 3) Human-friendly start + DEBUG details
-                    log.info("[FixtureEngine] >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
-                    log.info("[FixtureEngine] >>> Executing fixture:  [{}, {}, {}]", name, method, uri);
+                    log.info("[Moxter] >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+                    log.info("[Moxter] >>> Executing moxture:  [{}, {}, {}]", name, method, uri);
                     if (log.isDebugEnabled()) {
-                        log.debug("[FixtureEngine] more info: expected={} headers={} query={} vars={} payload={}",
+                        log.debug("[Moxter] more info: expected={} headers={} query={} vars={} payload={}",
                                 expectedStatusPreview(spec.getExpectedStatus()),
                                 Util.Logging.previewHeaders(headers0),
                                 (query == null || query.isEmpty() ? "{}" : query.toString()),
                                 Util.Logging.previewVars(vars),
                                 Util.Logging.previewNode(payloadNode));
 
-                        //#log.debug("[FixtureEngine] spec=\n{}", jsonMapper.writerWithDefaultPrettyPrinter().writeValueAsString(spec));
+                        //#log.debug("[Moxter] spec=\n{}", jsonMapper.writerWithDefaultPrettyPrinter().writeValueAsString(spec));
                     }
 
                     // 4) Build request
@@ -1479,8 +1507,8 @@ public final class FixtureEngine
                     
                     // --- IF MULTIPART ---
                     if (spec.getMultipart() != null && !spec.getMultipart().isEmpty()) 
-                    {   log.debug("[FixtureEngine] Multipart detected");
-                        // Remove explicit Content-Type header from the fixture definition.
+                    {   log.debug("[Moxter] Multipart detected");
+                        // Remove explicit Content-Type header from the moxture definition.
                         // We MUST let MockMvc generate "multipart/form-data; boundary=..." 
                         // automatically. If we send "application/json" here, the backend
                         // will not parse the parts, causing "Required part 'cmd' is not present".
@@ -1538,7 +1566,7 @@ public final class FixtureEngine
 
                     // --- IF STANDARD, NON MULTIPART ---
                     else 
-                    {   log.debug("[FixtureEngine] Standard, NOT Multipart");
+                    {   log.debug("[Moxter] Standard, NOT Multipart");
                         req = toRequestBuilder(method, uri);
                         if (payloadNode != null) {
                             req.content(jsonMapper.writeValueAsBytes(payloadNode));
@@ -1560,11 +1588,11 @@ public final class FixtureEngine
                     }
                     if (auth != null) {
                         req.with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication(auth));
-                        log.debug("[FixtureEngine] using Authentication principal={}", safeName(auth));
+                        log.debug("[Moxter] using Authentication principal={}", safeName(auth));
                     }
                     if (requiresCsrf(method)) {
                         req.with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf());
-                        log.debug("[FixtureEngine] CSRF token added for {}", method);
+                        log.debug("[Moxter] CSRF token added for {}", method);
                     }
 
                     if (!headers.isEmpty()) for (Map.Entry<String,String> e : headers.entrySet()) req.header(e.getKey(), e.getValue());
@@ -1591,11 +1619,11 @@ public final class FixtureEngine
                             body = jsonMapper.readTree(raw);
                         } catch (Exception parseEx) {
                             // Tolerate non-JSON or malformed JSON — keep raw text and continue
-                            log.debug("[FixtureEngine] Non-JSON body (ct='{}') could not be parsed as JSON: {}",
+                            log.debug("[Moxter] Non-JSON body (ct='{}') could not be parsed as JSON: {}",
                                     ctHeader, rootMessage(parseEx));
                         }
                     } else if (hasBody && log.isTraceEnabled()) {
-                        log.trace("[FixtureEngine] Skipping JSON parse for non-JSON response (ct='{}', sample='{}')",
+                        log.trace("[Moxter] Skipping JSON parse for non-JSON response (ct='{}', sample='{}')",
                                 ctHeader, Util.Logging.truncate(raw, 80));
                     }
 
@@ -1603,7 +1631,7 @@ public final class FixtureEngine
 
                     // 5.5) DEBUG response preview
                     if (log.isDebugEnabled()) {
-                        log.debug("[FixtureEngine] response preview: status={} headers={} body={}",
+                        log.debug("[Moxter] response preview: status={} headers={} body={}",
                                 env.status(),
                                 Util.Logging.previewRespHeaders(env.headers()),
                                 Util.Logging.previewNode(body));
@@ -1620,18 +1648,18 @@ public final class FixtureEngine
                             env.status(), name, method, uri, expectedStatusPreview(spec.getExpectedStatus()), bodyPreview
                         );
                         if (lax) {
-                            log.info("[FixtureEngine] Unexpected return status, but authorized in lax mode, so OK! : {}", message);
+                            log.info("[Moxter] Unexpected return status, but authorized in lax mode, so OK! : {}", message);
                         } else {
-                            log.warn("[FixtureEngine] {}", message);
+                            log.warn("[Moxter] {}", message);
                             throw new AssertionError(message);
                         }
                     }
 
                     // 7) Finish line + duration
                     final long tookMs = (System.nanoTime() - t0) / 1_000_000L;
-                    log.info("[FixtureEngine] <<< Finished executing fixture: [{}, {}, {}] with status: [{}], in {} ms",
+                    log.info("[Moxter] <<< Finished executing moxture: [{}, {}, {}] with status: [{}], in {} ms",
                             name, method, uri, env.status(), tookMs);
-                    log.info("[FixtureEngine] <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<");
+                    log.info("[Moxter] <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<");
 
                     // === 8) Save variables only if JSON ===
                     if (spec.getSave() != null && !spec.getSave().isEmpty()) {
@@ -1642,22 +1670,22 @@ public final class FixtureEngine
                                 // If you later want to enforce strictness here, route via varsPut / varsPutIfAbsent.
                                 vars.put(e.getKey(), ctx.read(e.getValue()));
                             }
-                            log.debug("[FixtureEngine]    saved vars from '{}': {}", name, spec.getSave().keySet());
+                            log.debug("[Moxter]    saved vars from '{}': {}", name, spec.getSave().keySet());
                         } else if (log.isDebugEnabled()) {
-                            log.debug("[FixtureEngine]    save skipped for '{}': response is not JSON", name);
+                            log.debug("[Moxter]    save skipped for '{}': response is not JSON", name);
                         }
                     }
 
-                    if (log.isTraceEnabled()) log.trace("[FixtureEngine] Raw body (len={}): {}", raw == null ? 0 : raw.length(), Util.Logging.truncate(raw, 4000));
+                    if (log.isTraceEnabled()) log.trace("[Moxter] Raw body (len={}): {}", raw == null ? 0 : raw.length(), Util.Logging.truncate(raw, 4000));
                     return env;
 
                 } catch (RuntimeException re) {
-                    log.warn("[FixtureEngine] X [{}] {} failed: {}", method, name, rootMessage(re));
+                    log.warn("[Moxter] X [{}] {} failed: {}", method, name, rootMessage(re));
                     throw re;
                 } catch (Exception e) {
                     // NOTE: Non-JSON bodies no longer cause JsonParseException to escape here.
-                    log.warn("[FixtureEngine] X [{}] {} errored: {}", method, name, rootMessage(e));
-                    throw new RuntimeException("Error executing fixture '" + name + "'", e);
+                    log.warn("[Moxter] X [{}] {} errored: {}", method, name, rootMessage(e));
+                    throw new RuntimeException("Error executing moxture '" + name + "'", e);
                 }
             }
 
@@ -1749,9 +1777,11 @@ public final class FixtureEngine
        Merge helpers
        ======================= */
 
-    /** Ensure a fixture is either a group OR an HTTP call, not both. */
-    private static void validateGroupVsHttp(Model.FixtureCall f) {
-        boolean isGroup = f.getFixtures() != null;
+    /** 
+     * Ensure a moxture is either a group OR a single call, not both. 
+     */
+    private static void validateMoxture(Model.MoxtureCall f) {
+        boolean isGroup = f.getMoxtures() != null;
         boolean isHttp  =
             (f.getEndpoint() != null && !f.getEndpoint().isBlank()) ||
             (f.getMethod()   != null && !f.getMethod().isBlank())   ||
@@ -1761,7 +1791,7 @@ public final class FixtureEngine
             (f.getQuery()   != null && !f.getQuery().isEmpty())   ||
             (f.getSave()    != null && !f.getSave().isEmpty());
         if (isGroup && isHttp) {
-            throw new IllegalStateException("Fixture '" + f.getName() + "' cannot define both 'fixtures' and HTTP fields");
+            throw new IllegalStateException("Moxture '" + f.getName() + "' cannot define both 'moxtures' and HTTP fields");
         }
     }
 
@@ -1769,13 +1799,28 @@ public final class FixtureEngine
         return (a != null && !a.isBlank()) ? a : b;
     }
 
-    private static Map<String,String> mergeMap(Map<String,String> parent, Map<String,String> child) {
-        if ((parent == null || parent.isEmpty()) && (child == null || child.isEmpty())) return child;
-        Map<String,String> out = new LinkedHashMap<>();
+    private static <K, V> Map<K, V> mergeMap(Map<K, V> parent, Map<K, V> child) {
+        if ((parent == null || parent.isEmpty()) && (child == null || child.isEmpty())) {
+            return child;
+        }
+        Map<K, V> out = new LinkedHashMap<>();
         if (parent != null) out.putAll(parent);
         if (child != null) out.putAll(child);
         return out;
     }
+
+
+
+//#    private static Map<String,String> mergeMap(Map<String,String> parent, Map<String,String> child) {
+//#        if ((parent == null || parent.isEmpty()) && (child == null || child.isEmpty())) return child;
+//#        Map<String,String> out = new LinkedHashMap<>();
+//#        if (parent != null) out.putAll(parent);
+//#        if (child != null) out.putAll(child);
+//#        return out;
+//#    }
+
+
+
 
     /** If the node is textual and looks like JSON, parse it to a JSON tree; otherwise return as is. */
     private static JsonNode coerceJsonTextToNode(ObjectMapper mapper, JsonNode n) {
@@ -1827,23 +1872,23 @@ public final class FixtureEngine
        Group helpers
        ======================= */
 
-    private static boolean isGroupFixture(Model.FixtureCall f) {
-        // A group is any fixture that *declares* a fixtures list (even empty → no-op group)
-        return f != null && f.getFixtures() != null;
+    private static boolean isGroupMoxture(Model.MoxtureCall f) {
+        // A group is any moxture that *declares* a moxtures list (even empty → no-op group)
+        return f != null && f.getMoxtures() != null;
     }
 
 
 
-    private void runGroupFixture(String label, List<String> list, String baseDir, boolean lax, boolean jsonPathLax) {
-        runGroupFixture(label, list, baseDir, lax, jsonPathLax, this.vars);
+    private void runGroupMoxture(String label, List<String> list, String baseDir, boolean lax, boolean jsonPathLax) {
+        runGroupMoxture(label, list, baseDir, lax, jsonPathLax, this.vars);
     }
 
     /**
-     * Run a group fixture using the provided vars map (e.g., a call-scoped overlay).
+     * Run a group moxture using the provided vars map (e.g., a call-scoped overlay).
      */
-    private void runGroupFixture(String label, List<String> list, String baseDir, boolean lax, boolean jsonPathLax, Map<String,Object> varsForCall) {
+    private void runGroupMoxture(String label, List<String> list, String baseDir, boolean lax, boolean jsonPathLax, Map<String,Object> varsForCall) {
         if (list == null || list.isEmpty()) {
-            log.info("[FixtureEngine] {} is empty; nothing to run.", label);
+            log.info("[Moxter] {} is empty; nothing to run.", label);
             return;
         }
 
@@ -1856,12 +1901,12 @@ public final class FixtureEngine
             } catch (Throwable t) {
                 if (lax) {
                     String attempted = repo.candidateAncestorPaths(testClass, cfg).toString();
-                    log.warn("[FixtureEngine] (lax) {} → unknown or failed child fixture '{}'; skipping. Searched under: {}. Cause: {}",
+                    log.warn("[Moxter] (lax) {} → unknown or failed child moxture '{}'; skipping. Searched under: {}. Cause: {}",
                             label, fname, attempted, t.toString());
                     continue;
                 }
                 throw t instanceof RuntimeException ? (RuntimeException) t
-                        : new RuntimeException("Error resolving fixture '" + fname + "' in " + label, t);
+                        : new RuntimeException("Error resolving moxture '" + fname + "' in " + label, t);
             }
         }
 
@@ -1871,11 +1916,11 @@ public final class FixtureEngine
                 executor.execute(it.call, it.baseDir, varsForCall, lax, jsonPathLax);
             } catch (Throwable t) {
                 if (lax) {
-                    log.warn("[FixtureEngine] (lax) {} → child '{}' failed — skipping. Cause: {}", label, it.name(), t.toString());
+                    log.warn("[Moxter] (lax) {} → child '{}' failed — skipping. Cause: {}", label, it.name(), t.toString());
                     // continue with next child
                 } else {
                     if (t instanceof RuntimeException) throw (RuntimeException) t;
-                    throw new RuntimeException("Error executing fixture '" + it.name() + "' in " + label, t);
+                    throw new RuntimeException("Error executing moxture '" + it.name() + "' in " + label, t);
                 }
             }
         }
@@ -1887,20 +1932,20 @@ public final class FixtureEngine
        ======================= */
 
     /**
-     * Load a top-level {@code vars:} map from the hierarchical fixture files:
+     * Load a top-level {@code vars:} map from the hierarchical moxture files:
      * root → package ancestors → (optional) per-test-class directory.
      * <p>
      * The closest file to the test class completely overrides any higher-level vars
      * (no merging). If no file defines {@code vars}, returns an empty map.
      */
     @SuppressWarnings("unchecked")
-    private Map<String,Object> loadHierarchicalVars(Class<?> testClass, Engine.FixtureConfig cfg, ObjectMapper yamlMapper) {
+    private Map<String,Object> loadHierarchicalVars(Class<?> testClass, Engine.MoxtureConfig cfg, ObjectMapper yamlMapper) {
         List<String> candidates = repo.candidateAncestorPaths(testClass, cfg);
         Map<String,Object> last = null;
 
         ClassLoader tccl     = Thread.currentThread().getContextClassLoader();
         ClassLoader testCl   = testClass.getClassLoader();
-        ClassLoader fallback = FixtureEngine.class.getClassLoader();
+        ClassLoader fallback = Moxter.class.getClassLoader();
 
         for (String cp : candidates) {
             URL url = (tccl != null ? tccl.getResource(cp) : null);
@@ -1909,7 +1954,7 @@ public final class FixtureEngine
             if (url == null) continue;
 
             try (InputStream in = url.openStream()) {
-                Model.FixtureSuite suite = yamlMapper.readValue(in, Model.FixtureSuite.class);
+                Model.MoxtureSuite suite = yamlMapper.readValue(in, Model.MoxtureSuite.class);
                 Map<String,Object> varsFromFile = suite.vars();
                 if (varsFromFile != null && !varsFromFile.isEmpty()) {
                     // Completely replace (closest wins)
@@ -1978,16 +2023,16 @@ public final class FixtureEngine
         }
     }
 
-    /** POJOs for fixtures + response. */
+    /** POJOs for moxtures + response. */
     static final class Model {
-        /** Root of the fixtures file (YAML). */
-        static final class FixtureSuite {
-            private List<FixtureCall> fixtures;
+        /** Root of the moxtures file (YAML). */
+        static final class MoxtureSuite {
+            private List<MoxtureCall> moxtures;
             /** Optional top-level variables loaded at engine construction (closest file wins). */
             private Map<String,Object> vars;
 
-            public List<FixtureCall> fixtures() { return fixtures; }
-            public void setFixtures(List<FixtureCall> fixtures) { this.fixtures = fixtures; }
+            public List<MoxtureCall> moxtures() { return moxtures; }
+            public void setMoxtures(List<MoxtureCall> moxtures) { this.moxtures = moxtures; }
 
             public Map<String,Object> vars() { return vars; }
             public void setVars(Map<String,Object> vars) { this.vars = vars; }
@@ -2008,8 +2053,8 @@ public final class FixtureEngine
         }
 
 
-        /** One fixture row (HTTP fixture or group fixture when 'fixtures:' present). */
-        static final class FixtureCall {
+        /** One moxture row (HTTP moxture or group moxture when 'moxtures:' present). */
+        static final class MoxtureCall {
             private String name;
             private String method;
             private String endpoint;
@@ -2022,12 +2067,11 @@ public final class FixtureEngine
             // basedOn (now unlimited depth; resolved on demand)
             private String basedOn; // canonical
             private String baseOn;  // alias of basedOn
-            // group-as-fixture: if present, indicates this row is a group
-            private List<String> fixtures;
+            // group-as-moxture: if present, indicates this row is a group
+            private List<String> moxtures;
             private List<MultipartDef> multipart;
-            // jsonPath mode: "lax" ("lenient") or "strict" ()
-            // Lenient returns null for missing paths; Strict throws PathNotFoundException.
-            public String jsonPathMode;
+            private Map<String, Object> vars;
+
 
             // === legacy bridge: accept "url" in YAML and map it into "endpoint" ===
             private String url; // not used directly; setter maps to endpoint if endpoint is missing
@@ -2043,9 +2087,8 @@ public final class FixtureEngine
             public JsonNode getExpectedStatus() { return expectedStatus; }
             public String getBasedOn() { return basedOn; }
             public String getBaseOn() { return baseOn; }
-            public List<String> getFixtures() { return fixtures; }
+            public List<String> getMoxtures() { return moxtures; }
             public List<MultipartDef> getMultipart() { return multipart; }
-
             public void setName(String name) { this.name = name; }
             public void setMethod(String method) { this.method = method; }
             public void setEndpoint(String endpoint) { this.endpoint = endpoint; }
@@ -2057,8 +2100,11 @@ public final class FixtureEngine
             public void setExpectedStatus(JsonNode expectedStatus) { this.expectedStatus = expectedStatus; }
             public void setBasedOn(String basedOn) { this.basedOn = basedOn; }
             public void setBaseOn(String baseOn) { this.baseOn = baseOn; }
-            public void setFixtures(List<String> fixtures) { this.fixtures = fixtures; }
+            public void setMoxtures(List<String> moxtures) { this.moxtures = moxtures; }
             public void setMultipart(List<MultipartDef> multipart) { this.multipart = multipart; }
+            public Map<String, Object> getVars() { return vars; }
+            public void setVars(Map<String, Object> vars) { this.vars = vars; }
+
 
             /** Legacy: when YAML provides 'url', treat it as 'endpoint' if endpoint is unset. */
             public void setUrl(String url) {
@@ -2093,7 +2139,7 @@ public final class FixtureEngine
      * Map wrapper that represents the combination of:
      * <ul>
      *   <li><b>Per-call scoped overrides</b> (provided by the caller)</li>
-     *   <li><b>Global engine variables</b> (owned by the FixtureEngine)</li>
+     *   <li><b>Global engine variables</b> (owned by Moxter)</li>
      * </ul>
      *
      * <p>Semantics:
@@ -2103,21 +2149,32 @@ public final class FixtureEngine
      *   <li><b>Iteration (entrySet/size):</b> presents a merged snapshot view,
      *       with scoped overrides taking precedence on key collisions.</li>
      *   <li><b>Writes (put):</b> always delegated to the engine’s global
-     *       {@link FixtureEngine#varsPut(String, Object)} (via the provided writer).
+     *       {@link Moxter#varsPut(String, Object)} (via the provided writer).
      *       This preserves strict mode and overwrite-warning semantics, and ensures
-     *       that any values saved during fixture execution become visible globally.</li>
+     *       that any values saved during moxture execution become visible globally.</li>
      *   <li><b>Overrides are immutable:</b> the scoped map is copied on construction
      *       and never mutated by this wrapper.</li>
      * </ul>
      *
+     * <p>Why not just merge the locally scoped variables to the globals vars into a 
+     * temporary map and use that as the call var-context (e.g., new HashMap(globals).putAll(scoped))?
+     * <p>Unlike a static merged snapshot, this wrapper provides live read-through 
+     * and write-through semantics. By maintaining a reference to the global engine variables
+     * rather than a copy, it ensures that any global state changes occurring during a 
+     * moxture's execution, such as an ID being saved by a preceding step in a group,
+     * are immediately visible to the current scope. Furthermore, the delegated put operation
+     * ensures that extracted values (the "Reality") are persisted to the engine's global state 
+     * for use by future moxtures, while the immutable scoped map preserves the caller's 
+     * "Intent" without pollution.
+     * 
      * <p>This class is used internally by
-     * {@link FixtureEngine#callFixture(String, Map)} to implement call-scoped
+     * {@link Moxter#callMoxture(String, Map)} to implement call-scoped
      * variable overrides. Test code does not normally need to use it directly.
      */
     private static final class CallScopedVars extends AbstractMap<String,Object> {
         private final Map<String,Object> scoped;    // per-call overrides (immutable snapshot is fine)
         private final Map<String,Object> globals;   // underlying engine vars (for reads)
-        private final BiFunction<String,Object,Object> writer; // e.g., FixtureEngine::varsPut
+        private final BiFunction<String,Object,Object> writer; // e.g., Moxter::varsPut
 
         CallScopedVars(Map<String,Object> scoped,
                     Map<String,Object> globals,

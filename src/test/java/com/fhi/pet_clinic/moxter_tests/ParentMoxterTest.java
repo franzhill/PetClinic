@@ -1,7 +1,7 @@
 package com.fhi.pet_clinic.moxter_tests;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fhi.libraries.fixture_engine.FixtureEngine;
+import com.fhi.libraries.moxter.Moxter;
 
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,7 +15,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * Base class for MockMvc integration tests powered by {@link FixtureEngine}.
+ * Base class for MockMvc integration tests powered by {@link Moxter}.
  *
  * <p>Responsibilities:</p>
  * <ul>
@@ -42,7 +42,7 @@ public abstract class ParentMoxterTest
    @Autowired protected ObjectMapper objectMapper;
 
    /** Engine: loads fixtures.yaml for the concrete subclass and runs calls. */
-   protected FixtureEngine fx;
+   protected Moxter fx;
 
    // --------------------------------------------------------------------------------------------
    // Lifecycle
@@ -66,26 +66,26 @@ public abstract class ParentMoxterTest
 
       // Create the fixture engine for this class, providing authentication to
       // use on every fixture call.
-      fx = FixtureEngine.forTestClass(getClass())
+      fx = Moxter.forTestClass(getClass())
                         .mockMvc(mockMvc)
                         .authentication(getTestAuthentication())
                         .build();
 
       // Run "BeforeAll" fixtures group defined in the closest fixtures.yaml (if any).
-      fx.callFixture("BeforeAll");
+      fx.callMoxture("BeforeAll");
    }
 
 
    @AfterAll
    void teardownBase() 
    {  // Run "AfterAll" fixtures group defined in the closest fixtures.yaml (if any).
-      fx.callFixture("AfterAll");
+      fx.callMoxture("AfterAll");
    }
 
 
    @BeforeEach
    void perTestBase() 
-   {  fx.callFixture("BeforeEach");
+   {  fx.callMoxture("BeforeEach");
    }
 
 
@@ -102,7 +102,7 @@ public abstract class ParentMoxterTest
 
    @AfterEach
    void afterTestBase() 
-   {  fx.callFixture("AfterEach");
+   {  fx.callMoxture("AfterEach");
    }
 
 
