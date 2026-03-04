@@ -89,6 +89,13 @@ moxtures:
       petOwnerId: "$.owner.id"
 
 
+  - name: create_owner_and_pet
+    moxtures: 
+      - create_owner
+      - create_pet_for_owner
+
+
+
 
   - name: delete_pet
     method: DELETE
