@@ -1,64 +1,24 @@
 
 
 
-groups:
-  - name: BeforeAll
-    # List of fixtures to run for that group. In provided order.
-    # Inheritance mecanism for fixtures applies.
-    fixtures:
-      - common.create_pet   # Provided in a common fixtures file above in hierarchy
-      - create_pet          # Locally-defined fixture
-      #- other fixtures, by name
-
-  - name: AfterAll
-    fixtures:
-      # (Inverse order compared to BeforAll)
-      - delete_pet          # Locally-defined fixture
-      - common.delete_pet   # Provided in a common fixtures file above in hierarchy
-
-  - name: BeforeEach
-
-  - name: AfterEach
-
-
-
 
 fixtures:
-  # When a name exists in multiple layers (fixture files up in the file hierarchy), 
-  # fixture from the lowest layer (most local) overrides (total, no partial overload)
-  # For overloading use "basedOn"
-
-  - name: create_pet
-    method: POST
-    endpoint: /pet
-    # Optional.
-    # Accepts int, list of ints, "2xx"/"4xx", "200-204", "200,204".
-    expectedStatus: 201
-    payload:  >
-      {
-        "characteristic1": [70],
-        "characteristic2": 1,
-        "characteristic3": ["1", "2"],
-        "characteristic4": []
-      }
-    # Save variables in accessible variables.
-    # List of varaname: json path inside the return payload
-    save: 
-      petId_local: $.id
-
-  - name: delete_pet
-    method: DELETE
-    endpoint: /pet/{{petId_local}}/delete
-    expectedStatus: 200
 
 
 
-  # ----------------------------------------------------------------
-  # Individual fixtures
-  # ----------------------------------------------------------------
-  # To be executed whenever, called by name.
 
-  - name: create-account
+
+
+
+
+
+
+
+
+
+
+
+  - name: create_account
     method: POST
     endpoint: /pet/{{petId_1}}/account # petId_1 is created in the BeforeAll fixture
     expectedStatus: 201
@@ -76,10 +36,13 @@ fixtures:
 
       offer1Id: $.id
 
+
+
   - name: create-account-2
     baseOn: create-account
     save: 
       offer2Id: $.id
+
 
 
   - name: create-offer-3

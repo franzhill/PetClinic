@@ -81,25 +81,6 @@
     </dependency>
 
     <!-- Spring Test (MockMvc, org.springframework.mock.web.*, etc.)
-        This is usually provided by XXXXX with the 'test' scope, 
-        however we want it in the 'provided' scope because fixture fmwks/engines 
-        using it are placed in src/main/java. and not in src/test.
-        scope 'provided' = available at compile/test time, not packaged in the final JAR. 
-    -->
-    <dependency>
-      <groupId>org.springframework</groupId>
-      <artifactId>spring-test</artifactId>
-      <scope>provided</scope>
-      <exclusions>
-        <!-- keep JUnit 4 off the main classpath -->
-        <exclusion>
-          <groupId>junit</groupId>
-          <artifactId>junit</artifactId>
-        </exclusion>
-      </exclusions>
-    </dependency>
-
-    <!-- Spring Test (MockMvc, org.springframework.mock.web.*, etc.)
         Usually comes transitively from spring-boot-starter-test (with scope 'test').
         Here we use scope 'provided' because fixture frameworks/engines that use it
         live under src/main/java and must compile, but we don't want it packaged.

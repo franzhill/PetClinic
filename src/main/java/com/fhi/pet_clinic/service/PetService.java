@@ -8,40 +8,69 @@ import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import com.fhi.pet_clinic.model.FertilityAgeWindow;
+import com.fhi.pet_clinic.model.Owner;
 import com.fhi.pet_clinic.model.Pet;
 import com.fhi.pet_clinic.model.Sex;
 import com.fhi.pet_clinic.model.Species;
+import com.fhi.pet_clinic.repo.OwnerRepository;
 import com.fhi.pet_clinic.repo.PetRepository;
-import lombok.extern.slf4j.Slf4j;
-import lombok.RequiredArgsConstructor;
+import com.fhi.pet_clinic.repo.SpeciesRepository;
 import com.fhi.pet_clinic.service.exception.pet.MatingException;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+
+import static com.fhi.pet_clinic.utils.LogUtils.toJson;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class PetService 
 {
-   @Autowired
-   private PetRepository petRepository;
+
+   private final PetRepository     petRepository;
+   private final OwnerRepository   ownerRepository;
+   private final SpeciesRepository speciesRepository;
    
-   private final Random random = new Random();
+   private final Random random = new Random(); // <= initialized => ignored by @RequiredArgsConstructor 
 
 
    public List<Pet> findAllPets() {
       return petRepository.findAll();
    }
 
+   @SuppressWarnings("null")  // we accept the risk of an IllegalArgument being thrown if id is null
    public Optional<Pet> findPetById(Long id) {
       return petRepository.findById(id);
    }
 
-   public Pet savePet(Pet pet) {
-      return petRepository.save(pet);
+   public Pet savePet(Pet pet) 
+   {
+      // 1. Resolve the Owner from the DB so it is no longer 'transient'
+      if (pet.getOwner() != null && pet.getOwner().getId() != null) 
+      {  log.debug("Setting owner");
+         @SuppressWarnings("null")  // we accept the risk of an IllegalArgument being thrown if id is null
+         Owner owner = ownerRepository.findById(pet.getOwner().getId())
+                                      .orElseThrow(() -> new RuntimeException("Owner not found with ID: " + pet.getOwner().getId()));
+         pet.setOwner(owner);
+      }
+
+      // 2. Resolve the Species (as we did previously)
+      if (pet.getSpecies() != null && pet.getSpecies().getName() != null) 
+      {  log.debug("Setting species");
+         Species persistentSpecies = speciesRepository.findByName(pet.getSpecies().getName())
+               .orElseThrow(() -> new RuntimeException("Species not found: " + pet.getSpecies().getName()));
+         pet.setSpecies(persistentSpecies);
+      }
+
+      var ret  = petRepository.save(pet);
+      log.debug("Saved pet = {}", toJson(ret));
+      return ret;
    }
+
 
    public Pet updatePet(Long id, Pet petDetails) {
       return petRepository.findById(id)

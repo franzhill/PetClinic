@@ -26,8 +26,7 @@ fixtures:
     method: POST
     lax: true # Ignores errors if 'Dog' already exists
     payload: >
-      {
-        "name": "Dog",
+      { "name": "Dog",
         "expectedLifespan": 12,
         "avgLitterSize": 4,
         "fertilityAgeWindow": {
@@ -37,13 +36,13 @@ fixtures:
       }
 
 
+
   - name: create_species_cat
     endpoint: "/api/species"
     method: POST
     lax: true # Ignores errors if 'Dog' already exists
     payload: >
-      {
-        "name": "Cat",
+      { "name": "Cat",
         "expectedLifespan": 18,
         "avgLitterSize": 5,
         "fertilityAgeWindow": {
@@ -59,11 +58,11 @@ fixtures:
     method: POST
     expectedStatus: 201
     payload: >
-      {
-        "name": "Tintin"
+      { "name": "Tintin"
       }
     save:
       ownerId: "$.id"
+
 
 
   - name: create_pet_for_owner
@@ -85,7 +84,16 @@ fixtures:
     save:
       petId: "$.id"
       petName: "$.name"
-      petOwnerId: "$.ownerId"
+      petOwnerId: "$.owner.id"
+
+
+
+  - name: delete_pet
+    method: DELETE
+    endpoint: /pet/{{petId_local}}/delete
+    expectedStatus: 200
+
+
 
 
   - name: verify_owner_pets

@@ -34,7 +34,7 @@ class MyMoxterTest extends ParentMoxterTest
 
         // Simple manual assertion on the returned body
         assertNotNull(fx.varsGetLong("petId"), "Pet should have been assigned an ID");
-        assertEquals("Rex", fx.varsGetString("petName"));
+        assertEquals("Snowy", fx.varsGetString("petName"));
         assertEquals(fx.varsGetLong("ownerId"), fx.varsGetLong("petOwnerId"));
 
 

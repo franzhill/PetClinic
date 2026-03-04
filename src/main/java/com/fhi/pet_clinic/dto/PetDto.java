@@ -13,4 +13,14 @@ public class PetDto {
     private LocalDate birthDate;
 
     private Long ownerId;        // optional: useful for linking
+
+    public void setSex(Object object) {
+        // TODO Auto-generated method stub
+        throw new UnsupportedOperationException("Unimplemented method 'setSex'");
+    }
+
+    public void setSpeciesName(String name2) {
+      // TODO Auto-generated method stub
+      throw new UnsupportedOperationException("Unimplemented method 'setSpeciesName'");
+    }
 }

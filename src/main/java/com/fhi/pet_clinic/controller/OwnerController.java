@@ -15,8 +15,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.fhi.pet_clinic.dto.OwnerDto;
-import com.fhi.pet_clinic.dto.PetDto;
+import com.fhi.pet_clinic.model.Owner;
+import com.fhi.pet_clinic.model.Pet;
 import com.fhi.pet_clinic.service.OwnerService;
 
 
@@ -28,18 +28,25 @@ public class OwnerController
     private final OwnerService ownerService;
 
     @GetMapping("/{id}")
-    public ResponseEntity<OwnerDto> getOwnerById(@PathVariable Long id) {
-        return ResponseEntity.ok(ownerService.getOwnerById(id));
+    public ResponseEntity<Owner> getOwnerById(@PathVariable Long id) {
+        return ResponseEntity.ok(ownerService.getOwnerById(id)
+                                            //# .mapToDto()   // for the time being we'll be returning the entity directly
+                                            );
     }
 
     @PostMapping
-    public ResponseEntity<OwnerDto> createOwner(@RequestBody OwnerDto ownerDto) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(ownerService.createOwner(ownerDto));
+    public ResponseEntity<Owner> createOwner(@RequestBody Owner owner) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                             .body(ownerService.createOwner(owner)
+                                             //#  .mapToDto()  // for the time being we'll be returning the entity directly
+                                   );
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<OwnerDto> updateOwner(@PathVariable Long id, @RequestBody OwnerDto ownerDto) {
-        return ResponseEntity.ok(ownerService.updateOwner(id, ownerDto));
+    public ResponseEntity<Owner> updateOwner(@PathVariable Long id, @RequestBody Owner owner) {
+        return ResponseEntity.ok(ownerService.updateOwner(id, owner)
+                                             //# .mapToDto()   // for the time being we'll be returning the entity directly
+                                );   
     }
 
     @DeleteMapping("/{id}")
@@ -49,7 +56,12 @@ public class OwnerController
     }
 
     @GetMapping("/{ownerId}/pets")
-    public ResponseEntity<List<PetDto>> getPetsForOwner(@PathVariable Long ownerId) {
-        return ResponseEntity.ok(ownerService.getPetsForOwner(ownerId));
+    public ResponseEntity<List<Pet>> getPetsForOwner(@PathVariable Long ownerId) {
+        return ResponseEntity.ok(ownerService.getPetsForOwner(ownerId)
+                                          // for the time being we'll be returning the entity directly
+                                          //#   .stream()
+                                          //#   .map(Pet::mapToDto)   
+                                          //#   .toList()
+                                 );
     }
 }
