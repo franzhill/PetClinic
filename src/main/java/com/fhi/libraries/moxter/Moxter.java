@@ -9,9 +9,7 @@ import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
-import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -144,7 +142,7 @@ public final class Moxter
     private final IO.MoxtureConfig cfg;
     private final ObjectMapper yamlMapper;
     // Keep JSON mapper for HTTP
-    private final ObjectMapper jsonMapper;
+    private final ObjectMapper jsonMapper; // NOSONAR yes it's used!
 
 
     // Auth supplier (fixed or lazy) from builder
@@ -153,27 +151,22 @@ public final class Moxter
     // ===== Unlimited-depth basedOn materialization cache =====
 
     /** Unlimited-depth, hierarchy-aware cache. */
-    private final Map<MaterializedKey, Model.Moxture> materializedCache = new LinkedHashMap<>();
+    private final Map<MoxResolver.EffectiveKey, Model.Moxture> materializedCache = new LinkedHashMap<>();
 
 
-    /**
-     * Used for debugging vars in varsDump()
-     */
-    private static final ObjectMapper VARS_DUMP_MAPPER = new ObjectMapper()
-                                                              .enable(SerializationFeature.INDENT_OUTPUT);
 
     // Cached global variables accessor
-    private final MoxterVars globalScopeVars = new MoxterVars(this, null);
+    private final MoxVars globalScopeVars = new MoxVars(this, null);
 
-
+    private final MoxResolver moxResolver = new MoxResolver(this);
 
 
     // =====================================================================
-    // Public API: moxture calls
+    // Public API: 
     // =====================================================================
 
     /**
-     * Creates a fluent {@link Builder} to configure and instantiate the Moxter engine.
+     * Creates a fluent {@link MoxBuilder} to configure and instantiate the Moxter engine.
      * 
      * <p>The provided test class acts as the anchor point for discovering YAML moxture 
      * definition files. Moxter uses the class's package structure and name to perform a 
@@ -196,17 +189,17 @@ public final class Moxter
 
      * @param testClass The test class that will execute the moxtures. Used strictly for 
      *                  classpath resource resolution and variable inheritance.
-     * @return A new {@link Builder} to finish configuring the engine before calling {@code .build()}.
+     * @return A new {@link MoxBuilder} to finish configuring the engine before calling {@code .build()}.
      */
-    public static Builder forTestClass(Class<?> testClass)
-    { return new Builder(testClass);
+    public static MoxBuilder forTestClass(Class<?> testClass)
+    { return new MoxBuilder(testClass);
     }
 
     /** 
      * The factory method to spawn a transient caller
      */
-    public MoxterCaller caller() {
-        return new MoxterCaller(this);
+    public MoxCaller caller() {
+        return new MoxCaller(this);
     }
 
 
@@ -237,10 +230,10 @@ public final class Moxter
      *    mx.vars().clear();
      * }</pre>
      * 
-     * @return The {@link MoxterVars} facade containing variable management methods.
-     * @see MoxterVars
+     * @return The {@link MoxVars} facade containing variable management methods.
+     * @see MoxVars
      */
-    public MoxterVars vars() {
+    public MoxVars vars() {
         return globalScopeVars;
     }
 
@@ -249,323 +242,17 @@ public final class Moxter
      * 
      * <p>Works the same was as vars(), see that function.
      */
-    public MoxterVars vars(String moxtureName) {
-        return new MoxterVars(this, moxtureName);
+    public MoxVars vars(String moxtureName) {
+        return new MoxVars(this, moxtureName);
     }
-
-    /**
-     * Get a variable defined within the moxture.
-     *
-     * @deprecated Use the 'Fluent API' instead i.e. {@link MoxterVars} which provides 
-     *             a cleaner way to interact with variables.
-     */
-    @Deprecated(since = "1.0.0")    @SuppressWarnings("java:S1133")
-    public Object moxVar(String moxtureName, String varName) 
-    {   MaterializedMoxture r = resolveByName(moxtureName);
-        return (r.moxt.getVars() != null) ? r.moxt.getVars().get(varName) : null;
-    }
-
-    /**
-     * Clears (empties) Moxter's global-scope variables map.
-     * 
-     * @deprecated Use the 'Fluent API' instead i.e. {@link MoxterVars} which provides 
-     *             a cleaner way to interact with variables.
-     */
-    @Deprecated(since = "1.0.0")    @SuppressWarnings("java:S1133")
-    public void varsClear() { vars.clear(); }
-
-
-
-    /**
-     * Put a variable in Moxter's global-scope variables map, only if absent (never overwrites).
-     *
-     * @return true if the value was set; false if a value was already present
-     * 
-     * @deprecated Use the 'Fluent API' instead i.e. {@link MoxterVars} which provides 
-     *             a cleaner way to interact with variables.
-     */
-    @Deprecated(since = "1.0.0")    @SuppressWarnings("java:S1133")
-    public boolean varsPutIfAbsent(String key, Object value) {
-        varsRequireValidKey(key);
-        return !vars.containsKey(key) && vars.put(key, value) == null;
-    }
-
-    /**
-     * Get a variable from Moxter's global-scope variables map.
-     * 
-     * @deprecated Use the 'Fluent API' instead i.e. {@link MoxterVars} which provides 
-     *             a cleaner way to interact with variables.
-     */
-    @Deprecated(since = "1.0.0")    @SuppressWarnings("java:S1133")
-    public Object varsGet(String key) {
-        if (!vars.containsKey(key)) {
-            throw new IllegalStateException("Var '" + key + "' does not exist");
-        }
-        return vars.get(key);
-    }
-
-    /**
-     * Get a variable from Moxter's global-scope variables map.
-     * 
-     * @deprecated Use the 'Fluent API' instead i.e. {@link MoxterVars} which provides 
-     *             a cleaner way to interact with variables.
-     */
-    @Deprecated(since = "1.0.0")    @SuppressWarnings("java:S1133")
-    public <T> T varsGet(String key, Class<T> type) {
-        if (!vars.containsKey(key)) {
-            throw new IllegalStateException("Var '" + key + "' does not exist");
-        }
-        Object val = vars.get(key);
-        try {
-            return type.cast(val);
-        } catch (ClassCastException e) {
-            throw new IllegalStateException(
-                "Var '" + key + "' is not of type " + type.getSimpleName() +
-                " (actual: " + (val == null ? "null" : val.getClass().getSimpleName()) + ")",
-                e
-            );
-        }
-    }
-
-    /**
-     * Convenience: Get a variable from Moxter's global-scope variables map, as a String.
-     * 
-     * <p>Delegates to the generic varsGet() for type safety and error handling.
-     * 
-     * @deprecated Use the 'Fluent API' instead i.e. {@link MoxterVars} which provides 
-     *             a cleaner way to interact with variables.
-     */
-    @Deprecated(since = "1.0.0")    @SuppressWarnings("java:S1133")
-    public String varsGetString(String key) {
-        return varsGet(key, String.class);
-    }
-
-    /**
-     * Convenience: Get a variable from Moxter's global-scope variables map, as a Long, handling Integer/Long/String 
-     * conversions automatically.
-     * 
-     * @param key The name variable
-     * @deprecated Use the 'Fluent API' instead i.e. {@link MoxterVars} which provides 
-     *             a cleaner way to interact with variables.
-     */
-    @Deprecated(since = "1.0.0")    @SuppressWarnings("java:S1133")
-    public Long varsGetLong(String key) {
-        if (!vars.containsKey(key)) {
-            throw new IllegalStateException("Var '" + key + "' does not exist");
-        }
-        
-        Object val = vars.get(key);
-        
-        // Handle Integer, Long, Double, etc.
-        if (val instanceof Number) {
-            return ((Number) val).longValue();
-        }
-        
-        // Handle "123" strings
-        if (val instanceof String) {
-            try {
-                return Long.parseLong((String) val);
-            } catch (NumberFormatException e) {
-                throw new IllegalStateException("Var '" + key + "' is a String but cannot be parsed as Long: " + val, e);
-            }
-        }
-        
-        throw new IllegalStateException(
-            "Var '" + key + "' is not a number (actual type: " + 
-            (val == null ? "null" : val.getClass().getSimpleName()) + ")"
-        );
-    }
-
-
-    /**
-     * Retrieves a variable from Moxter's global-scope variables map, and attempts to parse it into an {@link Instant}.
-     * 
-     * This method is designed to be "painless" by automatically trying several 
-     * common ISO-8601 formats (Instant, ZonedDateTime, and OffsetDateTime).
-     * 
-     * @param key The name of the captured variable
-     * @return The parsed {@link Instant}, or {@code null} if the variable doesn't exist
-     * @throws DateTimeParseException if the string cannot be parsed by standard ISO formats
-     * @throws ClassCastException if the variable is not a String
-     * @deprecated Use the 'Fluent API' instead i.e. {@link MoxterVars} which provides 
-     *             a cleaner way to interact with variables.
-     */
-    @Deprecated(since = "1.0.0")    @SuppressWarnings("java:S1133")
-    public Instant varsGetInstant(String key) {
-        String value = varsGetString(key);
-        if (value == null) {
-            return null;
-        }
-
-        try {
-            // Priority 1: Direct Instant parsing (e.g., 2026-02-27T18:00:00Z)
-            return Instant.parse(value);
-        } catch (DateTimeParseException e1) {
-            try {
-                // Priority 2: Full ZonedDateTime (e.g., 2026-02-27T18:00:00+01:00[Europe/Paris])
-                return ZonedDateTime.parse(value).toInstant();
-            } catch (DateTimeParseException e2) {
-                // Priority 3: OffsetDateTime (e.g., 2026-02-27T18:00:00+01:00)
-                return OffsetDateTime.parse(value).toInstant();
-            }
-        }
-    }
-
-    /**
-     * Retrieves a variable and parses it into an {@link Instant} using a specific formatter.
-     * 
-     * Use this version for non-standard API date formats (e.g., "dd/MM/yyyy HH:mm").
-     * Note: If the pattern does not contain timezone information, you may need to 
-     * use {@link LocalDateTime} and provide a {@link ZoneId}.
-     * 
-     * @param key The name of the captured variable
-     * @param formatter The custom {@link DateTimeFormatter} to use
-     * @return The parsed {@link Instant}, or {@code null} if the variable doesn't exist
-     * @deprecated Use the 'Fluent API' instead i.e. {@link MoxterVars} which provides 
-     *             a cleaner way to interact with variables.
-     */
-    @Deprecated(since = "1.0.0")    @SuppressWarnings("java:S1133")
-    public Instant varsGetInstant(String key, DateTimeFormatter formatter) {
-        String value = varsGetString(key);
-        if (value == null) {
-            return null;
-        }
-        
-        // We parse as a temporal accessor and convert to instant
-        return formatter.parse(value, Instant::from);
-    }
-
-
-    /**
-     * Convenience: Get a variable as a List of a specific type.
-     * <p>
-     * Handles safe conversion for numeric types (e.g., if the underlying JSON parser 
-     * stored integers but Longs got requested).
-     * 
-     * @deprecated Use the 'Fluent API' instead i.e. {@link MoxterVars} which provides 
-     *             a cleaner way to interact with variables.
-     */
-    @Deprecated(since = "1.0.0")    @SuppressWarnings("java:S1133")
-    public <T> List<T> varsGetList(String key, Class<T> elementType) {
-        if (!vars.containsKey(key)) {
-            throw new IllegalStateException("Var '" + key + "' does not exist");
-        }
-        Object val = vars.get(key);
-        
-        if (val == null) return null;
-        
-        if (!(val instanceof List)) {
-             throw new IllegalStateException(
-                "Var '" + key + "' is not a List. Actual type: " + val.getClass().getName()
-            );
-        }
-
-        List<?> rawList = (List<?>) val;
-        List<T> result = new ArrayList<>(rawList.size());
-
-        for (int i = 0; i < rawList.size(); i++) {
-            Object item = rawList.get(i);
-            
-            if (item == null) {
-                result.add(null);
-                continue;
-            }
-
-            // Numeric conversion magic (Integer -> Long, etc.)
-            if (Number.class.isAssignableFrom(elementType) && item instanceof Number) {
-                Number num = (Number) item;
-                if (elementType == Long.class) {
-                    result.add(elementType.cast(num.longValue()));
-                } else if (elementType == Integer.class) {
-                    result.add(elementType.cast(num.intValue()));
-                } else if (elementType == Double.class) {
-                    result.add(elementType.cast(num.doubleValue()));
-                } else {
-                    // Fallback for other number types
-                    result.add(elementType.cast(item)); 
-                }
-            } else {
-                // Standard cast
-                try {
-                    result.add(elementType.cast(item));
-                } catch (ClassCastException e) {
-                    throw new IllegalStateException(String.format(
-                        "Element at index %d in var '%s' is not %s (actual: %s)",
-                        i, key, elementType.getSimpleName(), item.getClass().getSimpleName()), e);
-                }
-            }
-        }
-        
-        return result;
-    }
-
-    /**
-     * Checks if a variable is present in Moxter's global-scope variables map.
-     * 
-     * @deprecated Use the 'Fluent API' instead i.e. {@link MoxterVars} which provides 
-     *             a cleaner way to interact with variables.
-     */
-    @Deprecated(since = "1.0.0")    @SuppressWarnings("java:S1133")
-    public boolean varsHas(String key) {
-        return vars.containsKey(key);
-    }
-
-
-    /**
-     * Returns a live, unmodifiable view of the current Moxture Engine context variables map.
-     * 
-     * <p>Any future changes to the underlying vars will be reflected,
-     * but callers cannot mutate the map directly.
-     * 
-     * @deprecated Use the 'Fluent API' instead i.e. {@link MoxterVars} which provides 
-     *             a cleaner way to interact with variables.
-     */
-    @Deprecated(since = "1.0.0")    @SuppressWarnings("java:S1133")
-    public Map<String, Object> varsView() {
-        return Collections.unmodifiableMap(vars);
-    }
-
-    /**
-     * Returns the current variables map as a pretty-printed JSON string.
-     *
-     * <p>Intended for debugging and test logging only. Does not expose the
-     * underlying mutable map.
-     * 
-     * @deprecated Use the 'Fluent API' instead i.e. {@link MoxterVars} which provides 
-     *             a cleaner way to interact with variables.
-     */
-    @Deprecated(since = "1.0.0")    @SuppressWarnings("java:S1133")
-    public String varsDump() {
-        try
-        {   return VARS_DUMP_MAPPER.writeValueAsString(vars);
-        }
-        catch (JsonProcessingException e)
-        {
-            log.error("Failed to dump vars", e);
-            return vars.toString();
-        }
-    }
-
-    /**
-     * @deprecated Used in the deprectaed vars* functions
-     */
-    @Deprecated(since = "1.0.0")    @SuppressWarnings("java:S1133")
-    private static void varsRequireValidKey(String key) {
-        if (key == null || key.isBlank()) {
-            throw new IllegalArgumentException("Key is null/blank");
-        }
-    }
-
-
-
 
     // =====================================================================
     //   Builder / construction
     // =====================================================================
 
     private Moxter(Class<?> testClass,
-                          MockMvc mockMvc,
-                          java.util.function.Supplier<org.springframework.security.core.Authentication> authSupplier)
+                   MockMvc mockMvc,
+                   java.util.function.Supplier<org.springframework.security.core.Authentication> authSupplier)
     {
         this.testClass = Objects.requireNonNull(testClass, "testClass");
         Objects.requireNonNull(mockMvc, "mockMvc");
@@ -618,7 +305,7 @@ public final class Moxter
             if (f.getName() == null || f.getName().isBlank()) {
                 throw new IllegalStateException("Moxture with missing/blank 'name' in " + moxturesBaseDir + "/" + DEFAULT_MOXTURES_BASENAME);
             }
-            validateMoxture(f);
+            MoxResolver.validateMoxture(f);
             if (index.put(f.getName(), f) != null) {
                 // Fail on name collision
                 throw new IllegalStateException("Duplicate moxture name: " + f.getName());
@@ -642,153 +329,6 @@ public final class Moxter
     //   Private helpers
     // =====================================================================
 
-    /** Resolve a name to a concrete, fully materialized moxture (closest → parents), with its baseDir. */
-    private MaterializedMoxture resolveByName(String name)
-    {
-        // 1) Try closest file first
-        Model.Moxture local = byName.get(name);
-        if (local != null) {
-            // Materialize deeply (same-file and cross-file, unlimited depth) from the local file's baseDir
-            Model.Moxture mat = materializeDeep(local, moxturesBaseDir, new ArrayDeque<>(), new HashSet<>());
-            return new MaterializedMoxture(mat, moxturesBaseDir);
-        }
-
-        // 2) Hierarchical lookup upwards (closest → ... → root) starting from the test class location
-        IO.ClasspathMoxtureRepository.Resolved found = repo.findFirstByName(testClass, cfg, name, yamlMapper);
-        if (found == null) {
-            List<String> attempted = repo.candidateAncestorPaths(testClass, cfg);
-            throw new IllegalArgumentException("Moxture/Group not found by name: " + name
-                    + ". Looked under: " + attempted);
-        }
-
-        // Ensure deep materialization from the found scope
-        Model.Moxture mat = materializeDeep(found.call, found.baseDir, new ArrayDeque<>(), new HashSet<>());
-        return new MaterializedMoxture(mat, found.baseDir);
-    }
-
-
-    /**
-     * Fully materialize a moxture: follow {@code basedOn} across files to any depth.
-     * Merges at each step with child precedence, using existing merge rules:
-     *  - Scalars: child overrides
-     *  - headers/query (maps): shallow merge, child wins
-     *  - save / moxtures (lists-of-names): REPLACE
-     *  - payload: deep-merge objects; arrays/scalars replace
-     *
-     * Cycle-safe with a visiting set + stack (human-friendly chain on error).
-     */
-    private Model.Moxture materializeDeep(Model.Moxture node,
-                                              String nodeBaseDir,
-                                              Deque<MaterializedKey> stack,
-                                              Set<MaterializedKey> visiting)
-    {
-        if (node == null) return null;
-
-        final String parentName = firstNonBlank(node.getBasedOn(), node.getBaseOn());
-        final String nodeName = (node.getName() == null || node.getName().isBlank()) ? "<unnamed>" : node.getName();
-        final MaterializedKey key = new MaterializedKey(nodeBaseDir, nodeName);
-
-        // Cache
-        Model.Moxture cached = materializedCache.get(key);
-        if (cached != null) return cached;
-
-        // No inheritance → normalize + cache
-        if (parentName == null || parentName.isBlank()) {
-            Model.Moxture normalized = cloneWithoutBasedOn(node);
-            materializedCache.put(key, normalized);
-            return normalized;
-        }
-
-        // Cycle guard
-        if (!visiting.add(key)) {
-            StringBuilder sb = new StringBuilder("Cycle in basedOn: ");
-            for (MaterializedKey k : stack) sb.append(k).append(" -> ");
-            sb.append(key);
-            throw new IllegalStateException(sb.toString());
-        }
-        stack.addLast(key);
-
-        // Resolve parent by searching from THIS node’s file directory upwards (closest → parents → root)
-        IO.ClasspathMoxtureRepository.Resolved parentResolved =
-                repo.findFirstByNameFromBaseDir(testClass, cfg, nodeBaseDir, parentName, yamlMapper);
-
-        if (parentResolved == null) {
-            String attempted = repo.candidateAncestorPathsFromBaseDir(nodeBaseDir, cfg).toString();
-            throw new IllegalArgumentException(
-                "basedOn refers to unknown moxture '" + parentName + "'. Looked under (from " + nodeBaseDir + "): " + attempted
-            );
-        }
-
-        // Recurse
-        Model.Moxture materializedParent =
-                materializeDeep(parentResolved.call, parentResolved.baseDir, stack, visiting);
-
-        // Merge parent → child (child overrides)
-        Model.Moxture merged = new Model.Moxture();
-        merged.setName(node.getName());
-        merged.setMethod(firstNonBlank(node.getMethod(), materializedParent.getMethod()));
-        merged.setEndpoint(firstNonBlank(node.getEndpoint(), materializedParent.getEndpoint()));
-        merged.setExpectedStatus(node.getExpectedStatus() != null ? node.getExpectedStatus() : materializedParent.getExpectedStatus());
-        merged.setHeaders(mergeMap(materializedParent.getHeaders(), node.getHeaders()));
-        merged.setVars(mergeMap(materializedParent.getVars(), node.getVars()));
-        merged.setQuery(mergeMap(materializedParent.getQuery(), node.getQuery()));
-        // For "save": replace instead of merge (no inheritance unless explicitly set on the child)
-        merged.setSave(node.getSave() != null ? node.getSave() : materializedParent.getSave());
-        // For "moxtures" (group list): replace instead of merge
-        merged.setMoxtures(node.getMoxtures() != null ? node.getMoxtures() : materializedParent.getMoxtures());
-        merged.setMultipart(node.getMultipart() != null ? node.getMultipart() : materializedParent.getMultipart());
-        JsonNode payload = deepMergePayload(yamlMapper, materializedParent.getPayload(), node.getPayload());
-        merged.setPayload(payload);
-
-
-
-        // Clear inheritance markers on the final node
-        merged.setBasedOn(null);
-        merged.setBaseOn(null);
-
-        validateMoxture(merged);
-
-        materializedCache.put(key, merged);
-        stack.removeLast();
-        visiting.remove(key);
-        return merged;
-    }
-
-    /** 
-     * Shallow clone of a call, with basedOn/baseOn cleared. 
-     */
-    private static Model.Moxture cloneWithoutBasedOn(Model.Moxture src) {
-        Model.Moxture c = new Model.Moxture();
-        c.setName(src.getName());
-        c.setMethod(src.getMethod());
-        c.setEndpoint(src.getEndpoint());
-        c.setHeaders(src.getHeaders()==null?null:new LinkedHashMap<>(src.getHeaders()));
-        c.setVars(src.getVars() == null ? null : new LinkedHashMap<>(src.getVars()));
-        c.setQuery(src.getQuery()==null?null:new LinkedHashMap<>(src.getQuery()));
-        c.setPayload(src.getPayload()); // JSON nodes are fine to share for our usage
-        c.setSave(src.getSave()==null?null:new LinkedHashMap<>(src.getSave()));
-        c.setExpectedStatus(src.getExpectedStatus());
-        c.setMoxtures(src.getMoxtures()==null?null:new ArrayList<>(src.getMoxtures()));
-        c.setMultipart(src.getMultipart() == null ? null : new ArrayList<>(src.getMultipart()));
-        c.setBasedOn(null);
-        c.setBaseOn(null);
-
-        return c;
-    }
-
-    private static String inferTopLevelKey(String jsonPath) {
-        String p = jsonPath.trim();
-        if (p.startsWith("$.") && p.length() > 2) {
-            int end = p.indexOf('[', 2);
-            return (end > 0) ? p.substring(2, end) : p.substring(2);
-        }
-        if (p.startsWith("$['")) {
-            int end = p.indexOf("']", 3);
-            if (end > 3) return p.substring(3, end);
-        }
-        return null;
-    }
-
     private static ObjectMapper defaultYamlMapper() {
         return new ObjectMapper(new YAMLFactory())
                 .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
@@ -801,95 +341,8 @@ public final class Moxter
                 .configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
     }
 
-    /** 
-     * Ensure a moxture is either a group OR a single call, not both. 
-     */
-    private static void validateMoxture(Model.Moxture f) {
-        boolean isGroup = f.getMoxtures() != null;
-        boolean isHttp  =
-            (f.getEndpoint() != null && !f.getEndpoint().isBlank()) ||
-            (f.getMethod()   != null && !f.getMethod().isBlank())   ||
-            f.getPayload() != null ||
-            f.getExpectedStatus() != null ||
-            (f.getHeaders() != null && !f.getHeaders().isEmpty()) ||
-            (f.getQuery()   != null && !f.getQuery().isEmpty())   ||
-            (f.getSave()    != null && !f.getSave().isEmpty());
-        if (isGroup && isHttp) {
-            throw new IllegalStateException("Moxture '" + f.getName() + "' cannot define both 'moxtures' and HTTP fields");
-        }
-    }
-
-    private static String firstNonBlank(String a, String b) {
-        return (a != null && !a.isBlank()) ? a : b;
-    }
-
-    private static <K, V> Map<K, V> mergeMap(Map<K, V> parent, Map<K, V> child) {
-        if ((parent == null || parent.isEmpty()) && (child == null || child.isEmpty())) {
-            return child;
-        }
-        Map<K, V> out = new LinkedHashMap<>();
-        if (parent != null) out.putAll(parent);
-        if (child != null) out.putAll(child);
-        return out;
-    }
 
 
-    /** 
-     * If the node is textual and looks like JSON, parse it to a JSON tree; otherwise return as is. 
-     */
-    private static JsonNode coerceJsonTextToNode(ObjectMapper mapper, JsonNode n) {
-        if (n == null) return null;
-        if (n.isTextual()) {
-            String s = n.asText().trim();
-            boolean looksJson = (s.startsWith("{") && s.endsWith("}")) || (s.startsWith("[") && s.endsWith("]"));
-            if (looksJson) {
-                try { return mapper.readTree(s); } catch (Exception ignore) { /* keep textual */ }
-            }
-        }
-        return n;
-    }
-
-    private static JsonNode deepMergePayload(ObjectMapper mapper, JsonNode parent, JsonNode child) {
-        parent = coerceJsonTextToNode(mapper, parent);
-        child  = coerceJsonTextToNode(mapper, child);
-
-        if (child == null) return parent;
-        if (parent == null) return child;
-
-        // If child is array or scalar → replace
-        if (child.isArray() || child.isValueNode()) return child;
-
-        // Deep-merge objects
-        if (child.isObject() && parent.isObject()) {
-            ObjectNode merged = mapper.createObjectNode();
-            // copy parent
-            parent.fields().forEachRemaining(e -> merged.set(e.getKey(), e.getValue().deepCopy()));
-            // merge/override child
-            child.fields().forEachRemaining(e -> {
-                String k = e.getKey();
-                JsonNode childVal = e.getValue();
-                JsonNode parentVal = merged.get(k);
-                if (childVal != null && childVal.isObject() && parentVal != null && parentVal.isObject()) {
-                    merged.set(k, deepMergePayload(mapper, parentVal, childVal)); // recursive objects
-                } else {
-                    merged.set(k, childVal); // replace arrays/scalars or add new fields
-                }
-            });
-            return merged;
-        }
-
-        // Types differ or parent not object → replace
-        return child;
-    }
-
-    // =====================================================================
-    //  Group helpers
-    // =====================================================================
-
-    private static boolean isGroupMoxture(Model.Moxture f) {
-        // A group is any moxture that *declares* a moxtures list (even empty → no-op group)
-        return f != null && f.getMoxtures() != null;
-    }
 
 
 
@@ -945,9 +398,352 @@ public final class Moxter
     // ############################################################################
     // ############################################################################
 
+    public static final class MoxResolver
+    {
+        // Reference to the root encompassing engine
+        private final Moxter moxter;
+
+        protected MoxResolver(Moxter moxter) {
+            this.moxter = moxter;
+        }
+
+        /**
+         * An internal container representing a fully prepped, executable moxture.
+         * (aka resolved/materialized/effective moxture)
+         *
+         * <p>This class pairs a completely materialized/effective moxture definition (where all 
+         * {@code basedOn} inheritance and hierarchical merging have been flattened) 
+         * with the physical classpath directory where it was discovered.
+         *
+         * <p>Keeping track of the {@code baseDir} is critical during the execution phase, 
+         * as it acts as the anchor point for resolving relative file imports (e.g., when 
+         * a payload or multipart file is defined as {@code "classpath:request.json"}).
+         */
+        private static final class EffectiveMoxture 
+        {
+            /**
+             * The fully materialized moxture definition (with all 'basedOn' inheritance 
+             * deeply merged). 
+             */
+            final Model.Moxture moxt;
+
+            /** 
+             * The classpath directory where this moxture was discovered. 
+             * Used as the anchor point for resolving relative file imports.
+             */
+            final String baseDir;
+
+            EffectiveMoxture(Model.Moxture moxt, String baseDir) 
+            { this.moxt = moxt; this.baseDir = baseDir; 
+            }
+        }
+
+        /** 
+         * Key for memorizing materialized/effective moxtures by scope (baseDir) and name. 
+         */
+        private static final class EffectiveKey 
+        {
+            final String baseDir; // classpath dir where the moxture is defined
+            final String name;
+            
+            EffectiveKey(String baseDir, String name) { this.baseDir = baseDir; this.name = name; }
+            
+            public boolean equals(Object o)
+            { if(this==o)return true;
+                if(!(o instanceof EffectiveKey)) return false;
+                EffectiveKey k=(EffectiveKey)o;
+                return Objects.equals(baseDir,k.baseDir)&&Objects.equals(name,k.name); 
+            }
+            
+            public int hashCode(){ return Objects.hash(baseDir,name); }
+
+            public String toString(){ return baseDir+":"+name; }
+        }
+
+
+
+
+        /** 
+         * Resolve a name to a concrete, fully materialized moxture (closest → parents), with its baseDir. 
+         */
+        private EffectiveMoxture resolveByName(String name)
+        {
+            // 1) Try closest file first
+            Model.Moxture local = moxter.byName.get(name);
+            if (local != null) {
+                // Materialize deeply (same-file and cross-file, unlimited depth) from the local file's baseDir
+                Model.Moxture mat = materializeDeep(local, moxter.moxturesBaseDir, new ArrayDeque<>(), new HashSet<>());
+                return new EffectiveMoxture(mat, moxter.moxturesBaseDir);
+            }
+
+            // 2) Hierarchical lookup upwards (closest → ... → root) starting from the test class location
+            IO.ClasspathMoxtureRepository.RawMoxture found = moxter.repo.findFirstByName(moxter.testClass, moxter.cfg, name, moxter.yamlMapper);
+            if (found == null) {
+                List<String> attempted = moxter.repo.candidateAncestorPaths(moxter.testClass, moxter.cfg);
+                throw new IllegalArgumentException("Moxture/Group not found by name: " + name
+                        + ". Looked under: " + attempted);
+            }
+
+            // Ensure deep materialization from the found scope
+            Model.Moxture mat = materializeDeep(found.call, found.baseDir, new ArrayDeque<>(), new HashSet<>());
+            return new EffectiveMoxture(mat, found.baseDir);
+        }
+
+
+        /**
+         * Fully materialize a moxture: follow {@code basedOn} across files to any depth.
+         * Merges at each step with child precedence, using existing merge rules:
+         *  - Scalars: child overrides
+         *  - headers/query (maps): shallow merge, child wins
+         *  - save / moxtures (lists-of-names): REPLACE
+         *  - payload: deep-merge objects; arrays/scalars replace
+         *
+         * Cycle-safe with a visiting set + stack (human-friendly chain on error).
+         */
+        private Model.Moxture materializeDeep(Model.Moxture node,
+                                                String nodeBaseDir,
+                                                Deque<EffectiveKey> stack,
+                                                Set<EffectiveKey> visiting)
+        {
+            if (node == null) return null;
+
+            final String parentName = Utils.Misc.firstNonBlank(node.getBasedOn(), node.getBaseOn());
+            final String nodeName = (node.getName() == null || node.getName().isBlank()) ? "<unnamed>" : node.getName();
+            final EffectiveKey key = new EffectiveKey(nodeBaseDir, nodeName);
+
+            // Cache
+            Model.Moxture cached = moxter.materializedCache.get(key);
+            if (cached != null) return cached;
+
+            // No inheritance → normalize + cache
+            if (parentName == null || parentName.isBlank()) {
+                Model.Moxture normalized = cloneWithoutBasedOn(node);
+                moxter.materializedCache.put(key, normalized);
+                return normalized;
+            }
+
+            // Cycle guard
+            if (!visiting.add(key)) {
+                StringBuilder sb = new StringBuilder("Cycle in basedOn: ");
+                for (EffectiveKey k : stack) sb.append(k).append(" -> ");
+                sb.append(key);
+                throw new IllegalStateException(sb.toString());
+            }
+            stack.addLast(key);
+
+            // Resolve parent by searching from THIS node’s file directory upwards (closest → parents → root)
+            IO.ClasspathMoxtureRepository.RawMoxture parentResolved =
+                    moxter.repo.findFirstByNameFromBaseDir(moxter.testClass, moxter.cfg, nodeBaseDir, parentName, moxter.yamlMapper);
+
+            if (parentResolved == null) {
+                String attempted = moxter.repo.candidateAncestorPathsFromBaseDir(nodeBaseDir, moxter.cfg).toString();
+                throw new IllegalArgumentException(
+                    "basedOn refers to unknown moxture '" + parentName + "'. Looked under (from " + nodeBaseDir + "): " + attempted
+                );
+            }
+
+            // Recurse
+            Model.Moxture materializedParent =
+                    materializeDeep(parentResolved.call, parentResolved.baseDir, stack, visiting);
+
+            // Merge parent → child (child overrides)
+            Model.Moxture merged = new Model.Moxture();
+            merged.setName(node.getName());
+            merged.setMethod(Utils.Misc.firstNonBlank(node.getMethod(), materializedParent.getMethod()));
+            merged.setEndpoint(Utils.Misc.firstNonBlank(node.getEndpoint(), materializedParent.getEndpoint()));
+            merged.setExpectedStatus(node.getExpectedStatus() != null ? node.getExpectedStatus() : materializedParent.getExpectedStatus());
+            merged.setHeaders(Utils.Misc.mergeMap(materializedParent.getHeaders(), node.getHeaders()));
+            merged.setVars(Utils.Misc.mergeMap(materializedParent.getVars(), node.getVars()));
+            merged.setQuery(Utils.Misc.mergeMap(materializedParent.getQuery(), node.getQuery()));
+            // For "save": replace instead of merge (no inheritance unless explicitly set on the child)
+            merged.setSave(node.getSave() != null ? node.getSave() : materializedParent.getSave());
+            // For "moxtures" (group list): replace instead of merge
+            merged.setMoxtures(node.getMoxtures() != null ? node.getMoxtures() : materializedParent.getMoxtures());
+            merged.setMultipart(node.getMultipart() != null ? node.getMultipart() : materializedParent.getMultipart());
+            JsonNode payload = deepMergePayload(moxter.yamlMapper, materializedParent.getPayload(), node.getPayload());
+            merged.setPayload(payload);
+
+            // Clear inheritance markers on the final node
+            merged.setBasedOn(null);
+            merged.setBaseOn(null);
+
+            validateMoxture(merged);
+
+            moxter.materializedCache.put(key, merged);
+            stack.removeLast();
+            visiting.remove(key);
+            return merged;
+        }
+
+        /** 
+         * Ensure a moxture is either a group OR a single call, not both. 
+         */
+        private static void validateMoxture(Model.Moxture f) {
+            boolean isGroup = f.getMoxtures() != null;
+            boolean isHttp  =
+                (f.getEndpoint() != null && !f.getEndpoint().isBlank()) ||
+                (f.getMethod()   != null && !f.getMethod().isBlank())   ||
+                f.getPayload() != null ||
+                f.getExpectedStatus() != null ||
+                (f.getHeaders() != null && !f.getHeaders().isEmpty()) ||
+                (f.getQuery()   != null && !f.getQuery().isEmpty())   ||
+                (f.getSave()    != null && !f.getSave().isEmpty());
+            if (isGroup && isHttp) {
+                throw new IllegalStateException("Moxture '" + f.getName() + "' cannot define both 'moxtures' and HTTP fields");
+            }
+        }
+
+
+        /** 
+         * Shallow clone of a call, with basedOn/baseOn cleared. 
+         */
+        private static Model.Moxture cloneWithoutBasedOn(Model.Moxture src) {
+            Model.Moxture c = new Model.Moxture();
+            c.setName(src.getName());
+            c.setMethod(src.getMethod());
+            c.setEndpoint(src.getEndpoint());
+            c.setHeaders(src.getHeaders()==null?null:new LinkedHashMap<>(src.getHeaders()));
+            c.setVars(src.getVars() == null ? null : new LinkedHashMap<>(src.getVars()));
+            c.setQuery(src.getQuery()==null?null:new LinkedHashMap<>(src.getQuery()));
+            c.setPayload(src.getPayload()); // JSON nodes are fine to share for our usage
+            c.setSave(src.getSave()==null?null:new LinkedHashMap<>(src.getSave()));
+            c.setExpectedStatus(src.getExpectedStatus());
+            c.setMoxtures(src.getMoxtures()==null?null:new ArrayList<>(src.getMoxtures()));
+            c.setMultipart(src.getMultipart() == null ? null : new ArrayList<>(src.getMultipart()));
+            c.setBasedOn(null);
+            c.setBaseOn(null);
+
+            return c;
+        }
+
+
+        private static JsonNode deepMergePayload(ObjectMapper mapper, JsonNode parent, JsonNode child) {
+            parent = Utils.Json.coerceJsonTextToNode(mapper, parent);
+            child  = Utils.Json.coerceJsonTextToNode(mapper, child);
+
+            if (child == null) return parent;
+            if (parent == null) return child;
+
+            // If child is array or scalar → replace
+            if (child.isArray() || child.isValueNode()) return child;
+
+            // Deep-merge objects
+            if (child.isObject() && parent.isObject()) {
+                ObjectNode merged = mapper.createObjectNode();
+                // copy parent
+                parent.fields().forEachRemaining(e -> merged.set(e.getKey(), e.getValue().deepCopy()));
+                // merge/override child
+                child.fields().forEachRemaining(e -> {
+                    String k = e.getKey();
+                    JsonNode childVal = e.getValue();
+                    JsonNode parentVal = merged.get(k);
+                    if (childVal != null && childVal.isObject() && parentVal != null && parentVal.isObject()) {
+                        merged.set(k, deepMergePayload(mapper, parentVal, childVal)); // recursive objects
+                    } else {
+                        merged.set(k, childVal); // replace arrays/scalars or add new fields
+                    }
+                });
+                return merged;
+            }
+
+            // Types differ or parent not object → replace
+            return child;
+        }
+
+
+
+    }
+
+
+
+
+
 
     /**
-     * A fluent builder used to configure and execute a Moxture call.
+     * A fluent builder for configuring and instantiating the {@link Moxter} engine.
+     * 
+     * <p>This builder is the entry point for setting up Moxter in your test classes. 
+     * It requires the test class (to anchor the classpath search for YAML files) and 
+     * a Spring {@link MockMvc} instance to execute the actual HTTP requests.
+     * 
+     * <p><b>Example Usage:</b>
+     * <pre>{@code
+     *   Moxter mx = Moxter.forTestClass(MyControllerTest.class)
+     *                     .mockMvc(this.mockMvc)
+     *                     .build();
+     * }</pre>
+     */
+    public static final class MoxBuilder
+    {
+        private final Class<?> testClass;
+        private MockMvc mockMvc;
+        private java.util.function.Supplier<org.springframework.security.core.Authentication> authSupplier;
+
+        private MoxBuilder(Class<?> testClass) { 
+            this.testClass = testClass; 
+        }
+
+        /**
+         * Provides the Spring {@link MockMvc} instance that Moxter will use to execute 
+         * all HTTP requests defined in the YAML moxtures.
+         * 
+         * @param mvc The configured MockMvc instance (mandatory).
+         * @return this {@link MoxBuilder} for chaining.
+         */
+        public MoxBuilder mockMvc(MockMvc mvc) { 
+            this.mockMvc = mvc; 
+            return this; 
+        }
+
+        /**
+         * Provides a fixed Spring Security {@link org.springframework.security.core.Authentication} 
+         * object to automatically attach to every HTTP request executed by this engine instance.
+         *
+         * <p>Use this if your entire test suite runs under a single simulated user.
+         * 
+         * @param auth The Authentication object to inject.
+         * @return this {@link MoxBuilder} for chaining.
+         */
+        public MoxBuilder authentication(org.springframework.security.core.Authentication auth) {
+            this.authSupplier = () -> auth;
+            return this;
+        }
+
+        /** 
+         * Provides a dynamic supplier for Spring Security {@link org.springframework.security.core.Authentication}.
+         * 
+         * <p>The supplier is evaluated <i>per-request</i>. Use this if your test context 
+         * changes the active user dynamically during execution.
+         * 
+         * @param s The Authentication supplier.
+         * @return this {@link MoxBuilder} for chaining.
+         */
+        public MoxBuilder authenticationSupplier(java.util.function.Supplier<org.springframework.security.core.Authentication> s) {
+            this.authSupplier = s;
+            return this;
+        }
+
+        /**
+         * Validates the configuration and constructs the final {@link Moxter} engine instance.
+         * 
+         * <p>During this phase, Moxter will scan the classpath relative to the provided 
+         * test class, locate the {@code moxtures.yaml} file, and parse all moxture definitions.
+         * 
+         * @return A fully initialized, thread-safe Moxter engine.
+         * @throws IllegalStateException if the moxtures file cannot be found or contains invalid YAML.
+         * @throws NullPointerException if mandatory dependencies (like MockMvc) are missing.
+         */
+        public Moxter build() {
+            return new Moxter(testClass, mockMvc, authSupplier);
+        }
+    }
+
+
+
+    // ############################################################################
+
+    /**
+     * A fluent builder offered to end-used to configure and execute Moxture calls.
      * 
      * <p>This class handles the "Preparation Phase" of a test step, allowing you to 
      * inject variables, set execution flags (like lax mode), and toggle debug logging 
@@ -963,7 +759,7 @@ public final class Moxter
      *   .assertVar("petId", id -> id.isNotNull());
      * }</pre>
      */
-    public static class MoxterCaller 
+    public static class MoxCaller 
     {
         // Reference to the root encompassing engine
         private final Moxter moxter;
@@ -973,11 +769,11 @@ public final class Moxter
         private Map<String, Object> overrides = new LinkedHashMap<>();
 
         /**
-         * Use Moxter.caller() instead
+         * For end-users: use Moxter.caller() instead
          * 
          * @param moxter      The encompassing Engine.
          */
-        protected MoxterCaller(Moxter moxter) {
+        protected MoxCaller(Moxter moxter) {
             this.moxter = moxter;
         }
 
@@ -988,9 +784,9 @@ public final class Moxter
          * allowing you to perform assertions on error responses (e.g., 404 or 400).
          * 
          * @param lax true to suppress automatic exception throwing on API errors.
-         * @return this {@link MoxterCaller} for chaining.
+         * @return this {@link MoxCaller} for chaining.
          */
-        public MoxterCaller lax(boolean lax) {
+        public MoxCaller lax(boolean lax) {
             this.lax = lax;
             return this;
         }
@@ -1001,9 +797,9 @@ public final class Moxter
          * If true, failed JsonPath extractions will return null rather than throwing an exception.
          * 
          * @param val true to enable lax JsonPath evaluation.
-         * @return this {@link MoxterCaller} for chaining.
+         * @return this {@link MoxCaller} for chaining.
          */
-        public MoxterCaller withJsonPathLax(boolean val) {
+        public MoxCaller withJsonPathLax(boolean val) {
             this.jsonPathLax = val;
             return this;
         }
@@ -1012,9 +808,9 @@ public final class Moxter
          * Enables automatic pretty-printing of the response body to standard output.
          * Useful for debugging complex JSON structures during test development.
          * * @param val true to print the result after execution.
-         * @return this {@link MoxterCaller} for chaining.
+         * @return this {@link MoxCaller} for chaining.
          */
-        public MoxterCaller withPrintReturn(boolean val) {
+        public MoxCaller withPrintReturn(boolean val) {
             this.printReturn = val;
             return this;
         }
@@ -1030,9 +826,9 @@ public final class Moxter
          * 
          * 
          * @param overrides A map of keys and values placeholders.
-         * @return this {@link MoxterCaller} for chaining.
+         * @return this {@link MoxCaller} for chaining.
          */
-        public MoxterCaller with(Map<String, Object> overrides) {
+        public MoxCaller with(Map<String, Object> overrides) {
             if (overrides != null) this.overrides.putAll(overrides);
             return this;
         }
@@ -1042,9 +838,9 @@ public final class Moxter
          * 
          * @param key   The variable name (used as ${key} in YAML).
          * @param value The value to inject.
-         * @return this {@link MoxterCaller} for chaining.
+         * @return this {@link MoxCaller} for chaining.
          */
-        public MoxterCaller with(String key, Object value) {
+        public MoxCaller with(String key, Object value) {
             this.overrides.put(key, value);
             return this;
         }
@@ -1108,7 +904,7 @@ public final class Moxter
          */
         public MoxtureResult call(String moxtureName) 
         {
-            Model.ResponseEnvelope env = callInternal(moxtureName, overrides);
+            Runtime.ResponseEnvelope env = callInternal(moxtureName, overrides);
 
             if (printReturn && env != null && env.body() != null) {
                 System.out.println("[Moxter] Result for " + moxtureName + ":\n" + env.body().toPrettyString());
@@ -1123,10 +919,10 @@ public final class Moxter
          * @param overrides
          * @return
          */
-        private Model.ResponseEnvelope callInternal(String moxtureName, Map<String, Object> overrides) 
+        private Runtime.ResponseEnvelope callInternal(String moxtureName, Map<String, Object> overrides) 
         {
             Objects.requireNonNull(moxtureName, "name");
-            MaterializedMoxture r = this.moxter.resolveByName(moxtureName);
+            MoxResolver.EffectiveMoxture r = this.moxter.moxResolver.resolveByName(moxtureName);
 
             // 1. Build this moxture's local overrides.
             // As you requested: The moxture's own YAML vars yield to the passed-in overrides.
@@ -1144,7 +940,7 @@ public final class Moxter
             }
 
             // 2. Call
-            validateMoxture(r.moxt);
+            MoxResolver.validateMoxture(r.moxt);
 
             // 2.1. If group Moxture
             if (isGroupMoxture(r.moxt)) 
@@ -1171,7 +967,7 @@ public final class Moxter
             // 2.2. Else: single moxture
             else
             {   // Create the Layered View (Local -> Global) using the fluent facade for writes
-                Map<String, Object> mergedVars = new Runtime.CallScopedVars(localOverrides, this.moxter.vars, moxter.vars()::put);
+                Map<String, Object> mergedVars = new MoxVars.CallScopedVars(localOverrides, this.moxter.vars, moxter.vars()::put);
                 try 
                 {   return this.moxter.executor.execute(r.moxt, r.baseDir, mergedVars, lax, jsonPathLax);
                 } 
@@ -1184,6 +980,12 @@ public final class Moxter
                     throw new RuntimeException("Error executing moxture '" + moxtureName + "'", t);
                 }
             }
+        }
+
+
+        private static boolean isGroupMoxture(Model.Moxture f) {
+            // A group is any moxture that *declares* a moxtures list (even empty → no-op group)
+            return f != null && f.getMoxtures() != null;
         }
 
     }
@@ -1218,7 +1020,7 @@ public final class Moxter
      *      mx.vars("create_pet").put("petName", "Snowy");
      * }</pre>
      */
-    public static class MoxterVars 
+    public static class MoxVars 
     {
         private final Moxter moxter;
 
@@ -1228,7 +1030,13 @@ public final class Moxter
         // Cached map of the target(local/global) variables
         private final Map<String, Object> targetMap; 
 
-        protected MoxterVars(Moxter moxter, String moxtureName) {
+        // Used for debugging vars in varsDump()
+        private static final ObjectMapper VARS_DUMP_MAPPER = new ObjectMapper()
+                                                                .enable(SerializationFeature.INDENT_OUTPUT);
+
+
+
+        protected MoxVars(Moxter moxter, String moxtureName) {
             this.moxter = moxter;
             this.moxtureName = moxtureName;
             this.targetMap = resolveTargetMap();
@@ -1251,7 +1059,7 @@ public final class Moxter
 
             // Local Scope
             try {
-                MaterializedMoxture resolved = moxter.resolveByName(moxtureName);
+                MoxResolver.EffectiveMoxture resolved = this.moxter.moxResolver.resolveByName(moxtureName);
                 Map<String, Object> localVars = resolved.moxt.getVars();
                 return (localVars != null) ? localVars : Collections.emptyMap();
             } catch (Exception e) {
@@ -1403,10 +1211,8 @@ public final class Moxter
             }
         }
 
+        // ############################################################################
 
-        // ========================================================
-        // NESTED ACCESSOR
-        // ========================================================
         /**
          * A fluent accessor for a dynamically typed Moxter variable.
          * 
@@ -1516,6 +1322,85 @@ public final class Moxter
             }
         }
 
+        // ############################################################################
+
+        /**
+         * Map wrapper that represents the combination of:
+         * <ul>
+         *   <li><b>Per-call-scoped variable overrides</b> (provided by the caller)</li>
+         *   <li><b>Global engine variables</b> (owned by Moxter)</li>
+         * </ul>
+         *
+         * <p>Semantics:
+         * <ul>
+         *   <li><b>Reads (get/containsKey):</b> first consult the scoped overrides;
+         *       if the key is not present there, fall back to the global vars.</li>
+         *   <li><b>Iteration (entrySet/size):</b> presents a merged snapshot view,
+         *       with scoped overrides taking precedence on key collisions.</li>
+         *   <li><b>Writes (put):</b> always delegated to the engine’s global
+         *       writing mecanism (via the provided writer) thus using a single 
+         *       "source of truth" which exerts overwrite-warning semantics.</li>
+         *   <li><b>Overrides are immutable:</b> the scoped map is copied on construction
+         *       and never mutated by this wrapper.</li>
+         * </ul>
+         *
+         * <p>Why not just merge the locally scoped variables to the globals vars into a 
+         * temporary map and use that as the call var-context (e.g., new HashMap(globals).putAll(scoped))?
+         * <p>Unlike a static merged snapshot, this wrapper provides live read-through 
+         * and write-through semantics. By maintaining a reference to the global engine variables
+         * rather than a copy, it ensures that any global state changes occurring during a 
+         * moxture's execution, such as an ID being saved by a preceding step in a group,
+         * are immediately visible to the current scope. Furthermore, the delegated put operation
+         * ensures that extracted values (the "Reality") are persisted to the engine's global state 
+         * for use by future moxtures, while the immutable scoped map preserves the caller's 
+         * "Intent" without pollution.
+         * 
+         * <p>This class is used internally by
+         * {@link Moxter#callMoxture(String, Map)} to implement call-scoped
+         * variable overrides. Test code does not normally need to use it directly.
+         */
+        private static final class CallScopedVars extends AbstractMap<String,Object> {
+            private final Map<String,Object> scoped;    // per-call overrides (immutable snapshot is fine)
+            private final Map<String,Object> globals;   // underlying engine vars (for reads)
+            private final BiFunction<String,Object,Object> writer; // e.g., Moxter::varsPut
+
+            CallScopedVars(Map<String,Object> scoped,
+                        Map<String,Object> globals,
+                        BiFunction<String,Object,Object> writer) {
+                this.scoped  = (scoped == null || scoped.isEmpty()) ? Collections.emptyMap() : new LinkedHashMap<>(scoped);
+                this.globals = Objects.requireNonNull(globals, "globals");
+                this.writer  = Objects.requireNonNull(writer, "writer");
+            }
+
+            @Override public Object get(Object key) {
+                if (!(key instanceof String)) return null;
+                String k = (String) key;
+                return scoped.containsKey(k) ? scoped.get(k) : globals.get(k);
+            }
+
+            @Override public boolean containsKey(Object key) {
+                if (!(key instanceof String)) return false;
+                String k = (String) key;
+                return scoped.containsKey(k) || globals.containsKey(k);
+            }
+
+            @Override public Object put(String key, Object value) {
+                // Route writes through writer (e.g., varsPut) to honor strict mode and WARN logs
+                return writer.apply(key, value);
+            }
+
+            @Override public Set<Entry<String,Object>> entrySet() {
+                LinkedHashMap<String,Object> merged = new LinkedHashMap<>(globals);
+                merged.putAll(scoped); // scoped wins on key collisions
+                return Collections.unmodifiableSet(merged.entrySet());
+            }
+
+            @Override public int size() {
+                HashSet<String> keys = new HashSet<>(globals.keySet());
+                keys.addAll(scoped.keySet());
+                return keys.size();
+            }
+        }
 
 
     }
@@ -1528,7 +1413,7 @@ public final class Moxter
      */
     public static class MoxtureResult 
     {
-        private final Model.ResponseEnvelope envelope;
+        private final Runtime.ResponseEnvelope envelope;
         private final String moxtureName;
         // Reference to the encompassing engine
         private final Moxter moxter;
@@ -1538,7 +1423,7 @@ public final class Moxter
          * @param moxtureName The name of the moxture that produced this result (for error context).
          * @param moxter      The encompassing Engine.
          */
-        public MoxtureResult(Model.ResponseEnvelope envelope, Moxter moxter, String moxtureName) {
+        public MoxtureResult(Runtime.ResponseEnvelope envelope, Moxter moxter, String moxtureName) {
             this.envelope    = envelope;
             this.moxter      = moxter;
             this.moxtureName = moxtureName;
@@ -1569,7 +1454,7 @@ public final class Moxter
         /**
          * Access to the full envelope including headers.
          */
-        public Model.ResponseEnvelope getEnvelope() {
+        public Runtime.ResponseEnvelope getEnvelope() {
             return envelope;
         }
 
@@ -1689,7 +1574,7 @@ public final class Moxter
          * @see #assertThat(String) For one-off extractions using raw JsonPaths.
          */
         public ObjectAssert<Object> assertVar(String varName) {
-            Object actual = moxter.varsGet(varName);
+            Object actual = moxter.vars().get(varName);
             return org.assertj.core.api.Assertions.assertThat(actual)
                     .as("Saved variable '%s' from moxture '%s'", varName, moxtureName);
         }
@@ -1723,85 +1608,12 @@ public final class Moxter
     }
 
 
-    // ############################################################################
-
-    /**
-     * 
-     */
-    public static final class Builder
-    {
-        private final Class<?> testClass;
-        private MockMvc mockMvc;
-        private java.util.function.Supplier<org.springframework.security.core.Authentication> authSupplier;
-
-        private Builder(Class<?> testClass) { this.testClass = testClass; }
-        public Builder mockMvc(MockMvc mvc) { this.mockMvc = mvc; return this; }
-
-        /** Provide a fixed Authentication to attach to every request. */
-        public Builder authentication(org.springframework.security.core.Authentication auth) {
-            this.authSupplier = () -> auth;
-            return this;
-        }
-
-        /** Provide a lazy supplier for Authentication (called per request). */
-        public Builder authenticationSupplier(java.util.function.Supplier<org.springframework.security.core.Authentication> s) {
-            this.authSupplier = s;
-            return this;
-        }
-
-        public Moxter build() {
-            return new Moxter(testClass, mockMvc, authSupplier);
-        }
-    }
 
 
-    // ############################################################################
-
-    /** 
-     * Key for memorizing materialized moxtures by scope (baseDir) and name. 
-     */
-    private static final class MaterializedKey 
-    {
-        final String baseDir; // classpath dir where the moxture is defined
-        final String name;
-        MaterializedKey(String baseDir, String name) { this.baseDir = baseDir; this.name = name; }
-        public boolean equals(Object o){ if(this==o)return true; if(!(o instanceof MaterializedKey))return false;
-            MaterializedKey k=(MaterializedKey)o; return Objects.equals(baseDir,k.baseDir)&&Objects.equals(name,k.name); }
-        public int hashCode(){ return Objects.hash(baseDir,name); }
-        public String toString(){ return baseDir+":"+name; }
-    }
 
 
-    // ############################################################################
 
-    /**
-     * An internal container representing a fully prepped, executable moxture.
-     *
-     * <p>This class pairs a completely materialized moxture definition (where all 
-     * {@code basedOn} inheritance and hierarchical merging have been flattened) 
-     * with the physical classpath directory where it was discovered.
-     *
-     * <p>Keeping track of the {@code baseDir} is critical during the execution phase, 
-     * as it acts as the anchor point for resolving relative file imports (e.g., when 
-     * a payload or multipart file is defined as {@code "classpath:request.json"}).
-     */
-    private static final class MaterializedMoxture 
-    {
-        /**
-         * The fully materialized moxture definition (with all 'basedOn' inheritance 
-         * deeply merged). 
-         */
-        final Model.Moxture moxt;
 
-        /** 
-         * The classpath directory where this moxture was discovered. 
-         * Used as the anchor point for resolving relative file imports.
-         */
-        final String baseDir;
-
-        MaterializedMoxture(Model.Moxture moxt, String baseDir) 
-        { this.moxt = moxt; this.baseDir = baseDir; }
-    }
 
 
     // ############################################################################
@@ -1911,7 +1723,7 @@ public final class Moxter
             }
 
             /** Finds the first (closest) occurrence of a moxture by name across ancestor files (starting from test package). */
-            Resolved findFirstByName(Class<?> testClass, IO.MoxtureConfig cfg, String name, ObjectMapper yamlMapper) {
+            RawMoxture findFirstByName(Class<?> testClass, IO.MoxtureConfig cfg, String name, ObjectMapper yamlMapper) {
                 List<String> candidates = candidateAncestorPaths(testClass, cfg);
                 ClassLoader tccl = Thread.currentThread().getContextClassLoader();
                 ClassLoader fallback = Moxter.class.getClassLoader();
@@ -1926,7 +1738,7 @@ public final class Moxter
                         for (Model.Moxture f : raw.moxtures()) {
                             if (name.equals(f.getName())) {
                                 String baseDir = parentDirOf(cp);
-                                return new Resolved(f, baseDir, "classpath:/" + cp);
+                                return new RawMoxture(f, baseDir, "classpath:/" + cp);
                             }
                         }
                     } catch (IOException e) {
@@ -1958,7 +1770,7 @@ public final class Moxter
             }
 
             /** Finds the first (closest) occurrence of a moxture by name, starting from an arbitrary baseDir. */
-            Resolved findFirstByNameFromBaseDir(Class<?> testClass, IO.MoxtureConfig cfg,
+            RawMoxture findFirstByNameFromBaseDir(Class<?> testClass, IO.MoxtureConfig cfg,
                                                 String startBaseDir, String name, ObjectMapper yamlMapper) {
                 List<String> candidates = candidateAncestorPathsFromBaseDir(startBaseDir, cfg);
                 ClassLoader tccl = Thread.currentThread().getContextClassLoader();
@@ -1973,7 +1785,7 @@ public final class Moxter
                         for (Model.Moxture f : raw.moxtures()) {
                             if (name.equals(f.getName())) {
                                 String baseDir = parentDirOf(cp);
-                                return new Resolved(f, baseDir, "classpath:/" + cp);
+                                return new RawMoxture(f, baseDir, "classpath:/" + cp);
                             }
                         }
                     } catch (IOException e) {
@@ -1983,12 +1795,32 @@ public final class Moxter
                 return null;
             }
 
-            static final class Resolved {
+            /**
+             * An internal container representing a raw moxture found during a classpath search.
+             *
+             * <p>Unlike a {@code MaterializedMoxture}, a {@code RawMoxture} is 
+             * <b>unmaterialized</b>. It contains the exact, raw definition parsed directly 
+             * from the YAML file before any {@code basedOn} inheritance or hierarchical 
+             * merging has been applied.
+             * 
+             * <p>This object simply pairs the raw parsed YAML with its physical location 
+             * metadata, which is necessary to eventually perform that deep materialization.
+             */
+            static final class RawMoxture 
+            {
+                /** The raw moxture definition exactly as it appears in the YAML file. */
                 final Model.Moxture call;
+                
+                /** The classpath directory where the file was found (used to resolve parents and payloads). */
                 final String baseDir;
+                
+                /** A human-readable path (e.g., "classpath:/my/pkg/moxtures.yaml") for logging and errors. */
                 final String displayPath;
-                Resolved(Model.Moxture call, String baseDir, String displayPath) {
-                    this.call = call; this.baseDir = baseDir; this.displayPath = displayPath;
+                
+                RawMoxture(Model.Moxture call, String baseDir, String displayPath) {
+                    this.call = call; 
+                    this.baseDir = baseDir; 
+                    this.displayPath = displayPath;
                 }
             }
 
@@ -2024,17 +1856,60 @@ public final class Moxter
 
     // ############################################################################
 
-    /** 
-     * Runtime: templating, payloads, status matching, http execution. 
+    /**
+     * Internal namespace for components that handle the <b>execution phase</b> of a moxture.
+     * 
+     * <p>Once a moxture definition has been discovered and fully materialized/'effectived' 
+     * (flattened), the classes in this namespace take over to perform the actual test execution. 
+     * Their responsibilities include:
+     * <ul>
+     * <li><b>Templating:</b> Interpolating dynamic variables into endpoints, headers, and payloads.</li>
+     * <li><b>Payload Resolution:</b> Parsing and resolving complex or external JSON/YAML request bodies.</li>
+     * <li><b>HTTP Execution:</b> Translating the moxture into a Spring MockMvc request and firing it.</li>
+     * <li><b>Response Handling:</b> Capturing the raw network response and packaging it into an internal envelope.</li>
+     * </ul>
+     * 
+     * <p><b>Note:</b> Classes within this namespace are strictly internal to the Moxter engine 
+     * and should never be accessed or instantiated directly by test code.
      */
     static final class Runtime {
 
+        /**
+         * A strategy interface for interpolating dynamic variables into strings.
+         *
+         * <p>This engine is responsible for finding placeholders (e.g., {@code {{varName}}}) 
+         * in the moxture definition and replacing them with their actual values from the 
+         * provided variable context.
+         */
         interface Templating {
-            String apply(String s, Map<String,Object> vars);
-            Map<String,String> applyMapValuesOnly(Map<String,String> in, Map<String,Object> vars);
+            
+            /**
+             * Processes a single string, replacing all variable placeholders with their 
+             * corresponding values.
+             *
+             * @param s    The template string containing placeholders.
+             * @param vars The contextual map of variables available for substitution.
+             * @return The fully interpolated string, or the original string if no placeholders exist.
+             */
+            String apply(String s, Map<String, Object> vars);
+
+            /**
+             * Processes a map of key-value pairs, applying templating <b>only to the values</b>.
+             * 
+             * <p>This is particularly useful for HTTP headers and query parameters, where 
+             * the keys (e.g., "Authorization" or "page") are static, but the values 
+             * (e.g., "Bearer {{token}}" or "{{pageNumber}}") are dynamic.
+             *
+             * @param in   The original map of static keys and templated values.
+             * @param vars The contextual map of variables available for substitution.
+             * @return A new map containing the original keys and the fully interpolated values.
+             */
+            Map<String, String> applyMapValuesOnly(Map<String, String> in, Map<String, Object> vars);
         }
 
-        /** Simple {{var}} string substitution. */
+        /**
+         * Simple {{var}} string substitution. 
+         */
         static final class SimpleTemplating implements Templating {
             public String apply(String s, Map<String,Object> vars) {
                 if (s == null || vars == null || vars.isEmpty()) return s;
@@ -2052,6 +1927,12 @@ public final class Moxter
                 return out;
             }
         }
+
+
+        // ############################################################################
+
+
+
 
         /**
          * 
@@ -2219,84 +2100,6 @@ public final class Moxter
 
 
 
-        /**
-         * Map wrapper that represents the combination of:
-         * <ul>
-         *   <li><b>Per-call-scoped variable overrides</b> (provided by the caller)</li>
-         *   <li><b>Global engine variables</b> (owned by Moxter)</li>
-         * </ul>
-         *
-         * <p>Semantics:
-         * <ul>
-         *   <li><b>Reads (get/containsKey):</b> first consult the scoped overrides;
-         *       if the key is not present there, fall back to the global vars.</li>
-         *   <li><b>Iteration (entrySet/size):</b> presents a merged snapshot view,
-         *       with scoped overrides taking precedence on key collisions.</li>
-         *   <li><b>Writes (put):</b> always delegated to the engine’s global
-         *       writing mecanism (via the provided writer) thus using a single 
-         *       "source of truth" which exerts overwrite-warning semantics.</li>
-         *   <li><b>Overrides are immutable:</b> the scoped map is copied on construction
-         *       and never mutated by this wrapper.</li>
-         * </ul>
-         *
-         * <p>Why not just merge the locally scoped variables to the globals vars into a 
-         * temporary map and use that as the call var-context (e.g., new HashMap(globals).putAll(scoped))?
-         * <p>Unlike a static merged snapshot, this wrapper provides live read-through 
-         * and write-through semantics. By maintaining a reference to the global engine variables
-         * rather than a copy, it ensures that any global state changes occurring during a 
-         * moxture's execution, such as an ID being saved by a preceding step in a group,
-         * are immediately visible to the current scope. Furthermore, the delegated put operation
-         * ensures that extracted values (the "Reality") are persisted to the engine's global state 
-         * for use by future moxtures, while the immutable scoped map preserves the caller's 
-         * "Intent" without pollution.
-         * 
-         * <p>This class is used internally by
-         * {@link Moxter#callMoxture(String, Map)} to implement call-scoped
-         * variable overrides. Test code does not normally need to use it directly.
-         */
-        private static final class CallScopedVars extends AbstractMap<String,Object> {
-            private final Map<String,Object> scoped;    // per-call overrides (immutable snapshot is fine)
-            private final Map<String,Object> globals;   // underlying engine vars (for reads)
-            private final BiFunction<String,Object,Object> writer; // e.g., Moxter::varsPut
-
-            CallScopedVars(Map<String,Object> scoped,
-                        Map<String,Object> globals,
-                        BiFunction<String,Object,Object> writer) {
-                this.scoped  = (scoped == null || scoped.isEmpty()) ? Collections.emptyMap() : new LinkedHashMap<>(scoped);
-                this.globals = Objects.requireNonNull(globals, "globals");
-                this.writer  = Objects.requireNonNull(writer, "writer");
-            }
-
-            @Override public Object get(Object key) {
-                if (!(key instanceof String)) return null;
-                String k = (String) key;
-                return scoped.containsKey(k) ? scoped.get(k) : globals.get(k);
-            }
-
-            @Override public boolean containsKey(Object key) {
-                if (!(key instanceof String)) return false;
-                String k = (String) key;
-                return scoped.containsKey(k) || globals.containsKey(k);
-            }
-
-            @Override public Object put(String key, Object value) {
-                // Route writes through writer (e.g., varsPut) to honor strict mode and WARN logs
-                return writer.apply(key, value);
-            }
-
-            @Override public Set<Entry<String,Object>> entrySet() {
-                LinkedHashMap<String,Object> merged = new LinkedHashMap<>(globals);
-                merged.putAll(scoped); // scoped wins on key collisions
-                return Collections.unmodifiableSet(merged.entrySet());
-            }
-
-            @Override public int size() {
-                HashSet<String> keys = new HashSet<>(globals.keySet());
-                keys.addAll(scoped.keySet());
-                return keys.size();
-            }
-        }
-
         static final class StatusMatcher {
             /**
              * expected: null | int | "2xx"/"3xx"/"4xx"/"5xx" | "201" | [ ... any of those ... ]
@@ -2352,7 +2155,7 @@ public final class Moxter
             }
 
             /** Strict convenience. */
-            Model.ResponseEnvelope execute(Model.Moxture spec, String baseDir, Map<String,Object> vars) {
+            Runtime.ResponseEnvelope execute(Model.Moxture spec, String baseDir, Map<String,Object> vars) {
                 return execute(spec, baseDir, vars, false, false);
             }
 
@@ -2367,7 +2170,7 @@ public final class Moxter
              * @param lax do not fail on expected-status mismatches (still throws for infra errors)
              * @param jsonPathLax see callMoxture(...)
              */
-            Model.ResponseEnvelope execute(Model.Moxture spec, String baseDir, 
+            Runtime.ResponseEnvelope execute(Model.Moxture spec, String baseDir, 
                                            Map<String,Object> vars, boolean lax,
                                            boolean jsonPathLax 
                                         )
@@ -2536,7 +2339,7 @@ public final class Moxter
                                 ctHeader, Utils.Logging.truncate(raw, 80));
                     }
 
-                    Model.ResponseEnvelope env = new Model.ResponseEnvelope(mvcResp.getStatus(), copyHeaders(mvcResp), body, raw);
+                    Runtime.ResponseEnvelope env = new Runtime.ResponseEnvelope(mvcResp.getStatus(), copyHeaders(mvcResp), body, raw);
 
                     // 5.5) DEBUG response preview
                     if (log.isDebugEnabled()) {
@@ -2680,6 +2483,30 @@ public final class Moxter
                 return expected.toString();
             }
         }
+
+
+        /**
+         * An internal, immutable container representing the raw HTTP response returned by 
+         * the execution engine.
+         *
+         * <p>This class acts as a bridge between the underlying HTTP client (Spring MockMvc) 
+         * and Moxter's public API. It captures the exact state of the network response 
+         * immediately after execution, before it is wrapped in a user-friendly 
+         * {@link MoxtureResult} for assertions.
+         *
+         * @param status  The HTTP status code returned by the server (e.g., 200, 404).
+         * @param headers The HTTP response headers, mapped by header name to a list of values.
+         * @param body    The response body parsed into a Jackson JSON tree (null if not JSON).
+         * @param raw     The raw, unparsed string representation of the HTTP response body.
+         */
+        public record ResponseEnvelope(
+            int status, 
+            Map<String, List<String>> headers, 
+            JsonNode body, 
+            String raw
+        ) {}
+
+
     }
 
 
@@ -2691,6 +2518,25 @@ public final class Moxter
      */
     static final class Utils 
     {
+        public static class Misc
+        {
+
+            public static String firstNonBlank(String a, String b) {
+                return (a != null && !a.isBlank()) ? a : b;
+            }
+
+            private static <K, V> Map<K, V> mergeMap(Map<K, V> parent, Map<K, V> child) {
+                if ((parent == null || parent.isEmpty()) && (child == null || child.isEmpty())) {
+                    return child;
+                }
+                Map<K, V> out = new LinkedHashMap<>();
+                if (parent != null) out.putAll(parent);
+                if (child != null) out.putAll(child);
+                return out;
+            }
+        }
+
+
 
         public static class Json 
         {
@@ -2729,6 +2575,23 @@ public final class Moxter
                     );
                 }
             }
+
+
+            /** 
+             * If the node is textual and looks like JSON, parse it to a JSON tree; otherwise return as is. 
+             */
+            private static JsonNode coerceJsonTextToNode(ObjectMapper mapper, JsonNode n) {
+                if (n == null) return null;
+                if (n.isTextual()) {
+                    String s = n.asText().trim();
+                    boolean looksJson = (s.startsWith("{") && s.endsWith("}")) || (s.startsWith("[") && s.endsWith("]"));
+                    if (looksJson) {
+                        try { return mapper.readTree(s); } catch (Exception ignore) { /* keep textual */ }
+                    }
+                }
+                return n;
+            }
+
         }
 
 
@@ -2866,23 +2729,6 @@ public final class Moxter
             public String getUrl() { return url; }
         }
 
-        /** 
-         * Response wrapper. 
-         */
-        public static final class ResponseEnvelope 
-        {
-            private final int status;
-            private final Map<String, List<String>> headers;
-            private final JsonNode body;
-            private final String raw;
-            public ResponseEnvelope(int status, Map<String, List<String>> headers, JsonNode body, String raw) {
-                this.status = status; this.headers = headers; this.body = body; this.raw = raw;
-            }
-            public int status() { return status; }
-            public Map<String, List<String>> headers() { return headers; }
-            public JsonNode body() { return body; }
-            public String raw() { return raw; }
-        }
     }
 
 
