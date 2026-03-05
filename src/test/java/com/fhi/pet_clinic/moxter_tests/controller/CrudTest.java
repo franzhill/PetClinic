@@ -2,6 +2,7 @@ package com.fhi.pet_clinic.moxter_tests.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.log;
 
 import java.util.Map;
 
@@ -10,59 +11,61 @@ import org.junit.jupiter.api.Test;
 
 import com.fhi.pet_clinic.moxter_tests.ParentMoxterTest;
 
+import lombok.extern.slf4j.Slf4j;
+
 
 /**
  * Run with:
  *   mvn clean test -Dtest=CrudTest
  */
+@Slf4j
 class CrudTest extends ParentMoxterTest 
 {
 
     @Test
-    @DisplayName("Old API - Create Owner, Pet, verify association")
+    @DisplayName("Old APIs - Create Owner, Pet, verify association")
     void checkCreateOwnerAndPet()
     {
         // 1. Create the Owner
         // The fixture 'create_owner' saves 'ownerId' into the engine's vars
-        fx.callMoxture("create_owner");
+        mx.callMoxture("create_owner");
 
         // 2. Create a Pet for that Owner
         // 2.1. By overriding the name
         String petName="Rex";
-        fx.callMoxture("create_pet_for_owner", Map.of("in_petName", petName));
+        mx.callMoxture("create_pet_for_owner", Map.of("in_petName", petName));
 
-        assertNotNull(fx.varsGetLong("petId"), "Pet should have been assigned an ID");
-        assertEquals(petName, fx.varsGetString("petName"));
-        assertEquals(fx.varsGetLong("ownerId"), fx.varsGetLong("petOwnerId"));
+        assertNotNull(mx.vars().get("petId"), "Pet should have been assigned an ID");
+        assertEquals(petName, mx.vars().get("petName"));
+        assertEquals(mx.vars().get("ownerId"), mx.vars().get("petOwnerId"));
 
         // 2.2. By using the fixture default
-        fx.callMoxture("create_pet_for_owner");
-        assertEquals(fx.moxVar("create_pet_for_owner", "in_petName"), 
-                     fx.vars().get("petName").asString());
+        mx.callMoxture("create_pet_for_owner");
+        assertEquals(mx.moxVar("create_pet_for_owner", "in_petName"), 
+                     mx.vars().read("petName").asString());
     }
 
 
-
     @Test
-    @DisplayName("New Fluent API - Create Owner, Pet, verify association")
+    @DisplayName("New Fluent APIs - Create Owner, Pet, verify association")
     void checkCreateOwnerAndPet_FluentAPI() 
     {
         // 1. Create the Owner (saves 'ownerId' automatically)
-        fx.caller().call("create_owner");
+        mx.caller().call("create_owner");
         // 2. Create a Pet for that Owner
         // 2.1. By overriding the name
         String petName = "Rex";
-        fx.caller()
+        mx.caller()
           .with("in_petName", petName)
           .call("create_pet_for_owner")
           .assertVar("petId"     , id   -> id.isNotNull())
           .assertVar("petName"   , name -> name.isEqualTo(petName))
-          .assertVar("petOwnerId", id   -> id.isEqualTo(fx.varsGet("ownerId")));
+          .assertVar("petOwnerId", id   -> id.isEqualTo(mx.vars().get("ownerId")));
 
         // 2.2. By using the fixture default ("Snowy" from your YAML)
-        fx.caller()
+        mx.caller()
           .call("create_pet_for_owner")
-          .assertVar("petName", name -> name.isEqualTo(fx.moxVar("create_pet_for_owner", "in_petName")));
+          .assertVar("petName", name -> name.isEqualTo(mx.vars("create_pet_for_owner").get("in_petName")));
     }
 
 
@@ -71,10 +74,34 @@ class CrudTest extends ParentMoxterTest
     void checkCreateOwnerAndPet_Group() 
     {
         String petName = "Rex";
-        fx.caller()
+        mx.caller()
           .with("in_petName", petName)
           .call("create_owner_and_pet")
           .assertVar("petName", name -> name.isEqualTo(petName));
+    }
+
+    @Test
+    @DisplayName("Read a moxture-local defined var")
+    void checkMoxtureScopedVars() 
+    {
+        String in_petName = mx.vars("create_pet_for_owner")
+                              .read("in_petName").asString();
+        log.debug("in_petName = {}", in_petName);
+        assertEquals("Snowy", in_petName);
+    }
+
+
+
+//    @Test
+    @DisplayName("Using a group moxture - Create Owner, Pet, verify association")
+    void checkCreateOwnerAndPet_Group_default_value() 
+    {
+        String in_petName = mx.vars("create_pet_for_owner").read("in_petName").asString();
+        log.debug("in_petName = {}", in_petName);
+
+        mx.caller()
+          .call("create_owner_and_pet")
+          .assertVar("petName", name -> name.isEqualTo(in_petName));
     }
 
 }

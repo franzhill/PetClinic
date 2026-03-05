@@ -3,6 +3,8 @@ package com.fhi.pet_clinic.moxter_tests;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fhi.libraries.moxter.Moxter;
 
+import lombok.extern.slf4j.Slf4j;
+
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -23,13 +25,14 @@ import org.springframework.test.web.servlet.MockMvc;
  *   <li>Provide an authenticated {@link Authentication} (per-request) to FixtureEngine.</li>
  *   <li>Load the closest {@code fixtures.yaml} for the concrete test class.</li>
  *   <li>Run "BeforeAll" / "AfterAll" fixture groups automatically.</li>
- *   <li>Expose a protected {@link #fx} engine and helper {@link #getTestAuthentication()}.</li>
+ *   <li>Expose a protected {@link #mx} engine and helper {@link #getTestAuthentication()}.</li>
  * </ul>
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.MOCK)
 @AutoConfigureMockMvc
 @ActiveProfiles({"test"})
 @TestInstance(TestInstance.Lifecycle.PER_CLASS) // Tells JUnit to create one single instance of the test class for the entire test run of that class => allows non-static @BeforeAll/@AfterAll
+@Slf4j
 public abstract class ParentMoxterTest
 {
    /** Default test user ID used to build the Authentication. */
@@ -42,7 +45,7 @@ public abstract class ParentMoxterTest
    @Autowired protected ObjectMapper objectMapper;
 
    /** Engine: loads fixtures.yaml for the concrete subclass and runs calls. */
-   protected Moxter fx;
+   protected Moxter mx;
 
    // --------------------------------------------------------------------------------------------
    // Lifecycle
@@ -66,26 +69,26 @@ public abstract class ParentMoxterTest
 
       // Create the fixture engine for this class, providing authentication to
       // use on every fixture call.
-      fx = Moxter.forTestClass(getClass())
+      mx = Moxter.forTestClass(getClass())
                         .mockMvc(mockMvc)
                         .authentication(getTestAuthentication())
                         .build();
 
       // Run "BeforeAll" fixtures group defined in the closest fixtures.yaml (if any).
-      fx.callMoxture("BeforeAll");
+      mx.callMoxture("BeforeAll");
    }
 
 
    @AfterAll
    void teardownBase() 
    {  // Run "AfterAll" fixtures group defined in the closest fixtures.yaml (if any).
-      fx.callMoxture("AfterAll");
+      mx.callMoxture("AfterAll");
    }
 
 
    @BeforeEach
    void perTestBase() 
-   {  fx.callMoxture("BeforeEach");
+   {  mx.callMoxture("BeforeEach");
    }
 
 
@@ -102,7 +105,7 @@ public abstract class ParentMoxterTest
 
    @AfterEach
    void afterTestBase() 
-   {  fx.callMoxture("AfterEach");
+   {  mx.callMoxture("AfterEach");
    }
 
 

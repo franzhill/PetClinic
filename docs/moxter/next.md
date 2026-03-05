@@ -10,8 +10,23 @@ Hint: place the file under src/test/resources/fixtures/com/fhi/pet_clinic/moxter
 [ERROR] Tests run: 1, Failures: 0, Errors: 1, Skipped: 0
 
 
+---
+# Allow concurrent
 
 
+    // Concurrent allows tests to be run in parallel
+    //#private final ConcurrentMap<String, Object> vars = new ConcurrentHashMap<>();
+    private final Map<String,Object> vars = new LinkedHashMap<>();
+
+
+
+---
+# rationalize scopes ? 
+
+
+moxter.vars
+localVars = moxter.resolveByName(moxtureName).moxt.getVars();
+callVars
 
 
 ---
