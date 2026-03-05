@@ -3,7 +3,8 @@
    "highlight.regexes": 
    {  
       // Highlight javadoc
-      "(/\\*\\*[\\s\\S]*?\\*/)" : {
+      "(/\\*\\*[\\s\\S]*?\\*/)" :
+      {
          "decorations": [
             {
                //"backgroundColor": "#def2c2",
@@ -15,6 +16,21 @@
             }
          ]
       },
+
+      // Highlight annotations
+      "((?<=\\n|^)[\\t ]*@[a-zA-Z_][a-zA-Z0-9_]*)" : 
+      {
+         "decorations": [
+            {
+                  "backgroundColor": "rgba(168, 208, 252, 0.2)",
+                  //"color": "#005b96",
+                  "isWholeLine": true,
+                  "fontStyle": "bold italic",
+                  "borderRadius": "3px"
+            }
+         ]
+      },
+
 
       // Dims @ SuppressWarnings ...
       "(@SuppressWarnings\\s*.*)":
