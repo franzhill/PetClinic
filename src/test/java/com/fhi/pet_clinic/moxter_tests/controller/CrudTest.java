@@ -1,6 +1,7 @@
 package com.fhi.pet_clinic.moxter_tests.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.log;
 
@@ -21,7 +22,7 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 class CrudTest extends ParentMoxterTest 
 {
-
+/* DEPRECATED
     @Test
     @DisplayName("Old APIs - Create Owner, Pet, verify association")
     void checkCreateOwnerAndPet()
@@ -44,25 +45,31 @@ class CrudTest extends ParentMoxterTest
         assertEquals(mx.moxVar("create_pet_for_owner", "in_petName"), 
                      mx.vars().read("petName").asString());
     }
-
+*/
 
     @Test
-    @DisplayName("New Fluent APIs - Create Owner, Pet, verify association")
-    void checkCreateOwnerAndPet_FluentAPI() 
+    @DisplayName("Single moxtures, chained. (Create Owner, Pet, verify association)")
+    void checkCreateOwnerAndPet() 
     {
         // 1. Create the Owner (saves 'ownerId' automatically)
         mx.caller().call("create_owner");
+
         // 2. Create a Pet for that Owner
         // 2.1. By overriding the name
         String petName = "Rex";
+        // Make sure the default moxture var is different:
+        String moxtureLocalpetName = mx.vars("create_pet_for_owner")
+                                       .read("in_petName").asString();
+        assertNotEquals(petName, moxtureLocalpetName);
+
         mx.caller()
-          .with("in_petName", petName)
+          .with("in_petName", petName)  // Overrides the default var provided in the moxture
           .call("create_pet_for_owner")
           .assertVar("petId"     , id   -> id.isNotNull())
           .assertVar("petName"   , name -> name.isEqualTo(petName))
           .assertVar("petOwnerId", id   -> id.isEqualTo(mx.vars().get("ownerId")));
 
-        // 2.2. By using the fixture default ("Snowy" from your YAML)
+        // 2.2. By using the fixture default ("Snowy" from the YAML moxture)
         mx.caller()
           .call("create_pet_for_owner")
           .assertVar("petName", name -> name.isEqualTo(mx.vars("create_pet_for_owner").get("in_petName")));
@@ -70,38 +77,81 @@ class CrudTest extends ParentMoxterTest
 
 
     @Test
-    @DisplayName("Using a group moxture - Create Owner, Pet, verify association")
-    void checkCreateOwnerAndPet_Group() 
+    @DisplayName("Read a moxture-local defined var.")
+    void checkMoxtureScopedVars() 
+    {
+        String moxtureLocalpetName = mx.vars("create_pet_for_owner")
+                                       .read("in_petName").asString();
+        log.debug("in_petName = {}", moxtureLocalpetName);
+        assertEquals("Snowy", moxtureLocalpetName);
+    }
+
+
+    @Test
+    @DisplayName("Group moxture with moxture-local var, and call override.")
+    void checkCreateOwnerAndPet_10() 
     {
         String petName = "Rex";
+
+        // Make sure the default moxture var is different (or this test tests nothing ^^):
+        String moxtureLocalpetName = mx.vars("create_pet_for_owner")
+                                       .read("in_petName").asString();
+        assertNotEquals(petName, moxtureLocalpetName);
+
         mx.caller()
-          .with("in_petName", petName)
-          .call("create_owner_and_pet")
+          .with("in_petName", petName)  // Overrides the default var provided in the moxture
+          .call("group_create_owner_and_pet")
           .assertVar("petName", name -> name.isEqualTo(petName));
     }
 
+
     @Test
-    @DisplayName("Read a moxture-local defined var")
-    void checkMoxtureScopedVars() 
+    @DisplayName("Group moxture with moxture-local var, no call override.")
+    void checkCreateOwnerAndPet_11() 
     {
-        String in_petName = mx.vars("create_pet_for_owner")
-                              .read("in_petName").asString();
-        log.debug("in_petName = {}", in_petName);
-        assertEquals("Snowy", in_petName);
-    }
-
-
-
-//    @Test
-    @DisplayName("Using a group moxture - Create Owner, Pet, verify association")
-    void checkCreateOwnerAndPet_Group_default_value() 
-    {
-        String in_petName = mx.vars("create_pet_for_owner").read("in_petName").asString();
-        log.debug("in_petName = {}", in_petName);
+        String moxtureLocalPetName = mx.vars("create_pet_for_owner")
+                                       .read("in_petName").asString();
 
         mx.caller()
-          .call("create_owner_and_pet")
-          .assertVar("petName", name -> name.isEqualTo(in_petName));
+          .call("group_create_owner_and_pet")
+          .assertVar("petName", name -> name.isEqualTo(moxtureLocalPetName));
     }
+
+
+    @Test
+    @DisplayName("Group moxture with group-local var, and call override.")
+    void checkCreateOwnerAndPet_12() 
+    {
+        String petName = "Rex";
+
+        // Make sure the default moxture var is different (or this test tests nothing ^^):
+        String groupLocalpetName = mx.vars("group_create_owner_and_pet_with_local_override")
+                                       .read("in_petName").asString();
+        assertNotEquals(petName, groupLocalpetName);
+
+        mx.caller()
+          .with("in_petName", petName)  // Overrides the default var provided in the moxture
+          .call("group_create_owner_and_pet_with_local_override")
+          .assertVar("petName", name -> name.isEqualTo(petName));
+    }
+
+
+    @Test
+    @DisplayName("Group moxture with group-local var, no call override.")
+    void checkCreateOwnerAndPet_13() 
+    {
+        String groupLocalpetName    = mx.vars("group_create_owner_and_pet_with_local_override")
+                                        .read("in_petName").asString();
+        String moxtureLocalPetName = mx.vars("create_pet_for_owner")
+                                       .read("in_petName").asString();
+
+        // Make sure the 2 are different (or this test tests nothing ^^):
+        assertNotEquals(groupLocalpetName, moxtureLocalPetName);
+
+        mx.caller()
+          .call("group_create_owner_and_pet_with_local_override")
+          .assertVar("petName", name -> name.isEqualTo(groupLocalpetName));
+    }
+
 
 }

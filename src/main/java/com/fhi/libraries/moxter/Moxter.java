@@ -56,6 +56,8 @@ import com.jayway.jsonpath.DocumentContext;
 import com.jayway.jsonpath.JsonPath;
 import com.jayway.jsonpath.Option;
 
+import lombok.Getter;
+import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -135,12 +137,11 @@ public final class Moxter
     private final Map<String,Object> vars = new LinkedHashMap<>();
 
     private final Runtime.HttpExecutor executor;
-    private final Engine.GroupRunner groups;
     private final String moxturesBaseDir;
 
     // For hierarchical lookup
     private final IO.ClasspathMoxtureRepository repo;
-    private final Engine.MoxtureConfig cfg;
+    private final IO.MoxtureConfig cfg;
     private final ObjectMapper yamlMapper;
     // Keep JSON mapper for HTTP
     private final ObjectMapper jsonMapper;
@@ -152,7 +153,7 @@ public final class Moxter
     // ===== Unlimited-depth basedOn materialization cache =====
 
     /** Unlimited-depth, hierarchy-aware cache. */
-    private final Map<MatKey, Model.Moxture> materializedCache = new LinkedHashMap<>();
+    private final Map<MaterializedKey, Model.Moxture> materializedCache = new LinkedHashMap<>();
 
 
     /**
@@ -208,206 +209,6 @@ public final class Moxter
         return new MoxterCaller(this);
     }
 
-    /**
-     * Execute a moxture or a group by name — hierarchical lookup (closest → parents).
-     *
-     * If the name resolves to a group (moxture row with 'moxtures:'), executes the whole group
-     * (strict) and returns {@code null}. Otherwise executes a single HTTP moxture (strict)
-     * and returns the response envelope.
-     *
-     * Lax mode is off: call fails if the return status is not as expected.
-     *
-     * @deprecated Use the 'Fluent API' instead i.e. {@link MoxterCaller} which provides a 
-     *             cleaner way to configure execution flags.
-     */
-    @Deprecated(since = "1.0.0")
-    public Model.ResponseEnvelope callMoxture(String name)
-    {   return callMoxture(name, false, false);
-    }
-
-    /**
-     * Convenience for a lax call.
-     * 
-     * @deprecated Use the 'Fluent API' instead i.e. {@link MoxterCaller} which provides a 
-     *             cleaner way to configure execution flags.
-     */
-    @Deprecated(since = "1.0.0")    @SuppressWarnings("java:S1133")
-    public Model.ResponseEnvelope callMoxtureLax(String name)
-    {   return callMoxture(name, true, false);
-    }
-
-    /**
-     * Conveniance for a call without overrides.
-     * 
-     * @deprecated Use the 'Fluent API' instead i.e. {@link MoxterCaller} which provides a 
-     *             cleaner way to configure execution flags.
-     */
-    @Deprecated(since = "1.0.0")    @SuppressWarnings("java:S1133")
-    public Model.ResponseEnvelope callMoxture(String name, boolean lax, boolean jsonPathLax) 
-    {   // Calls the worker with an empty map for Java overrides
-        return callMoxture(name, lax, jsonPathLax, Collections.emptyMap());
-    }
-
-    /**
-     * Conveniance for a call with overrides.
-     * 
-     * @deprecated Use the 'Fluent API' instead i.e. {@link MoxterCaller} which provides a 
-     *             cleaner way to configure execution flags.
-     */
-    @Deprecated(since = "1.0.0")    @SuppressWarnings("java:S1133")
-    public Model.ResponseEnvelope callMoxture(String name, Map<String, Object> callScopedOverrides) {
-        // Calls the worker with lax=false and our override map
-        return callMoxture(name, false, false, callScopedOverrides);
-    }
-
-    /**
-     * Base call method accomodating all features.
-     * 
-     * <p>Allows for a set of per-call variable overrides.
-     * <p>The call-scoped javaOverrides map is applied only for the duration of this call:
-     * <ul>
-     *   <li><b>Reads:</b> when templating, header/query resolution, or payload
-     *       substitution looks up a variable, the engine will check the call-scoped
-     *       overrides first. If the key is not present there, it falls back to the
-     *       engine’s global variables.</li>
-     *   <li><b>Writes:</b> when a moxture specifies a "save:" block, the
-     *       extracted values are always written into the engine’s global variables,
-     *       never into the call-scoped overrides. This ensures saved IDs or tokens
-     *       are available to subsequent moxtures and test code.</li>
-     * </ul>
-     *
-     * <p>The overrides are ephemeral: once the call returns, they are discarded.
-     * Global variables are never modified unless the moxture itself performs a save
-     * operation or the test code calls {@link #varsPut(String, Object)} directly.
-     *
-     * <p>Examples:
-     * <pre>{@code
-     * // Global default
-     * fx.varsPut("buyer", "Alice");
-     *
-     * // Call with temporary override (buyer = Bob)
-     * Map<String,Object> scoped = Map.of("buyer", "Bob", "region", 3);
-     * fx.callMoxture("create_order", scoped);
-     *
-     * // After the call:
-     * //   - "buyer" in global vars is still "Alice"
-     * //   - "region" is not present in global vars
-     * //   - any saved vars (e.g., "orderId") are in global vars
-     * }</pre>
-     *
-     *
-     * @param name the moxture (or group) name
-     * @param lax  if true, expected-status mismatches are logged (warning) and won't fail the test.
-     *             For group moxtures, each child is executed in lax mode.
-     * @param jsonPathLax if true, the library that reads JSON paths in the "save" in the yaml moxtures
-     *             will have a lax (aka lenient) configuration.
-     *             Meaning: If parent is null, asking for $.parent.child.value simply returns null.
-     *             If you make a typo like $.parnet, it returns null (instead of crashing).
-     * @param callScopedOverrides per-call variable overrides (not mutated; keys shadow globals)
-     * @return {@code null} for group moxtures; for single moxtures, the response envelope.
-     */
-    public Model.ResponseEnvelope callMoxture(String name, boolean lax, boolean jsonPathLax, Map<String, Object> callScopedOverrides) {
-        Objects.requireNonNull(name, "name");
-        Resolved r = resolveByName(name);
-
-        // 1. Prepare the Local Scoped Map = YAML defaults + Java Overrides (win)
-        Map<String, Object> localAndCallScopeVars = new LinkedHashMap<>();
-        if (r.moxt.getVars() != null) {
-            localAndCallScopeVars.putAll(r.moxt.getVars()); // Moxture-level defaults
-        }
-        // overwrite with call-scoped vars: (without OverwriteStrict check in this case)
-        // => Java overrides win
-        if (callScopedOverrides != null) {
-            localAndCallScopeVars.putAll(callScopedOverrides);
-        }
-
-        // 2. Create the Layered View (Scoped -> Global)
-        Map<String, Object> globalScopeVars_ = this.vars;   // NOSONAR
-        Map<String, Object> allScopesVars = new Runtime.CallScopedVars(localAndCallScopeVars, 
-                                                                       globalScopeVars_, 
-                                                                       this.vars()::put);  // the returned map will write (put) inside the global scope
-
-        // Group moxture logic:
-        if (isGroupMoxture(r.moxt)) {
-            validateMoxture(r.moxt);
-            final String label = "group '" + name + "'" + (lax ? " (lax)" : "");
-            runGroupMoxture(label, r.moxt.getMoxtures(), r.baseDir, lax, jsonPathLax, allScopesVars);
-            return null;
-        }
-
-        // Single moxture logic:
-        validateMoxture(r.moxt);
-        try {
-            // Pass mergedVars (which now contains YAML + Java + Globals) to executor
-            return executor.execute(r.moxt, r.baseDir, allScopesVars, lax, jsonPathLax);
-        } 
-        catch (Throwable t) {
-            if (lax) {
-                log.warn("[Moxter] (lax) single moxture '{}' failed — skipping. Cause: {}", name, t.toString());
-                return null;
-            }
-            if (t instanceof RuntimeException) throw (RuntimeException) t;
-            throw new RuntimeException("Error executing moxture '" + name + "'", t);
-        }
-    }
-
-    /**
-     * Convenience: executes a single moxture and return `$.id` as long.
-     * 
-     * @deprecated Use the 'Fluent API' instead i.e. {@link MoxterCaller} which provides a 
-     *             cleaner way to configure execution flags.
-     */
-    @Deprecated(since = "1.0.0")    @SuppressWarnings("java:S1133")
-    public long callMoxtureReturnId(String callName)
-    {
-        Object v;
-        try { v = callMoxtureReturn(callName, "$.id"); }
-        catch (Exception e) { throw new RuntimeException("Failed to extract '$.id' for moxture '" + callName + "'", e); }
-        if (v instanceof Number) return ((Number) v).longValue();
-        if (v instanceof String) {
-            try { return Long.parseLong((String) v); }
-            catch (NumberFormatException ex) { throw new IllegalStateException("Value at '$.id' is not a number: " + v, ex); }
-        }
-        throw new IllegalStateException("Value at '$.id' is not numeric: " + v);
-    }
-
-    /**
-     * Convenience: executes a single moxture and extract a value using a JsonPath.
-     *
-     * Side effects: none (pure function).
-     *
-     * @return extracted value (Number, String, Boolean, List, Map, …)
-     * @deprecated Use the 'Fluent API' instead i.e. {@link MoxterCaller} which provides a 
-     *             cleaner way to configure execution flags.
-     */
-    @Deprecated(since = "1.0.0")    @SuppressWarnings("java:S1133")
-    public Object callMoxtureReturn(String callName, String jsonPath) throws Exception
-    {
-        Objects.requireNonNull(callName, "callName");
-        Objects.requireNonNull(jsonPath, "jsonPath");
-
-        // Guard against being called on a group
-        Resolved r = resolveByName(callName);
-        if (isGroupMoxture(r.moxt)) {
-            throw new IllegalArgumentException("callMoxtureReturn* cannot be used on group moxture '" + callName + "'");
-        }
-
-        Model.ResponseEnvelope env = executor.execute(r.moxt, r.baseDir, vars, false, false);
-        String raw = env.raw();
-        if (raw == null || raw.isBlank()) {
-            throw new IllegalStateException("Moxture '" + callName + "' returned an empty body; cannot read: " + jsonPath);
-        }
-
-        /* Do NOT store return: */
-        Object value = JsonPath.parse(raw).read(jsonPath);
-        if (log.isDebugEnabled()) {
-             log.debug("Extracted {} from '{}': {}", jsonPath, callName, Utils.Logging.previewValue(value));
-        }
-        // No variable stashing here (pure function). Callers can stash explicitly if desired:
-        // fx.varsPut("_last", value); fx.varsPut(callName + "." + inferredKey, value); etc.
-        return value;
-    }
-
 
     // =====================================================================
     // Public API: variables
@@ -443,8 +244,6 @@ public final class Moxter
         return globalScopeVars;
     }
 
-
-
     /**
      * Access a moxture's locally-scope variables map.
      * 
@@ -462,7 +261,7 @@ public final class Moxter
      */
     @Deprecated(since = "1.0.0")    @SuppressWarnings("java:S1133")
     public Object moxVar(String moxtureName, String varName) 
-    {   Resolved r = resolveByName(moxtureName);
+    {   MaterializedMoxture r = resolveByName(moxtureName);
         return (r.moxt.getVars() != null) ? r.moxt.getVars().get(varName) : null;
     }
 
@@ -475,34 +274,7 @@ public final class Moxter
     @Deprecated(since = "1.0.0")    @SuppressWarnings("java:S1133")
     public void varsClear() { vars.clear(); }
 
-    /**
-     * Put a variable in Moxter's global-scope variables map.
-     *
-     * - Strict mode: throws if the key already exists.
-     * - Non-strict: overwrites and logs a WARN if there was a previous value.
-     *
-     * @return the previous value associated with key, or {@code null} if there was none
-     * @throws IllegalStateException if strict mode is enabled and the key already exists
-     * @deprecated Use the 'Fluent API' instead i.e. {@link MoxterVars} which provides 
-     *             a cleaner way to interact with variables.
-     */
-    @Deprecated(since = "1.0.0")    @SuppressWarnings("java:S1133")
-    public Object varsPutOLD(String key, Object value)
-    {
-        varsRequireValidKey(key);
 
-        if (varsOverwriteStrict && vars.containsKey(key)) {
-            throw new IllegalStateException("Var '" + key + "' already exists and strict mode is enabled");
-        }
-
-        Object prev = vars.put(key, value);
-
-        if (!varsOverwriteStrict && prev != null) {
-            log.warn("Overwriting var '{}' (old={}, new={}). This is permitted because varsOverwriteStrict is set to false.",
-                    key, prev, value);
-        }
-        return prev;
-    }
 
     /**
      * Put a variable in Moxter's global-scope variables map, only if absent (never overwrites).
@@ -791,8 +563,6 @@ public final class Moxter
     //   Builder / construction
     // =====================================================================
 
-
-
     private Moxter(Class<?> testClass,
                           MockMvc mockMvc,
                           java.util.function.Supplier<org.springframework.security.core.Authentication> authSupplier)
@@ -802,7 +572,7 @@ public final class Moxter
         this.builderAuthSupplier = authSupplier;
 
         // Build minimal config internally
-        Engine.MoxtureConfig cfg = new Engine.MoxtureConfig(
+        IO.MoxtureConfig cfg = new IO.MoxtureConfig(
                 DEFAULT_MOXTURES_ROOT_PATH,
                 DEFAULT_USE_PER_TESTCLASS_DIRECTORY,
                 DEFAULT_MOXTURES_BASENAME
@@ -863,7 +633,6 @@ public final class Moxter
 
         // Use JSON mapper for request/response bodies
         this.executor = new Runtime.HttpExecutor(mockMvc, jsonMapper, templating, payloadResolver, matcher, builderAuthSupplier);
-        this.groups = new Engine.GroupRunner(item -> executor.execute(item.call, item.baseDir, vars, false, false));
     }
 
 
@@ -874,14 +643,14 @@ public final class Moxter
     // =====================================================================
 
     /** Resolve a name to a concrete, fully materialized moxture (closest → parents), with its baseDir. */
-    private Resolved resolveByName(String name)
+    private MaterializedMoxture resolveByName(String name)
     {
         // 1) Try closest file first
         Model.Moxture local = byName.get(name);
         if (local != null) {
             // Materialize deeply (same-file and cross-file, unlimited depth) from the local file's baseDir
             Model.Moxture mat = materializeDeep(local, moxturesBaseDir, new ArrayDeque<>(), new HashSet<>());
-            return new Resolved(mat, moxturesBaseDir);
+            return new MaterializedMoxture(mat, moxturesBaseDir);
         }
 
         // 2) Hierarchical lookup upwards (closest → ... → root) starting from the test class location
@@ -894,7 +663,7 @@ public final class Moxter
 
         // Ensure deep materialization from the found scope
         Model.Moxture mat = materializeDeep(found.call, found.baseDir, new ArrayDeque<>(), new HashSet<>());
-        return new Resolved(mat, found.baseDir);
+        return new MaterializedMoxture(mat, found.baseDir);
     }
 
 
@@ -910,14 +679,14 @@ public final class Moxter
      */
     private Model.Moxture materializeDeep(Model.Moxture node,
                                               String nodeBaseDir,
-                                              Deque<MatKey> stack,
-                                              Set<MatKey> visiting)
+                                              Deque<MaterializedKey> stack,
+                                              Set<MaterializedKey> visiting)
     {
         if (node == null) return null;
 
         final String parentName = firstNonBlank(node.getBasedOn(), node.getBaseOn());
         final String nodeName = (node.getName() == null || node.getName().isBlank()) ? "<unnamed>" : node.getName();
-        final MatKey key = new MatKey(nodeBaseDir, nodeName);
+        final MaterializedKey key = new MaterializedKey(nodeBaseDir, nodeName);
 
         // Cache
         Model.Moxture cached = materializedCache.get(key);
@@ -933,7 +702,7 @@ public final class Moxter
         // Cycle guard
         if (!visiting.add(key)) {
             StringBuilder sb = new StringBuilder("Cycle in basedOn: ");
-            for (MatKey k : stack) sb.append(k).append(" -> ");
+            for (MaterializedKey k : stack) sb.append(k).append(" -> ");
             sb.append(key);
             throw new IllegalStateException(sb.toString());
         }
@@ -1123,54 +892,6 @@ public final class Moxter
     }
 
 
-    private void runGroupMoxture(String label, List<String> list, String baseDir, boolean lax, boolean jsonPathLax) {
-        runGroupMoxture(label, list, baseDir, lax, jsonPathLax, this.vars);
-    }
-
-
-    /**
-     * Run a group moxture using the provided vars map (e.g., a call-scoped overlay).
-     */
-    private void runGroupMoxture(String label, List<String> list, String baseDir, boolean lax, boolean jsonPathLax, Map<String,Object> varsForCall) {
-        if (list == null || list.isEmpty()) {
-            log.info("[Moxter] {} is empty; nothing to run.", label);
-            return;
-        }
-
-        // Resolve in declared order (using resolveByName to ensure deep materialization)
-        List<Engine.PlanItem> plan = new ArrayList<>(list.size());
-        for (String fname : list) {
-            try {
-                Resolved r = resolveByName(fname);
-                plan.add(new Engine.PlanItem(r.moxt, r.baseDir));
-            } catch (Throwable t) {
-                if (lax) {
-                    String attempted = repo.candidateAncestorPaths(testClass, cfg).toString();
-                    log.warn("[Moxter] (lax) {} → unknown or failed child moxture '{}'; skipping. Searched under: {}. Cause: {}",
-                            label, fname, attempted, t.toString());
-                    continue;
-                }
-                throw t instanceof RuntimeException ? (RuntimeException) t
-                        : new RuntimeException("Error resolving moxture '" + fname + "' in " + label, t);
-            }
-        }
-
-        // Execute each item in order with the provided vars map
-        for (Engine.PlanItem it : plan) {
-            try {
-                executor.execute(it.call, it.baseDir, varsForCall, lax, jsonPathLax);
-            } catch (Throwable t) {
-                if (lax) {
-                    log.warn("[Moxter] (lax) {} → child '{}' failed — skipping. Cause: {}", label, it.name(), t.toString());
-                    // continue with next child
-                } else {
-                    if (t instanceof RuntimeException) throw (RuntimeException) t;
-                    throw new RuntimeException("Error executing moxture '" + it.name() + "' in " + label, t);
-                }
-            }
-        }
-    }
-
 
     // =====================================================================
     // Initial vars loader
@@ -1184,7 +905,7 @@ public final class Moxter
      * (no merging). If no file defines {@code vars}, returns an empty map.
      */
     @SuppressWarnings("unchecked")
-    private Map<String,Object> loadHierarchicalVars(Class<?> testClass, Engine.MoxtureConfig cfg, ObjectMapper yamlMapper) {
+    private Map<String,Object> loadHierarchicalVars(Class<?> testClass, IO.MoxtureConfig cfg, ObjectMapper yamlMapper) {
         List<String> candidates = repo.candidateAncestorPaths(testClass, cfg);
         Map<String,Object> last = null;
 
@@ -1244,6 +965,7 @@ public final class Moxter
      */
     public static class MoxterCaller 
     {
+        // Reference to the root encompassing engine
         private final Moxter moxter;
         private boolean lax = false;
         private boolean jsonPathLax = false;
@@ -1252,6 +974,8 @@ public final class Moxter
 
         /**
          * Use Moxter.caller() instead
+         * 
+         * @param moxter      The encompassing Engine.
          */
         protected MoxterCaller(Moxter moxter) {
             this.moxter = moxter;
@@ -1331,19 +1055,137 @@ public final class Moxter
          * <p>This method performs the template merging, executes the HTTP request, 
          * saves variables defined in the 'save' block, and optionally prints the output.
          * 
-         * @param name The name of the Moxture (YAML file) to execute.
+         * @param moxtureName The name of the Moxture (YAML file) to execute.
          * @return A {@link MoxtureResult} containing the response and providing assertion methods.
          * @throws RuntimeException if execution fails and {@code lax} mode is false.
          */
-        public MoxtureResult call(String name) {
-            Model.ResponseEnvelope env = moxter.callMoxture(name, lax, jsonPathLax, overrides);
-            
+        // TODO update javadoc
+        /**
+         * Base call method accomodating all features.
+         * 
+         * <p>Allows for a set of per-call variable overrides.
+         * <p>The call-scoped javaOverrides map is applied only for the duration of this call:
+         * <ul>
+         *   <li><b>Reads:</b> when templating, header/query resolution, or payload
+         *       substitution looks up a variable, the engine will check the call-scoped
+         *       overrides first. If the key is not present there, it falls back to the
+         *       engine’s global variables.</li>
+         *   <li><b>Writes:</b> when a moxture specifies a "save:" block, the
+         *       extracted values are always written into the engine’s global variables,
+         *       never into the call-scoped overrides. This ensures saved IDs or tokens
+         *       are available to subsequent moxtures and test code.</li>
+         * </ul>
+         *
+         * <p>The overrides are ephemeral: once the call returns, they are discarded.
+         * Global variables are never modified unless the moxture itself performs a save
+         * operation or the test code calls {@link #varsPut(String, Object)} directly.
+         *
+         * <p>Examples:
+         * <pre>{@code
+         * // Global default
+         * fx.varsPut("buyer", "Alice");
+         *
+         * // Call with temporary override (buyer = Bob)
+         * Map<String,Object> scoped = Map.of("buyer", "Bob", "region", 3);
+         * fx.callMoxture("create_order", scoped);
+         *
+         * // After the call:
+         * //   - "buyer" in global vars is still "Alice"
+         * //   - "region" is not present in global vars
+         * //   - any saved vars (e.g., "orderId") are in global vars
+         * }</pre>
+         *
+         *
+         * @param moxtureName the moxture (or group) name
+         * @param lax  if true, expected-status mismatches are logged (warning) and won't fail the test.
+         *             For group moxtures, each child is executed in lax mode.
+         * @param jsonPathLax if true, the library that reads JSON paths in the "save" in the yaml moxtures
+         *             will have a lax (aka lenient) configuration.
+         *             Meaning: If parent is null, asking for $.parent.child.value simply returns null.
+         *             If you make a typo like $.parnet, it returns null (instead of crashing).
+         * @param overrides per-call variable overrides (not mutated; keys shadow globals)
+         * @return {@code null} for group moxtures; for single moxtures, the response envelope.
+         */
+        public MoxtureResult call(String moxtureName) 
+        {
+            Model.ResponseEnvelope env = callInternal(moxtureName, overrides);
+
             if (printReturn && env != null && env.body() != null) {
-                System.out.println("[Moxter] Result for " + name + ":\n" + env.body().toPrettyString());
+                System.out.println("[Moxter] Result for " + moxtureName + ":\n" + env.body().toPrettyString());
             }
-            
-            return new MoxtureResult(env, moxter, name);
+            return new MoxtureResult(env, moxter, moxtureName);
         }
+
+
+        /**
+         * TODO 
+         * @param moxtureName
+         * @param overrides
+         * @return
+         */
+        private Model.ResponseEnvelope callInternal(String moxtureName, Map<String, Object> overrides) 
+        {
+            Objects.requireNonNull(moxtureName, "name");
+            MaterializedMoxture r = this.moxter.resolveByName(moxtureName);
+
+            // 1. Build this moxture's local overrides.
+            // As you requested: The moxture's own YAML vars yield to the passed-in overrides.
+            // (If this is a child in a group, callScopedOverrides contains the group's vars)
+            Map<String, Object> localOverrides = new LinkedHashMap<>();
+            
+            // Local vars provided by the moxture (or the group of moxtures):
+            if (r.moxt.getVars() != null) {
+                localOverrides.putAll(r.moxt.getVars());
+            }
+            // Add vars provided by the call or by the previous step (in the case of a group moxture)
+            // These take precedence over local vars.
+            if (overrides != null) {
+                localOverrides.putAll(overrides);
+            }
+
+            // 2. Call
+            validateMoxture(r.moxt);
+
+            // 2.1. If group Moxture
+            if (isGroupMoxture(r.moxt)) 
+            {   final String label = "group '" + moxtureName + "'" + (lax ? " (lax)" : "");
+                
+                // We pass THIS group's successfully merged localScope down to its children.
+                // To the children, these act as their "callScopedOverrides".
+                for (String childMoxtureName : r.moxt.getMoxtures()) 
+                {   try 
+                    {   // Recurse
+                        callInternal(childMoxtureName, localOverrides);
+                    } 
+                    catch (Throwable t) 
+                    {   if (lax) {
+                            log.warn("[Moxter] (lax) {} → child '{}' failed — skipping. Cause: {}", label, childMoxtureName, t.toString());
+                        } else {
+                            if (t instanceof RuntimeException) throw (RuntimeException) t;
+                            throw new RuntimeException("Error executing moxture '" + childMoxtureName + "' in " + label, t);
+                        }
+                    }
+                }
+                return null;
+            }
+            // 2.2. Else: single moxture
+            else
+            {   // Create the Layered View (Local -> Global) using the fluent facade for writes
+                Map<String, Object> mergedVars = new Runtime.CallScopedVars(localOverrides, this.moxter.vars, moxter.vars()::put);
+                try 
+                {   return this.moxter.executor.execute(r.moxt, r.baseDir, mergedVars, lax, jsonPathLax);
+                } 
+                catch (Throwable t) 
+                {   if (lax) {
+                        log.warn("[Moxter] (lax) single moxture '{}' failed — skipping. Cause: {}", moxtureName, t.toString());
+                        return null;
+                    }
+                    if (t instanceof RuntimeException) throw (RuntimeException) t;
+                    throw new RuntimeException("Error executing moxture '" + moxtureName + "'", t);
+                }
+            }
+        }
+
     }
 
 
@@ -1409,7 +1251,7 @@ public final class Moxter
 
             // Local Scope
             try {
-                Resolved resolved = moxter.resolveByName(moxtureName);
+                MaterializedMoxture resolved = moxter.resolveByName(moxtureName);
                 Map<String, Object> localVars = resolved.moxt.getVars();
                 return (localVars != null) ? localVars : Collections.emptyMap();
             } catch (Exception e) {
@@ -1688,6 +1530,7 @@ public final class Moxter
     {
         private final Model.ResponseEnvelope envelope;
         private final String moxtureName;
+        // Reference to the encompassing engine
         private final Moxter moxter;
 
         /**
@@ -1771,9 +1614,9 @@ public final class Moxter
          */
         public long returnId() {
             Object v = returnJPath("$.id");
-            if (v instanceof Number) return ((Number) v).longValue();
-            if (v instanceof String) {
-                try { return Long.parseLong((String) v); }
+            if (v instanceof Number n) return n.longValue();
+            if (v instanceof String s) {
+                try { return Long.parseLong(s); }
                 catch (NumberFormatException ex) { 
                     throw new IllegalStateException("Value at '$.id' for moxture '" + moxtureName + "' is not a number: " + v, ex); 
                 }
@@ -1915,31 +1758,58 @@ public final class Moxter
     // ############################################################################
 
     /** 
-     * Key for memoizing materialized moxtures by scope (baseDir) and name. 
+     * Key for memorizing materialized moxtures by scope (baseDir) and name. 
      */
-    private static final class MatKey {
+    private static final class MaterializedKey 
+    {
         final String baseDir; // classpath dir where the moxture is defined
         final String name;
-        MatKey(String baseDir, String name) { this.baseDir = baseDir; this.name = name; }
-        public boolean equals(Object o){ if(this==o)return true; if(!(o instanceof MatKey))return false;
-            MatKey k=(MatKey)o; return Objects.equals(baseDir,k.baseDir)&&Objects.equals(name,k.name); }
+        MaterializedKey(String baseDir, String name) { this.baseDir = baseDir; this.name = name; }
+        public boolean equals(Object o){ if(this==o)return true; if(!(o instanceof MaterializedKey))return false;
+            MaterializedKey k=(MaterializedKey)o; return Objects.equals(baseDir,k.baseDir)&&Objects.equals(name,k.name); }
         public int hashCode(){ return Objects.hash(baseDir,name); }
         public String toString(){ return baseDir+":"+name; }
     }
-    private static final class Resolved {
-        final Model.Moxture moxt;
-        final String baseDir;
-        Resolved(Model.Moxture moxt, String baseDir) { this.moxt = moxt; this.baseDir = baseDir; }
-    }
-
 
 
     // ############################################################################
 
     /**
-     *  Engine-related helpers. 
+     * An internal container representing a fully prepped, executable moxture.
+     *
+     * <p>This class pairs a completely materialized moxture definition (where all 
+     * {@code basedOn} inheritance and hierarchical merging have been flattened) 
+     * with the physical classpath directory where it was discovered.
+     *
+     * <p>Keeping track of the {@code baseDir} is critical during the execution phase, 
+     * as it acts as the anchor point for resolving relative file imports (e.g., when 
+     * a payload or multipart file is defined as {@code "classpath:request.json"}).
      */
-    static final class Engine
+    private static final class MaterializedMoxture 
+    {
+        /**
+         * The fully materialized moxture definition (with all 'basedOn' inheritance 
+         * deeply merged). 
+         */
+        final Model.Moxture moxt;
+
+        /** 
+         * The classpath directory where this moxture was discovered. 
+         * Used as the anchor point for resolving relative file imports.
+         */
+        final String baseDir;
+
+        MaterializedMoxture(Model.Moxture moxt, String baseDir) 
+        { this.moxt = moxt; this.baseDir = baseDir; }
+    }
+
+
+    // ############################################################################
+
+    /** 
+     * Loading moxtures from classpath. 
+     */
+    static final class IO 
     {
         /** Immutable configuration used for locating moxtures on classpath. */
         static final class MoxtureConfig {
@@ -1961,46 +1831,6 @@ public final class Moxter
             }
         }
 
-        /** Item scheduled for execution: the resolved call + its defining file's baseDir. */
-        static final class PlanItem {
-            final Model.Moxture call;
-            final String baseDir;
-            PlanItem(Model.Moxture call, String baseDir) { this.call = call; this.baseDir = baseDir; }
-            String name() { return call.getName(); }
-        }
-
-        /** Runs a list of moxtures with ordering + human logs (explicit order). */
-        @Slf4j
-        static final class GroupRunner {
-            interface Exec { Model.ResponseEnvelope run(PlanItem item); }
-            private final Exec exec;
-            GroupRunner(Exec exec) { this.exec = exec; }
-
-            void run(String groupLabel, List<PlanItem> list) {
-                if (list.isEmpty()) {
-                    log.info("[Moxter] No moxtures found for group [{}].", groupLabel); return;
-                }
-                log.debug("[Moxter] Executing group [{}, size: {}, names: {}]", groupLabel, list.size(), names(list));
-                for (PlanItem it : list) {
-                    exec.run(it);
-                }
-            }
-
-            private static String names(List<PlanItem> list) {
-                List<String> names = new ArrayList<>(list.size());
-                for (PlanItem it : list) names.add(it.name());
-                return names.toString();
-            }
-        }
-    }
-
-    // ############################################################################
-
-    /** 
-     * Loading moxtures from classpath. 
-     */
-    static final class IO 
-    {
 
         interface MoxtureRepository {
             final class LoadedSuite {
@@ -2008,7 +1838,7 @@ public final class Moxter
                 public final String baseDir; // classpath folder where the moxtures file lives
                 public LoadedSuite(Model.MoxtureFile suite, String baseDir) { this.suite = suite; this.baseDir = baseDir; }
             }
-            LoadedSuite loadFor(Class<?> testClass, Engine.MoxtureConfig cfg);
+            LoadedSuite loadFor(Class<?> testClass, IO.MoxtureConfig cfg);
         }
 
         /**
@@ -2023,7 +1853,7 @@ public final class Moxter
 
             ClasspathMoxtureRepository(ObjectMapper mapper) { this.mapper = mapper; }
 
-            public LoadedSuite loadFor(Class<?> testClass, Engine.MoxtureConfig cfg) {
+            public LoadedSuite loadFor(Class<?> testClass, IO.MoxtureConfig cfg) {
                 final String classpath = buildClosestClasspath(testClass, cfg);
                 final String displayPath = "classpath:/" + classpath;
 
@@ -2056,7 +1886,7 @@ public final class Moxter
             /* ===== Hierarchical lookup (helpers) ===== */
 
             /** Returns candidate ancestor classpaths from closest → root (inclusive). */
-            List<String> candidateAncestorPaths(Class<?> testClass, Engine.MoxtureConfig cfg) {
+            List<String> candidateAncestorPaths(Class<?> testClass, IO.MoxtureConfig cfg) {
                 List<String> out = new ArrayList<>();
                 String pkg = (testClass.getPackageName() == null ? "" : testClass.getPackageName().replace('.', '/'));
 
@@ -2081,7 +1911,7 @@ public final class Moxter
             }
 
             /** Finds the first (closest) occurrence of a moxture by name across ancestor files (starting from test package). */
-            Resolved findFirstByName(Class<?> testClass, Engine.MoxtureConfig cfg, String name, ObjectMapper yamlMapper) {
+            Resolved findFirstByName(Class<?> testClass, IO.MoxtureConfig cfg, String name, ObjectMapper yamlMapper) {
                 List<String> candidates = candidateAncestorPaths(testClass, cfg);
                 ClassLoader tccl = Thread.currentThread().getContextClassLoader();
                 ClassLoader fallback = Moxter.class.getClassLoader();
@@ -2107,7 +1937,7 @@ public final class Moxter
             }
 
             /** Returns candidate ancestor classpaths starting at an arbitrary baseDir (closest → root). */
-            List<String> candidateAncestorPathsFromBaseDir(String baseDir, Engine.MoxtureConfig cfg) {
+            List<String> candidateAncestorPathsFromBaseDir(String baseDir, IO.MoxtureConfig cfg) {
                 List<String> out = new ArrayList<>();
                 String cur = (baseDir == null) ? "" : baseDir;
                 while (cur.endsWith("/")) cur = cur.substring(0, cur.length() - 1);
@@ -2128,7 +1958,7 @@ public final class Moxter
             }
 
             /** Finds the first (closest) occurrence of a moxture by name, starting from an arbitrary baseDir. */
-            Resolved findFirstByNameFromBaseDir(Class<?> testClass, Engine.MoxtureConfig cfg,
+            Resolved findFirstByNameFromBaseDir(Class<?> testClass, IO.MoxtureConfig cfg,
                                                 String startBaseDir, String name, ObjectMapper yamlMapper) {
                 List<String> candidates = candidateAncestorPathsFromBaseDir(startBaseDir, cfg);
                 ClassLoader tccl = Thread.currentThread().getContextClassLoader();
@@ -2172,7 +2002,7 @@ public final class Moxter
                 return (fallback != null ? fallback.getResource(path) : null);
             }
 
-            private static String buildClosestClasspath(Class<?> testClass, Engine.MoxtureConfig cfg) {
+            private static String buildClosestClasspath(Class<?> testClass, IO.MoxtureConfig cfg) {
                 String pkg = (testClass.getPackageName() == null ? "" : testClass.getPackageName().replace('.', '/'));
                 String classDir = cfg.perTestClassDirectory ? ("/" + testClass.getSimpleName()) : "";
                 String base = (pkg.isEmpty() ? cfg.rootPath : (cfg.rootPath + "/" + pkg)) + classDir + "/";
@@ -2807,16 +2637,16 @@ public final class Moxter
 
             private static MockHttpServletRequestBuilder toRequestBuilder(String method, URI uri) {
                 String m = (method == null) ? "GET" : method.toUpperCase(Locale.ROOT);
-                switch (m) {
-                    case "GET":     return org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(uri);
-                    case "POST":    return org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(uri);
-                    case "PUT":     return org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put(uri);
-                    case "PATCH":   return org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch(uri);
-                    case "DELETE":  return org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete(uri);
-                    case "HEAD":    return org.springframework.test.web.servlet.request.MockMvcRequestBuilders.head(uri);
-                    case "OPTIONS": return org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options(uri);
-                    default: throw new IllegalArgumentException("Unsupported HTTP method: " + method);
-                }
+                return switch (m) {
+                    case "GET"     -> org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(uri);
+                    case "POST"    -> org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(uri);
+                    case "PUT"     -> org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put(uri);
+                    case "PATCH"   -> org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch(uri);
+                    case "DELETE"  -> org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete(uri);
+                    case "HEAD"    -> org.springframework.test.web.servlet.request.MockMvcRequestBuilders.head(uri);
+                    case "OPTIONS" -> org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options(uri);
+                    default -> throw new IllegalArgumentException("Unsupported HTTP method: " + method);
+                };
             }
 
             private static String appendQuery(String endpoint, Map<String,String> query) {
@@ -3003,6 +2833,7 @@ public final class Moxter
         /** 
          * One moxture row (HTTP moxture or group moxture when 'moxtures:' present). 
          */
+        @Getter @Setter
         static final class Moxture
         {
             private String name;
@@ -3024,36 +2855,7 @@ public final class Moxter
             // legacy bridge: accept "url" in YAML and map it into "endpoint"
             private String url; // not used directly; setter maps to endpoint if endpoint is missing
 
-            // === Boilerplate ===
 
-            public String getName() { return name; }
-            public String getMethod() { return method; }
-            public String getEndpoint() { return endpoint; }
-            public Map<String, String> getHeaders() { return headers; }
-            public Map<String, String> getQuery() { return query; }
-            public JsonNode getPayload() { return payload; }
-            public JsonNode getBody() { return body; }
-            public Map<String, String> getSave() { return save; }
-            public JsonNode getExpectedStatus() { return expectedStatus; }
-            public String getBasedOn() { return basedOn; }
-            public String getBaseOn() { return baseOn; }
-            public List<String> getMoxtures() { return moxtures; }
-            public List<MultipartDef> getMultipart() { return multipart; }
-            public void setName(String name) { this.name = name; }
-            public void setMethod(String method) { this.method = method; }
-            public void setEndpoint(String endpoint) { this.endpoint = endpoint; }
-            public void setHeaders(Map<String, String> headers) { this.headers = headers; }
-            public void setQuery(Map<String, String> query) { this.query = query; }
-            public void setPayload(JsonNode payload) { this.payload = payload; }
-            public void setBody(JsonNode body) { this.payload = body; }
-            public void setSave(Map<String, String> save) { this.save = save; }
-            public void setExpectedStatus(JsonNode expectedStatus) { this.expectedStatus = expectedStatus; }
-            public void setBasedOn(String basedOn) { this.basedOn = basedOn; }
-            public void setBaseOn(String baseOn) { this.baseOn = baseOn; }
-            public void setMoxtures(List<String> moxtures) { this.moxtures = moxtures; }
-            public void setMultipart(List<MultipartDef> multipart) { this.multipart = multipart; }
-            public Map<String, Object> getVars() { return vars; }
-            public void setVars(Map<String, Object> vars) { this.vars = vars; }
             /** Legacy: when YAML provides 'url', treat it as 'endpoint' if endpoint is unset. */
             public void setUrl(String url) {
                 this.url = url;

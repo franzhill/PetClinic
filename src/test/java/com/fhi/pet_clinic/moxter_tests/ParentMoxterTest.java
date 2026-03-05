@@ -75,20 +75,20 @@ public abstract class ParentMoxterTest
                         .build();
 
       // Run "BeforeAll" fixtures group defined in the closest fixtures.yaml (if any).
-      mx.callMoxture("BeforeAll");
+      mx.caller().call("BeforeAll");
    }
 
 
    @AfterAll
    void teardownBase() 
    {  // Run "AfterAll" fixtures group defined in the closest fixtures.yaml (if any).
-      mx.callMoxture("AfterAll");
+      mx.caller().call("AfterAll");
    }
 
 
    @BeforeEach
    void perTestBase() 
-   {  mx.callMoxture("BeforeEach");
+   {  mx.caller().call("BeforeEach");
    }
 
 
@@ -105,7 +105,7 @@ public abstract class ParentMoxterTest
 
    @AfterEach
    void afterTestBase() 
-   {  mx.callMoxture("AfterEach");
+   {  mx.caller().call("AfterEach");
    }
 
 

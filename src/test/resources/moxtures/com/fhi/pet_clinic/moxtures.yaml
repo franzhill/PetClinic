@@ -89,7 +89,15 @@ moxtures:
       petOwnerId: "$.owner.id"
 
 
-  - name: create_owner_and_pet
+  - name: group_create_owner_and_pet
+    moxtures: 
+      - create_owner
+      - create_pet_for_owner
+
+
+  - name: group_create_owner_and_pet_with_local_override
+    vars:
+      in_petName: "Beethoven"   # overrides 'Snowy'
     moxtures: 
       - create_owner
       - create_pet_for_owner
