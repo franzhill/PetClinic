@@ -42,6 +42,8 @@ import org.springframework.test.web.servlet.request.MockMultipartHttpServletRequ
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -50,13 +52,14 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
-import com.fhi.moxter.Moxter.Model.MatchDef;
+import com.fhi.moxter.Moxter.Model.ExpectBodyMatchDef;
 import com.jayway.jsonpath.Configuration;
 import com.jayway.jsonpath.DocumentContext;
 import com.jayway.jsonpath.JsonPath;
 import com.jayway.jsonpath.Option;
 
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 
@@ -566,7 +569,6 @@ public final class Moxter
             merged.setBody(payload);
 
             // Clear inheritance markers on the final node
-            merged.setBasedOn(null);
             merged.setBasedOn(null);
 
             validateMoxture(merged);
@@ -2408,14 +2410,14 @@ public final class Moxter
                         }
                     }
 
-                    // 6.1) Expected Body Matching (The Assertion Trinity)
+                    // 6.1) Process expect.body.match
                     if (spec.getExpect() != null && spec.getExpect().getBody() != null) {
-                        Model.BodyAssertDef bodyDef = spec.getExpect().getBody();
+                        Model.ExpectBodyDef bodyDef = spec.getExpect().getBody();
                         boolean failOnError = spec.getExpect().isFailOnError();
 
                         // --- OPTION B: Tree Matching (match) ---
                         if (bodyDef.getMatch() != null) {
-                            Model.MatchDef matchDef = bodyDef.getMatch();
+                            Model.ExpectBodyMatchDef matchDef = bodyDef.getMatch();
                             log.trace("[Moxter] Evaluating expect.body.match");
                             
                             try {
@@ -2471,6 +2473,61 @@ public final class Moxter
                         }
                     }
 
+
+                    // 6.2) Process expect.body.assert
+                    if (   spec.getExpect() != null 
+                        && spec.getExpect().getBody() != null
+                        && spec.getExpect().getBody().getAssertDef() !=null
+                        && !spec.getExpect().getBody().getAssertDef().isEmpty()) 
+                    {
+                        log.trace("[Moxter] Evaluating expect.body.assert");
+                        
+                        // Parse the actual response once for all path queries
+                        DocumentContext actCtx = com.jayway.jsonpath.JsonPath.using(jsonPathConfig).parse(raw);
+                        
+                        spec.getExpect().getBody().getAssertDef().getPaths().forEach((path, rawExpectedNode) -> {
+                            try {
+                                // 1. Interpolate variables in the expected value from YAML
+                                com.fasterxml.jackson.databind.JsonNode expectedNode = payloads.resolve(rawExpectedNode, baseDir, vars, tpl);
+                                
+                                // 2. Extract actual value from the response using JsonPath
+                                Object actualValue = actCtx.read(path);
+                                
+                                // 3. Type-aware AssertJ Comparisons
+                                if (expectedNode.isNull()) {
+                                    org.assertj.core.api.Assertions.assertThat(actualValue)
+                                            .as("Path '%s'", path).isNull();
+                                } 
+                                else if (expectedNode.isNumber()) {
+                                    org.assertj.core.api.Assertions.assertThat(((Number) actualValue).doubleValue())
+                                            .as("Path '%s'", path).isEqualTo(expectedNode.asDouble());
+                                } 
+                                else if (expectedNode.isBoolean()) {
+                                    org.assertj.core.api.Assertions.assertThat(actualValue)
+                                            .as("Path '%s'", path).isEqualTo(expectedNode.asBoolean());
+                                } 
+                                else if (expectedNode.isContainerNode()) {
+                                    // If they are asserting an entire sub-object or array
+                                    String expectedJson = jsonMapper.writeValueAsString(expectedNode);
+                                    String actualJson = jsonMapper.writeValueAsString(actualValue);
+                                    org.skyscreamer.jsonassert.JSONAssert.assertEquals(expectedJson, actualJson, true);
+                                } 
+                                else {
+                                    // Fallback for Strings, Enums, Dates, etc.
+                                    org.assertj.core.api.Assertions.assertThat(String.valueOf(actualValue))
+                                            .as("Path '%s'", path).isEqualTo(expectedNode.asText());
+                                }
+                            } catch (com.jayway.jsonpath.PathNotFoundException e) {
+                                throw new AssertionError("Surgical assert failed: Path '" + path + "' was not found in the response.");
+                            } catch (AssertionError e) {
+                                // Let AssertJ errors bubble up cleanly
+                                throw e; 
+                            } catch (Exception e) {
+                                throw new RuntimeException("Failed to evaluate assert for path: " + path, e);
+                            }
+                        });
+                        log.debug("[Moxter] All surgical assertions passed.");
+                    }
 
                     // 7) Finish line + duration
                     final long tookMs = (System.nanoTime() - t0) / 1_000_000L;
@@ -2813,8 +2870,6 @@ public final class Moxter
             private JsonNode body;           // Replaces 'payload'
                                              // YAML object/array OR text ("classpath:..." or raw JSON string)
             private Map<String,String> save; // varName -> JSONPath
-            private JsonNode expectedStatus; // int | "2xx"/"3xx"/"4xx"/"5xx" | "201" | [ ... any of those ... ]
-            // basedOn (now unlimited depth; resolved on demand)
 
             @JsonAlias({"extends"})
             private String basedOn;
@@ -2831,25 +2886,45 @@ public final class Moxter
         public static class ExpectDef 
         {
             private boolean failOnError = true; // Default
-            private JsonNode status; 
-            private BodyAssertDef body;
+            private JsonNode status;            // int | "2xx"/"3xx"/"4xx"/"5xx" | "201" | [ ... any of those ... ]
+            private ExpectBodyDef body;
         }
 
         @Getter @Setter
-        public static class BodyAssertDef 
+        public static class ExpectBodyDef 
         {
-            private MatchDef match;
+            private ExpectBodyMatchDef match;
+            @JsonProperty("assert")  // assert is reserved keyword => can't use it verbatim as a Java attribute
+            private ExpectBodyAssertDef assertDef;  
             // TODO later
-            //private AssertDef assert;
             //private AssertSchema schema;
         }
 
         @Getter @Setter
-        public static class MatchDef 
+        public static class ExpectBodyMatchDef 
         {
             private String mode; // "full" or "partial"
             private List<String> ignorePaths;
             private JsonNode content;
+        }
+
+        @Getter @Setter
+        @NoArgsConstructor
+        public static class ExpectBodyAssertDef 
+        {
+            // This map holds all the "$.path": "value" pairs
+            private Map<String, JsonNode> paths = new LinkedHashMap<>();
+
+            // Jackson will automatically assume any unrecognized property 
+            // under the 'assert' block is a "$.path" to assert, and store it in here:
+            @JsonAnySetter
+            public void addAssertPath(String path, JsonNode expectedValue) {
+                this.paths.put(path, expectedValue);
+            }
+            
+            public boolean isEmpty() {
+                return paths.isEmpty();
+            }
         }
     }
 

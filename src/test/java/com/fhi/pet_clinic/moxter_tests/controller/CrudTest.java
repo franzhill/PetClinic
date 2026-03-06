@@ -163,12 +163,27 @@ class CrudTest extends ParentMoxterTest
 
 
     @Test
-    @DisplayName("Moxture with basedOn and expect.")
-    void test_7() 
+    @DisplayName("Moxture with basedOn and expect.body.match")
+    //@SuppressWarnings("")
+    void test_7()
+    {   subTest_1("create_pet_for_owner_with_expect_body_match");
+    }
+
+
+    @Test
+    @DisplayName("Moxture with basedOn and expect.body.assert")
+    //@SuppressWarnings("")
+    void test_8()
+    {   subTest_1("create_pet_for_owner_with_expect_body_assert");
+    }
+
+
+
+    void subTest_1(String moxtureName) 
     {
         mx.caller().call("create_owner");
         mx.caller()
-          .call("create_pet_for_owner_with_expect_section");
+          .call(moxtureName);
 
         mx.caller()
           // Override moxture defaults:
@@ -176,7 +191,7 @@ class CrudTest extends ParentMoxterTest
           .with("in_sex"    , "MALE" )    // has to be a valid sex
           .with("in_species", "Dog")      // has to be a valid species
           // The 'expect' section verifies the input variables appear in the response:
-          .call("create_pet_for_owner_with_expect_section");
+          .call(moxtureName);
 
         mx.caller()
           // Override moxture defaults:
@@ -184,7 +199,7 @@ class CrudTest extends ParentMoxterTest
           .with("in_sex"    , "FEMALE" )  // has to be a valid sex
           .with("in_species", "Cat")      // has to be a valid species
           // The 'expect' section verifies the input variables appear in the response:
-          .call("create_pet_for_owner_with_expect_section");
+          .call(moxtureName);
     }
 
 

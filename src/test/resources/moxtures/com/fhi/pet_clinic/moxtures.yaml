@@ -96,8 +96,8 @@ moxtures:
       status: 201
 
 
-  - name: create_pet_for_owner_with_expect_section
-    basedOn: create_pet_for_owner
+  - name: create_pet_for_owner_with_expect_body_match
+    extends: create_pet_for_owner     # alias for 'basedOn'
     expect:
       body: 
         match: 
@@ -116,6 +116,23 @@ moxtures:
                 "id": {{ownerId}}
               }
             }
+
+
+  - name: create_pet_for_owner_with_expect_body_assert
+    extends: create_pet_for_owner     # alias for 'basedOn'
+    expect:
+      body: 
+        assert:
+          # String assertions (quotes mandatory here)
+          "$.name": "{{in_name}}"
+          "$.sex": "{{in_sex}}"
+          "$.species.name": "{{in_species}}"
+
+          # Numeric/ID assertions
+          "$.owner.id": "{{ownerId}}"
+          
+          # Checking a specific nested field without needing the full object tree
+          "$.birthDate": "{{in_birthDate}}"
 
 
 
