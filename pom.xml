@@ -51,8 +51,36 @@
     <dependency>
       <groupId>com.h2database</groupId>
       <artifactId>h2</artifactId>
-      <scope>runtime</scope>
+      <scope>runtime</scope>  
     </dependency>
+
+    <!-- About scopes:
+        - compile: default. 
+            You need this library to write your code, run your app, and test your app.
+            It is available everywhere and is permanently bundled into your final production artifact.
+            Use for: Core business logic libraries like Spring Web, Jackson, or Apache Commons.
+        - test: 
+            This library is strictly for the src/test/java folder. Your production code (src/main/java) is not allowed to see it.
+            It is used during the mvn test phase, but it is completely excluded from your final production build.
+            Use for: JUnit, Mockito, AssertJ, REST Assured... Never let testing libraries leak into production.
+        - provided:
+            You need this library to get your code to compile in your IDE, but you expect the environment (like a Tomcat server or AWS Lambda) to already have this library waiting for you at runtime.
+            It is available during compilation and testing, but it is excluded from your final .jar.
+            Use for: Lombok (only needed to generate code, not at runtime), Servlet APIs, or cloud-native SDKs that the server injects automatically. Including these in compile scope causes horrific classpath collisions.
+         - runtime:
+            Your code doesn't actually import any classes from this library, so you don't need it to compile. But when you hit "Run," the underlying framework needs it to function.
+            It is hidden during compilation (to prevent you from accidentally coupling your code to it), but it is bundled into your final production .jar.
+            Use for: Database drivers. You write your code against standard java.sql interfaces (compile), but at runtime, Hibernate needs the mysql-connector-java or postgresql driver to actually talk to the database.
+         - import: 
+            This only works inside the <dependencyManagement> block. It is used to import a "BOM" (Bill of Materials).
+            It doesn't actually add the library to your project; it just tells Maven, "If I ever ask for a Spring Cloud library later, use the exact versions listed in this BOM."
+            Use for: Managing massive ecosystems like Spring Cloud or AWS SDKs where 20 different libraries all need to be on the exact same version to prevent dependency hell.
+         - system (The Hack)
+            It behaves exactly like provided, but instead of downloading it from the internet, you give Maven a hardcoded physical path on your local C:/ drive or a libs/ folder.
+            It compiles, but it makes CI/CD pipelines scream.
+            Do not use this unless you are forced to integrate with a 15-year-old proprietary .jar file from a vendor that refuses to upload it to a modern repository.            
+    -->
+
 
     <!-- Standard test stack (JUnit 5, Spring Test, AssertJ, Hamcrest, JsonPath test use, etc.) -->
     <dependency>
@@ -150,18 +178,17 @@
         <groupId>org.skyscreamer</groupId>
         <artifactId>jsonassert</artifactId>
         <version>1.5.1</version>
-        <scope>test</scope>
+        <scope>provided</scope>
     </dependency>
 
     <!-- JsonPath library.
         Used in: Moxter.
         Usually comes from spring-boot-starter-test with scope 'test'.
-        Declared as 'provided' so main code compiles without bundling it into the JAR.
     -->
     <dependency>
       <groupId>com.jayway.jsonpath</groupId>
       <artifactId>json-path</artifactId>
-      <scope>provided</scope>
+      <scope>provided</scope> 
     </dependency>
 
     <!-- YAML manipulation.
@@ -192,6 +219,7 @@
       <groupId>com.fasterxml.jackson.datatype</groupId>
       <artifactId>jackson-datatype-jsr310</artifactId>
     </dependency>
+
 
 <!--
     <!- - Hibernate second-level caching support via JCache (JSR-107) 

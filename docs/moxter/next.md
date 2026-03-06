@@ -147,7 +147,7 @@ moxtures:
           mode: full|partial    # used in conjunction with 'content'
             # if full: match with json provided in value must be exact
             # if partial: provided json should be a subset of actual returned json
-          ignorePaths: ["$.id"]    # ignore this 'volatile' field
+          ignorePaths: ["$.id"]    # ignore these 'volatile' field
           content: |  # the inline json expected
             {
               "type": "new",
@@ -167,6 +167,11 @@ moxtures:
 ```
 
 
+
+---
+### Should warn when using unknown/wrong yaml
+
+
 ---
 ### Improve logging/feedback
 
@@ -180,6 +185,27 @@ RestAssured has a genius feature: log().ifValidationFails().
 
 Generate full report :  
 Here are the moxtures executed and the received returns
+
+
+---
+### Add warnings in the final report output
+
+At the end: 
+
+[INFO]
+[INFO] Results:
+[INFO]
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0
+[INFO]
+[WARN] Warnings:
+[WARN]   Here we should have a list of warnings. Some might indeed
+[WARN]   highlight cases where we're getting a pass for the wrong reasons.
+[INFO]
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+
+
 
 
 

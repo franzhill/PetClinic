@@ -1,7 +1,7 @@
 package com.fhi.pet_clinic.moxter_tests;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fhi.libraries.moxter.Moxter;
+import com.fhi.moxter.Moxter;
 
 import lombok.extern.slf4j.Slf4j;
 

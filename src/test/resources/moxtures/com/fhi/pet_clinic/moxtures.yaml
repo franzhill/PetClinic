@@ -34,6 +34,8 @@ moxtures:
           "to": 8
         }
       }
+    expect:
+      status: 201       # 2xx    also accepted
 
 
 
@@ -56,55 +58,34 @@ moxtures:
   - name: create_owner
     endpoint: "/owners"
     method: POST
-    expectedStatus: 201
     body: |
       { "name": "Tintin"
       }
     save:
       ownerId: "$.id"
+    expect:
+      status: 201
 
 
 
   - name: create_pet_for_owner
     endpoint: "/api/pets"
     method: POST
-    expectedStatus: 201
     vars:
-      in_petName: "Snowy"
+      in_name     : "Snowy"
+      in_sex      :  "MALE"
+      in_birthDate: "2020-01-01"
+      in_species  : "Dog"
     body: |
       {
-        "name": "{{in_petName}}",
-        "sex": "MALE",
-        "birthDate": "2020-01-01",
+        "name": {{in_name}},             # No quotes needed (works with too: "{{in_name}}")
+        "sex": {{in_sex}},
+        "birthDate": {{in_birthDate}},
         "species": {
-          "name": "Dog"
+          "name": {{in_species}}
         },
         "owner": {
-          "id": "{{ownerId}}"
-        }
-      }
-    save:
-      petId: "$.id"
-      petName: "$.name"
-      petOwnerId: "$.owner.id"
-
-
-  - name: create_pet_for_owner_with_expected
-    endpoint: "/api/pets"
-    method: POST
-    expectedStatus: 201
-    vars:
-      in_petName: "Snowy"
-    body: |
-      {
-        "name": "{{in_petName}}"",
-        "sex": "MALE",
-        "birthDate": "2020-01-01",
-        "species": {
-          "name": "Dog"
-        },
-        "owner": {
-          "id": "{{ownerId}}"
+          "id": {{ownerId}}
         }
       }
     save:
@@ -112,12 +93,29 @@ moxtures:
       petName: "$.name"
       petOwnerId: "$.owner.id"
     expect:
-      status: 200
+      status: 201
+
+
+  - name: create_pet_for_owner_with_expect_section
+    basedOn: create_pet_for_owner
+    expect:
       body: 
-        match: "full"   # partial | full
-        #schema: "classpath:schemas/pet.json"  #schema checks the structure and data types of your response.
-        #ignorePaths: ["$.createdAt"]
-        content: >
+        match: 
+          mode: partial   # partial | full
+          #schema: "classpath:schemas/pet.json"  #schema checks the structure and data types of your response.
+          #ignorePaths: ["$.createdAt"]
+          content: |
+            {
+              "name": {{in_name}},
+              "sex": {{in_sex}},
+              "birthDate": "{{in_birthDate}}",
+              "species": {
+                "name": "{{in_species}}"
+              },
+              "owner": {
+                "id": {{ownerId}}
+              }
+            }
 
 
 
@@ -129,18 +127,27 @@ moxtures:
 
   - name: group_create_owner_and_pet_with_local_override
     vars:
-      in_petName: "Beethoven"   # overrides 'Snowy'
+      in_name: "Beethoven"   # overrides 'Snowy'
     moxtures: 
       - create_owner
       - create_pet_for_owner
 
+
+  - name: group_create_owner_and_pet_with_expect_section
+    vars:
+      in_name: "Pongo"   # overrides 'Snowy'
+    moxtures: 
+      - create_owner
+      - create_pet_for_owner_with_expect_section
 
 
 
   - name: delete_pet
     method: DELETE
     endpoint: /pet/{{petId_local}}/delete
-    expectedStatus: 200
+    expect:
+      status: 200
+
 
 
 
@@ -148,4 +155,5 @@ moxtures:
   - name: verify_owner_pets
     endpoint: "/owners/{{ownerId}}/pets"
     method: GET
-    expectedStatus: 200
+    expect:
+      status: 200

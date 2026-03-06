@@ -1,4 +1,4 @@
-package com.fhi.libraries.moxter;
+package com.fhi.moxter;
 
 import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.print;
 
@@ -30,7 +30,7 @@ import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
+import org.skyscreamer.jsonassert.JSONAssert;
 import org.assertj.core.api.Assertions;
 import org.assertj.core.api.ObjectAssert;
 import org.springframework.http.HttpHeaders;
@@ -41,6 +41,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import org.springframework.test.web.servlet.request.MockMultipartHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -49,6 +50,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import com.fhi.moxter.Moxter.Model.MatchDef;
 import com.jayway.jsonpath.Configuration;
 import com.jayway.jsonpath.DocumentContext;
 import com.jayway.jsonpath.JsonPath;
@@ -507,7 +509,7 @@ public final class Moxter
         {
             if (node == null) return null;
 
-            final String parentName = Utils.Misc.firstNonBlank(node.getBasedOn(), node.getBaseOn());
+            final String parentName = Utils.Misc.firstNonBlank(node.getBasedOn(), node.getBasedOn());
             final String nodeName = (node.getName() == null || node.getName().isBlank()) ? "<unnamed>" : node.getName();
             final EffectiveKey key = new EffectiveKey(nodeBaseDir, nodeName);
 
@@ -551,7 +553,7 @@ public final class Moxter
             merged.setName(node.getName());
             merged.setMethod(Utils.Misc.firstNonBlank(node.getMethod(), materializedParent.getMethod()));
             merged.setEndpoint(Utils.Misc.firstNonBlank(node.getEndpoint(), materializedParent.getEndpoint()));
-            merged.setExpectedStatus(node.getExpectedStatus() != null ? node.getExpectedStatus() : materializedParent.getExpectedStatus());
+            merged.setExpect(node.getExpect() != null ? node.getExpect() : materializedParent.getExpect());
             merged.setHeaders(Utils.Misc.mergeMap(materializedParent.getHeaders(), node.getHeaders()));
             merged.setVars(Utils.Misc.mergeMap(materializedParent.getVars(), node.getVars()));
             merged.setQuery(Utils.Misc.mergeMap(materializedParent.getQuery(), node.getQuery()));
@@ -565,7 +567,7 @@ public final class Moxter
 
             // Clear inheritance markers on the final node
             merged.setBasedOn(null);
-            merged.setBaseOn(null);
+            merged.setBasedOn(null);
 
             validateMoxture(merged);
 
@@ -580,14 +582,16 @@ public final class Moxter
          */
         private static void validateMoxture(Model.Moxture f) {
             boolean isGroup = f.getMoxtures() != null;
-            boolean isHttp  =
-                (f.getEndpoint() != null && !f.getEndpoint().isBlank()) ||
+            boolean isHttp  = f.getEndpoint() != null; // this field is mandatory 
+/* OLD
+            (f.getEndpoint() != null && !f.getEndpoint().isBlank()) ||
                 (f.getMethod()   != null && !f.getMethod().isBlank())   ||
                 f.getBody() != null ||
                 f.getExpectedStatus() != null ||
                 (f.getHeaders() != null && !f.getHeaders().isEmpty()) ||
                 (f.getQuery()   != null && !f.getQuery().isEmpty())   ||
                 (f.getSave()    != null && !f.getSave().isEmpty());
+ */                
             if (isGroup && isHttp) {
                 throw new IllegalStateException("Moxture '" + f.getName() + "' cannot define both 'moxtures' and HTTP fields");
             }
@@ -595,7 +599,7 @@ public final class Moxter
 
 
         /** 
-         * Shallow clone of a call, with basedOn/baseOn cleared. 
+         * Shallow clone of a call, with basedOn/basedOn cleared. 
          */
         private static Model.Moxture cloneWithoutBasedOn(Model.Moxture src) {
             Model.Moxture c = new Model.Moxture();
@@ -607,11 +611,11 @@ public final class Moxter
             c.setQuery(src.getQuery()==null?null:new LinkedHashMap<>(src.getQuery()));
             c.setBody(src.getBody()); // JSON nodes are fine to share for our usage
             c.setSave(src.getSave()==null?null:new LinkedHashMap<>(src.getSave()));
-            c.setExpectedStatus(src.getExpectedStatus());
+            c.setExpect(src.getExpect());
             c.setMoxtures(src.getMoxtures()==null?null:new ArrayList<>(src.getMoxtures()));
             c.setMultipart(src.getMultipart() == null ? null : new ArrayList<>(src.getMultipart()));
             c.setBasedOn(null);
-            c.setBaseOn(null);
+            c.setBasedOn(null);
 
             return c;
         }
@@ -1605,6 +1609,33 @@ public final class Moxter
             requirements.accept(assertVar(varName));
             return this;
         }
+
+
+        /**
+         * Performs fluent assertions on a raw JsonPath from the response using a consumer,
+         * returning this {@link MoxtureResult} to allow for further chaining.
+         * 
+         * <p>This allows one-off inspections of the response without needing to 
+         * define a variable in the 'save' section (or even not having a 'save' section
+         * alltogether)in the YAML moxture.
+         * 
+         * <p><b>Example Usage:</b>
+         * <pre>{@code
+         *      mx.call("get_pet")
+         *        .assertJsonPath("$.species.name", x -> x.isEqualTo("Dog"));
+         * }</pre>
+         *
+         * @param jsonPath     The JsonPath expression to extract from the response.
+         * @param requirements A consumer that defines the AssertJ requirements for the extracted value.
+         * @return This {@link MoxtureResult} for continued chaining.
+         */
+        public MoxtureResult assertJsonPath(String jsonPath, Consumer<ObjectAssert<Object>> requirements) 
+        {
+            // We reuse the existing assertThat(String) logic which handles extraction 
+            // and AssertJ wrapping, including the beautiful .as() error descriptions.
+            requirements.accept(this.assertThat(jsonPath));
+            return this;
+        }
     }
 
 
@@ -2012,9 +2043,9 @@ public final class Moxter
                         matcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
                     } else {
                         // Warning for missing variable
-                        log.warn("[Moxter] Interpolation warning: Variable '{{}}' found in payload " +
+                        log.warn("[Moxter] Interpolation warning: Variable '{{{}}}' found in payload " +
                                  "but missing from vars! (Leaving as-is). This will probably cause the " +
-                                 "moxture cal to fail.", key);
+                                 "moxture call to fail.", key);
 
                         // Keep the original {{key}} in the text so the error is visible in the output/logs
                         matcher.appendReplacement(sb, Matcher.quoteReplacement(matcher.group(0)));
@@ -2203,8 +2234,7 @@ public final class Moxter
                     log.info("[Moxter] >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
                     log.info("[Moxter] >>> Executing moxture:  [{}, {}, {}]", name, method, uri);
                     if (log.isDebugEnabled()) {
-                        log.debug("[Moxter] more info: expected={} headers={} query={} vars={} payload={}",
-                                expectedStatusPreview(spec.getExpectedStatus()),
+                        log.debug("[Moxter] more info: headers={} query={} vars={} payload={}",
                                 Utils.Logging.previewHeaders(headers0),
                                 (query == null || query.isEmpty() ? "{}" : query.toString()),
                                 Utils.Logging.previewVars(vars),
@@ -2350,22 +2380,97 @@ public final class Moxter
                     }
 
                     // 6) Expected status (flexible & optional)
-                    log.debug("FHI: examining Expected status ");
-                    if (!statusMatcher.matches(spec.getExpectedStatus(), env.status()))
-                    {   log.debug("FHI Expected status is NOT as expected");
-                        String bodyPreview = (raw == null || raw.isBlank()) ? "<empty>" : Utils.Logging.truncate(raw, 500);
-                        final String message = String.format(
-                            Locale.ROOT,
-                            "Unexpected HTTP %d for '%s' %s %s, expected=%s. Body=%s",
-                            env.status(), name, method, uri, expectedStatusPreview(spec.getExpectedStatus()), bodyPreview
-                        );
-                        if (lax) {
-                            log.info("[Moxter] Unexpected return status, but authorized in lax mode, so OK! : {}", message);
-                        } else {
-                            log.warn("[Moxter] {}", message);
-                            throw new AssertionError(message);
+                    log.trace("[Moxter] examining Expected status ");
+                    if (spec.getExpect() != null)
+                    {   if (spec.getExpect().getStatus() == null)
+                        {   log.debug("[Moxter] No expected status provided, skipping check.");
+                        }
+                        else
+                        {   JsonNode expectedStatus = spec.getExpect().getStatus();
+                            if (statusMatcher.matches(expectedStatus, env.status()))
+                            {   log.debug("[Moxter] Expected status is AS expected");
+                            }
+                            else
+                            {   log.debug("[Moxter] Expected status is NOT as expected");
+                                String bodyPreview = (raw == null || raw.isBlank()) ? "<empty>" : Utils.Logging.truncate(raw, 500);
+                                final String message = String.format(
+                                    Locale.ROOT,
+                                    "Unexpected HTTP %d for '%s' %s %s, expected=%s. Body=%s",
+                                    env.status(), name, method, uri, expectedStatusPreview(expectedStatus), bodyPreview
+                                );
+                                if (lax) {
+                                    log.info("[Moxter] Unexpected return status, but authorized in lax mode, so OK! : {}", message);
+                                } else {
+                                    log.warn("[Moxter] {}", message);
+                                    throw new AssertionError(message);
+                                }
+                            }
                         }
                     }
+
+                    // 6.1) Expected Body Matching (The Assertion Trinity)
+                    if (spec.getExpect() != null && spec.getExpect().getBody() != null) {
+                        Model.BodyAssertDef bodyDef = spec.getExpect().getBody();
+                        boolean failOnError = spec.getExpect().isFailOnError();
+
+                        // --- OPTION B: Tree Matching (match) ---
+                        if (bodyDef.getMatch() != null) {
+                            Model.MatchDef matchDef = bodyDef.getMatch();
+                            log.trace("[Moxter] Evaluating expect.body.match");
+                            
+                            try {
+                                if (raw == null || raw.isBlank()) {
+                                    throw new AssertionError("Cannot perform match: Response body is empty.");
+                                }
+
+                                // 1. Resolve expected content (handles {{vars}} and 'classpath:' imports!)
+                                JsonNode expectedNode = payloads.resolve(matchDef.getContent(), baseDir, vars, tpl);
+                                String expectedJsonStr = jsonMapper.writeValueAsString(expectedNode);
+                                String actualJsonStr = raw;
+
+                                // 2. Handle ignorePaths by removing them both from the actual and expected
+                                //    via the "Jayway Delete" before passing them on to the matcher
+                                if (matchDef.getIgnorePaths() != null && !matchDef.getIgnorePaths().isEmpty()) {
+                                    // Parse both actual and expected into mutable Jayway contexts
+                                    DocumentContext actCtx = JsonPath.using(jsonPathConfig).parse(actualJsonStr);
+                                    DocumentContext expCtx = JsonPath.using(jsonPathConfig).parse(expectedJsonStr);
+                                    
+                                    for (String path : matchDef.getIgnorePaths()) {
+                                        try { actCtx.delete(path); } catch (Exception ignore) {} // It's fine if the path doesn't exist
+                                        try { expCtx.delete(path); } catch (Exception ignore) {}
+                                    }
+                                    
+                                    // Re-serialize the pruned trees
+                                    actualJsonStr   = actCtx.jsonString();
+                                    expectedJsonStr = expCtx.jsonString();
+                                }
+
+                                // 3. Execute JSONAssert
+                                boolean strictMode = "full".equalsIgnoreCase(matchDef.getMode());
+                                JSONAssert.assertEquals(
+                                        expectedJsonStr, 
+                                        actualJsonStr, 
+                                        strictMode
+                                );
+                                
+                                log.debug("[Moxter] match (mode={}) successful.", strictMode ? "full" : "partial");
+
+                            } catch (AssertionError e) {
+                                String msg = String.format("Moxture '%s' JSON match failed: %s", name, e.getMessage());
+                                if (failOnError) {
+                                    throw new AssertionError(msg, e);
+                                } else {
+                                    log.warn("[Moxter] (failOnError=false) {}", msg);
+                                }
+                            } catch (Exception e) {
+                                // Catch parsing/resolution errors
+                                String msg = String.format("Moxture '%s' failed to evaluate match config: %s", name, rootMessage(e));
+                                if (failOnError) throw new RuntimeException(msg, e);
+                                else log.warn("[Moxter] (failOnError=false) {}", msg);
+                            }
+                        }
+                    }
+
 
                     // 7) Finish line + duration
                     final long tookMs = (System.nanoTime() - t0) / 1_000_000L;
@@ -2710,25 +2815,42 @@ public final class Moxter
             private Map<String,String> save; // varName -> JSONPath
             private JsonNode expectedStatus; // int | "2xx"/"3xx"/"4xx"/"5xx" | "201" | [ ... any of those ... ]
             // basedOn (now unlimited depth; resolved on demand)
-            private String basedOn; // canonical
-            private String baseOn;  // alias of basedOn
+
+            @JsonAlias({"extends"})
+            private String basedOn;
+
             // group-as-moxture: if present, indicates this row is a group
             private List<String> moxtures;
             private List<MultipartDef> multipart;
             private Map<String, Object> vars;
-            // legacy bridge: accept "url" in YAML and map it into "endpoint"
-            private String url; // not used directly; setter maps to endpoint if endpoint is missing
-
-            /** Legacy: when YAML provides 'url', treat it as 'endpoint' if endpoint is unset. */
-            public void setUrl(String url) {
-                this.url = url;
-                if ((this.endpoint == null || this.endpoint.isBlank()) && url != null && !url.isBlank()) {
-                    this.endpoint = url;
-                }
-            }
-            public String getUrl() { return url; }
+            private ExpectDef expect;
         }
 
+
+        @Getter @Setter
+        public static class ExpectDef 
+        {
+            private boolean failOnError = true; // Default
+            private JsonNode status; 
+            private BodyAssertDef body;
+        }
+
+        @Getter @Setter
+        public static class BodyAssertDef 
+        {
+            private MatchDef match;
+            // TODO later
+            //private AssertDef assert;
+            //private AssertSchema schema;
+        }
+
+        @Getter @Setter
+        public static class MatchDef 
+        {
+            private String mode; // "full" or "partial"
+            private List<String> ignorePaths;
+            private JsonNode content;
+        }
     }
 
 
