@@ -120,7 +120,41 @@
       <scope>provided</scope>
     </dependency>
 
-    <!-- JsonPath (used by FixtureEngine in src/main).
+    <!-- AssertJ: Fluent assertion library for writing highly readable tests. 
+        Provides alternate assertions to standard JUnit,with a chainable, 
+        strongly-typed API (e.g., assertThat(actual).isEqualTo(expected)).
+        Provides vastly superior failure messages and IDE auto-completion 
+        compared to standard JUnit assertions.
+    -->
+    <dependency>
+        <groupId>org.assertj</groupId>
+        <artifactId>assertj-core</artifactId>
+        <version>3.24.2</version>
+    </dependency>
+
+
+    <!-- Lombok.
+        Boilerplate code reduction.
+        No need to specify version it is managed by the spring boot parent. 
+    -->
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <optional>true</optional>
+    </dependency>
+
+    <!-- JSONAssert library. The gold standard for comparing JSON trees in Java.
+        Used in: Moxter.
+    -->
+    <dependency>
+        <groupId>org.skyscreamer</groupId>
+        <artifactId>jsonassert</artifactId>
+        <version>1.5.1</version>
+        <scope>test</scope>
+    </dependency>
+
+    <!-- JsonPath library.
+        Used in: Moxter.
         Usually comes from spring-boot-starter-test with scope 'test'.
         Declared as 'provided' so main code compiles without bundling it into the JAR.
     -->
@@ -130,20 +164,13 @@
       <scope>provided</scope>
     </dependency>
 
-
-    <!-- YAML (needed by FixtureEngine in main) -->
+    <!-- YAML manipulation.
+        Used in: Moxter.
+    -->
     <dependency>
       <groupId>com.fasterxml.jackson.dataformat</groupId>
       <artifactId>jackson-dataformat-yaml</artifactId>
       <scope>provided</scope>
-    </dependency>
-
-    <!-- Avoids having to generate boilerplate code by autogenerating it.
-        No need to specify version it is managed by the spring boot parent. -->
-    <dependency>
-      <groupId>org.projectlombok</groupId>
-      <artifactId>lombok</artifactId>
-      <optional>true</optional>
     </dependency>
 
     <!-- To read json files -->
@@ -153,6 +180,7 @@
     </dependency>
 
     <!--  Adds support for Java 8 Date & Time API types (e.g. LocalDate, LocalDateTime) in Jackson
+          Used in Moxter.
           Why it's needed:
           - Jackson by default cannot serialize/deserialize Java 8 date/time types.
           - Without this, you get exceptions like:
@@ -165,34 +193,47 @@
       <artifactId>jackson-datatype-jsr310</artifactId>
     </dependency>
 
-    <!-- Hibernate second-level caching support via JCache (JSR-107) 
+<!--
+    <!- - Hibernate second-level caching support via JCache (JSR-107) 
         This is the standard cache abstraction used by Hibernate to plug in 
         various cache providers .
         Spring Boot will automatically detect the JCache API (javax.cache) 
         and its EhCache implementation (ehcache) if both are on the classpath.
-    -->
+        => "The spec"
+    - ->
     <dependency>
       <groupId>javax.cache</groupId>
       <artifactId>cache-api</artifactId>
       <version>1.1.1</version>
     </dependency>
 
-    <!-- EhCache 3.x: a production-grade JCache-compliant caching provider
-        This is the actual implementation used behind the JSR-107 (JCache) API  -->
+    <!- - EhCache 3.x: a production-grade JCache-compliant caching provider
+        Implementation of the above JSR-107 (JCache) API.
+        => "The implementation"
+    - ->
     <dependency>
       <groupId>org.ehcache</groupId>
       <artifactId>ehcache</artifactId>
       <version>3.10.8</version>
     </dependency>
 
-    <!-- Optional (but useful): Allows Hibernate to auto-discover JCache configuration 
-        Not required in all setups, but improves integration in Spring Boot 
-        NOTE: version should match hibernate-core (managed by the Boot parent). -->
+    <!- - 
+        Hibernate was built a long time ago, before the javax.cache standard existed. 
+        Deep inside Hibernate's source code, it has its own proprietary way of asking 
+        for cached data (its Second-Level Cache SPI).
+        Why it's needed: Hibernate doesn't natively speak "JCache". This dependency 
+        is a small bridge written by the Hibernate team. It catches Hibernate's 
+        proprietary cache requests and translates them into standard javax.cache API 
+        calls.
+        => "The translator"
+        NOTE: version should match hibernate-core (managed by the Boot parent). 
+    - ->
     <dependency>
       <groupId>org.hibernate</groupId>
       <artifactId>hibernate-jcache</artifactId>
       <version>${hibernate.version}</version>
     </dependency>
+-->
 
     <!-- Datasource Proxy: Intercepts JDBC calls to log SQL, parameters, execution times, and caller stack traces. -->
     <dependency>
@@ -201,12 +242,6 @@
       <version>1.9</version>
     </dependency>
 
-    <!-- For assertions in JUnit tests -->
-    <dependency>
-        <groupId>org.assertj</groupId>
-        <artifactId>assertj-core</artifactId>
-        <version>3.24.2</version>
-    </dependency>
 
 
   </dependencies>

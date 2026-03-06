@@ -22,8 +22,8 @@ moxtures:
     method: POST
     endpoint: /pet/{{petId_1}}/account # petId_1 is created in the BeforeAll fixture
     expectedStatus: 201
-    # payload as raw JSON string payload (engine parses it)
-    payload: >
+    # body as raw JSON string body (engine parses it)
+    body: >
          {  "characteristic": "A",
          }
     save:
@@ -49,11 +49,11 @@ moxtures:
     # basedOn merge rules:
     # - method, endpoint, expectedStatus: child overrides if present.
     # - headers, query, save: map merge, child keys override parent keys.
-    # - payload: deep-merge objects, replace arrays. Child overrides when conflict.
+    # - body: deep-merge objects, replace arrays. Child overrides when conflict.
     # If parent name not found → fail fast with the layer/file path in the error.
     basedOn: create-account
-    # Differential payload: only specify what differs from basedOn's payload.
-    payload: >
+    # Differential body: only specify what differs from basedOn's body.
+    body: >
         {   "characteristic": "B"
         }
     save: 
@@ -69,8 +69,8 @@ moxtures:
     method: POST
     endpoint: /example
     expectedStatus: 201
-    # Payload as pure YAML
-    payload:
+    # body as pure YAML
+    body:
       characteristic1: A
       characteristic2: B
 
@@ -78,21 +78,21 @@ moxtures:
     method: POST
     endpoint: /example
     expectedStatus: 201
-    # Payload as inline
-    payload: {"characteristic1":"A","characteristic2":"B"}
+    # body as inline
+    body: {"characteristic1":"A","characteristic2":"B"}
 
   - name: example-text-json
     method: POST
     endpoint: /example
     expectedStatus: 201
-    # payload as raw JSON string payload (engine parses it)
-    payload: >
+    # body as raw JSON string body (engine parses it)
+    body: >
       {"characteristic1":"A","characteristic2":"B"}
 
   - name: example-from-file
     method: POST
     endpoint: /example
     expectedStatus: 201
-    # Payload as external file, either .json or .yaml
-    payload: classpath:payloads/example.json   # or .yaml
+    # body as external file, either .json or .yaml
+    body: classpath:bodys/example.json   # or .yaml
 

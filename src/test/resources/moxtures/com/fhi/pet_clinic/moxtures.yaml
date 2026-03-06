@@ -24,8 +24,8 @@ moxtures:
   - name: create_species_dog
     endpoint: "/api/species"
     method: POST
-    lax: true # Ignores errors if 'Dog' already exists
-    payload: >
+    lax: true         # Ignores errors if 'Dog' already exists
+    body: |           # Literal Block Scalar operator. Preserves every single newline and space exactly as you typed it.
       { "name": "Dog",
         "expectedLifespan": 12,
         "avgLitterSize": 4,
@@ -40,8 +40,8 @@ moxtures:
   - name: create_species_cat
     endpoint: "/api/species"
     method: POST
-    lax: true # Ignores errors if 'Dog' already exists
-    payload: >
+    lax: true           # Ignores errors if 'Cat' already exists
+    body: >             # Folded Block Scalar operator. Replaces single newlines with spaces. It turns a multi-line block into one giant, wrapped string.
       { "name": "Cat",
         "expectedLifespan": 18,
         "avgLitterSize": 5,
@@ -57,7 +57,7 @@ moxtures:
     endpoint: "/owners"
     method: POST
     expectedStatus: 201
-    payload: >
+    body: |
       { "name": "Tintin"
       }
     save:
@@ -71,22 +71,54 @@ moxtures:
     expectedStatus: 201
     vars:
       in_petName: "Snowy"
-    payload: >
+    body: |
       {
-        "name": {{in_petName}},
+        "name": "{{in_petName}}",
         "sex": "MALE",
         "birthDate": "2020-01-01",
         "species": {
           "name": "Dog"
         },
         "owner": {
-          "id": {{ownerId}}
+          "id": "{{ownerId}}"
         }
       }
     save:
       petId: "$.id"
       petName: "$.name"
       petOwnerId: "$.owner.id"
+
+
+  - name: create_pet_for_owner_with_expected
+    endpoint: "/api/pets"
+    method: POST
+    expectedStatus: 201
+    vars:
+      in_petName: "Snowy"
+    body: |
+      {
+        "name": "{{in_petName}}"",
+        "sex": "MALE",
+        "birthDate": "2020-01-01",
+        "species": {
+          "name": "Dog"
+        },
+        "owner": {
+          "id": "{{ownerId}}"
+        }
+      }
+    save:
+      petId: "$.id"
+      petName: "$.name"
+      petOwnerId: "$.owner.id"
+    expect:
+      status: 200
+      body: 
+        match: "full"   # partial | full
+        #schema: "classpath:schemas/pet.json"  #schema checks the structure and data types of your response.
+        #ignorePaths: ["$.createdAt"]
+        content: >
+
 
 
   - name: group_create_owner_and_pet

@@ -560,8 +560,8 @@ public final class Moxter
             // For "moxtures" (group list): replace instead of merge
             merged.setMoxtures(node.getMoxtures() != null ? node.getMoxtures() : materializedParent.getMoxtures());
             merged.setMultipart(node.getMultipart() != null ? node.getMultipart() : materializedParent.getMultipart());
-            JsonNode payload = deepMergePayload(moxter.yamlMapper, materializedParent.getPayload(), node.getPayload());
-            merged.setPayload(payload);
+            JsonNode payload = deepMergePayload(moxter.yamlMapper, materializedParent.getBody(), node.getBody());
+            merged.setBody(payload);
 
             // Clear inheritance markers on the final node
             merged.setBasedOn(null);
@@ -583,7 +583,7 @@ public final class Moxter
             boolean isHttp  =
                 (f.getEndpoint() != null && !f.getEndpoint().isBlank()) ||
                 (f.getMethod()   != null && !f.getMethod().isBlank())   ||
-                f.getPayload() != null ||
+                f.getBody() != null ||
                 f.getExpectedStatus() != null ||
                 (f.getHeaders() != null && !f.getHeaders().isEmpty()) ||
                 (f.getQuery()   != null && !f.getQuery().isEmpty())   ||
@@ -605,7 +605,7 @@ public final class Moxter
             c.setHeaders(src.getHeaders()==null?null:new LinkedHashMap<>(src.getHeaders()));
             c.setVars(src.getVars() == null ? null : new LinkedHashMap<>(src.getVars()));
             c.setQuery(src.getQuery()==null?null:new LinkedHashMap<>(src.getQuery()));
-            c.setPayload(src.getPayload()); // JSON nodes are fine to share for our usage
+            c.setBody(src.getBody()); // JSON nodes are fine to share for our usage
             c.setSave(src.getSave()==null?null:new LinkedHashMap<>(src.getSave()));
             c.setExpectedStatus(src.getExpectedStatus());
             c.setMoxtures(src.getMoxtures()==null?null:new ArrayList<>(src.getMoxtures()));
@@ -2197,7 +2197,7 @@ public final class Moxter
                     final URI                uri      = URI.create(appendQuery(endpoint, query));
 
                     // 2) Resolve payload (YAML/JSON node or text with classpath: include)
-                    final JsonNode payloadNode = payloads.resolve(spec.getPayload(), baseDir, vars, tpl);
+                    final JsonNode payloadNode = payloads.resolve(spec.getBody(), baseDir, vars, tpl);
 
                     // 3) Human-friendly start + DEBUG details
                     log.info("[Moxter] >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
@@ -2704,8 +2704,9 @@ public final class Moxter
             private String endpoint;
             private Map<String,String> headers;
             private Map<String,String> query;
-            private JsonNode payload;        // YAML object/array OR text ("classpath:..." or raw JSON string)
-            private JsonNode body;           // Alias for payload
+            //# private JsonNode payload;        
+            private JsonNode body;           // Replaces 'payload'
+                                             // YAML object/array OR text ("classpath:..." or raw JSON string)
             private Map<String,String> save; // varName -> JSONPath
             private JsonNode expectedStatus; // int | "2xx"/"3xx"/"4xx"/"5xx" | "201" | [ ... any of those ... ]
             // basedOn (now unlimited depth; resolved on demand)
@@ -2717,7 +2718,6 @@ public final class Moxter
             private Map<String, Object> vars;
             // legacy bridge: accept "url" in YAML and map it into "endpoint"
             private String url; // not used directly; setter maps to endpoint if endpoint is missing
-
 
             /** Legacy: when YAML provides 'url', treat it as 'endpoint' if endpoint is unset. */
             public void setUrl(String url) {
