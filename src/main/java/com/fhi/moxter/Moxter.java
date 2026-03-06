@@ -570,9 +570,21 @@ public final class Moxter
             // For "moxtures" (group list): replace instead of merge
             merged.setMoxtures(node.getMoxtures() != null ? node.getMoxtures() : materializedParent.getMoxtures());
             merged.setMultipart(node.getMultipart() != null ? node.getMultipart() : materializedParent.getMultipart());
-            JsonNode payload = deepMergePayload(moxter.yamlMapper, materializedParent.getBody(), node.getBody());
-            merged.setBody(payload);
 
+            // PAYLOAD HANDLING: Build the stack instead of merging nodes
+            List<JsonNode> combinedStack = new ArrayList<>(materializedParent.getBodyStack());
+            if (node.getBody() != null) {
+                combinedStack.add(node.getBody());
+            }
+            merged.setBodyStack(combinedStack);
+            
+            // Keep the 'body' field pointing to the latest definition for backward compatibility
+            merged.setBody(node.getBody() != null ? node.getBody() : materializedParent.getBody());
+/* OLD
+            Map<String, Object> allVars = Utils.Misc.mergeMap(moxter.vars().view(), node.getVars());
+            JsonNode payload = deepMergePayload(moxter.yamlMapper, materializedParent.getBody(), node.getBody(), allVars);
+            merged.setBody(payload);
+ */
             // Clear inheritance markers on the final node
             merged.setBasedOn(null);
 
@@ -623,12 +635,64 @@ public final class Moxter
             c.setMultipart(src.getMultipart() == null ? null : new ArrayList<>(src.getMultipart()));
             c.setBasedOn(null);
             c.setBasedOn(null);
-
+            // Ensure the stack is initialized with the single body
+            if (src.getBody() != null) {
+                c.getBodyStack().add(src.getBody());
+            }
+            c.setBody(src.getBody());
             return c;
         }
 
-
+        /**
+         * Recursively merges two JSON nodes, with the child node taking precedence.
+         * 
+         * <p>Merges nested ObjectNodes. For arrays and value nodes (strings, numbers), 
+         * the child simply replaces the parent.
+         */
         private static JsonNode deepMergePayload(ObjectMapper mapper, JsonNode parent, JsonNode child) {
+            // 1. Coerce to objects if they are JSON strings (though resolveSingleNode usually handles this)
+            parent = Utils.Json.coerceJsonTextToNode(mapper, parent);
+            child  = Utils.Json.coerceJsonTextToNode(mapper, child);
+
+            if (child == null) return parent;
+            if (parent == null) return child;
+
+            // 2. Recursive Object Merge
+            if (child.isObject() && parent.isObject()) {
+                ObjectNode merged = (ObjectNode) parent.deepCopy();
+                Iterator<Map.Entry<String, JsonNode>> fields = child.fields();
+                while (fields.hasNext()) {
+                    Map.Entry<String, JsonNode> entry = fields.next();
+                    String key = entry.getKey();
+                    JsonNode childVal = entry.getValue();
+                    JsonNode parentVal = merged.get(key);
+
+                    if (childVal.isObject() && parentVal != null && parentVal.isObject()) {
+                        merged.set(key, deepMergePayload(mapper, parentVal, childVal));
+                    } else {
+                        merged.set(key, childVal.deepCopy());
+                    }
+                }
+                return merged;
+            }
+            // 3. Fallback: Child replaces Parent (Arrays/Scalars)
+            return child.deepCopy();
+        }
+
+        /** Helper to turn a templated Block Scalar into a mergeable JsonNode */
+        private static JsonNode coerceAndInterpolate(ObjectMapper mapper, JsonNode n, Map<String, Object> vars) {
+            if (n == null || !n.isTextual()) return n;
+            String raw = n.asText();
+            // Use the utility to replace {{vars}} before parsing
+            String interpolated = Utils.Interpolation.interpolate(raw, vars);
+            if (Utils.Json.looksLikeJson(interpolated)) {
+                try { return mapper.readTree(interpolated); } catch (Exception ignore) { }
+            }
+            return n;
+        }
+
+
+        private static JsonNode deepMergePayloadOLC(ObjectMapper mapper, JsonNode parent, JsonNode child) {
             parent = Utils.Json.coerceJsonTextToNode(mapper, parent);
             child  = Utils.Json.coerceJsonTextToNode(mapper, child);
 
@@ -649,7 +713,7 @@ public final class Moxter
                     JsonNode childVal = e.getValue();
                     JsonNode parentVal = merged.get(k);
                     if (childVal != null && childVal.isObject() && parentVal != null && parentVal.isObject()) {
-                        merged.set(k, deepMergePayload(mapper, parentVal, childVal)); // recursive objects
+                        merged.set(k, deepMergePayloadOLC(mapper, parentVal, childVal)); // recursive objects
                     } else {
                         merged.set(k, childVal); // replace arrays/scalars or add new fields
                     }
@@ -1999,7 +2063,34 @@ public final class Moxter
             PayloadResolver(ObjectMapper mapper) { this.mapper = mapper; }
 
             /**
+             * The new entry point that handles the inheritance stack.
+             */
+            JsonNode resolve(Model.Moxture spec, String baseDir, Map<String, Object> vars, Templating tpl) throws IOException {
+                List<JsonNode> stack = spec.getBodyStack();
+                
+                // If there's no stack (shouldn't happen with our new materializeDeep), 
+                // fallback to the single body.
+                if (stack == null || stack.isEmpty()) {
+                    return resolveSingleNode(spec.getBody(), baseDir, vars, tpl);
+                }
+
+                JsonNode effective = null;
+                for (JsonNode layer : stack) {
+                    // 1. Resolve THIS specific layer using your original logic
+                    // This ensures {{ownerId}} is replaced BEFORE parsing.
+                    JsonNode resolvedLayer = resolveSingleNode(layer, baseDir, vars, tpl);
+                    
+                    // 2. Deep merge it into the accumulated result.
+                    // If 'effective' is null (first layer), deepMerge returns 'resolvedLayer'.
+                    effective = MoxResolver.deepMergePayload(mapper, effective, resolvedLayer);
+                }
+                return effective;
+            }
+
+            /**
              * The main entry point for payload resolution.
+             * 
+             * It handles: Interpolation -> Classpath -> JSON Sniffing -> Parsing
              * 
              * @param payload The raw JsonNode from the YAML moxture definition.
              * @param baseDir The directory of the current moxture file (used for relative classpath resolution).
@@ -2008,43 +2099,34 @@ public final class Moxter
              * @return A finalized {@link JsonNode} ready for HTTP execution.
              * @throws IOException If a classpath resource cannot be read or JSON is malformed.
              */
-            JsonNode resolve(JsonNode payload, String baseDir, Map<String, Object> vars, Templating tpl) throws IOException {
+            private JsonNode resolveSingleNode(JsonNode payload, String baseDir, Map<String, Object> vars, Templating tpl) throws IOException {
                 if (payload == null) return null;
 
-                // CASE 1: Block Scalar (String) - e.g. payload: >
                 if (payload.isTextual()) {
                     String txt = payload.asText().trim();
                     
-                    // 1. Interpolate variables FIRST
-                    // This handles types correctly (e.g. {{id}} -> 3) before we try to parse as JSON.
+                    // Interpolate variables FIRST (makes the JSON valid!)
                     txt = Utils.Interpolation.interpolate(txt, vars); 
                     
-                    // 2. Handle 'classpath:' prefix
+                    // Handle 'classpath:'
                     String lower = txt.toLowerCase(Locale.ROOT);
                     if (lower.startsWith("classpath:")) {
                         String rawPath = txt.substring(txt.indexOf(':') + 1).trim();
-                        // Load the file and recurse to allow variables inside the external file
                         JsonNode fileContent = loadClasspathPayload(baseDir, rawPath);
-                        return resolve(fileContent, baseDir, vars, tpl);
+                        return resolveSingleNode(fileContent, baseDir, vars, tpl);
                     }
 
-                    // 3. Heuristic JSON check
-                    // If it looks like JSON after interpolation, we parse it into a tree.
+                    // Heuristic JSON check
                     if (Utils.Json.looksLikeJson(txt)) {
                         try {
                             return mapper.readTree(txt);
                         } catch (JsonProcessingException e) {
-                            // Fallback to text node if it's just a string that happens to start with {
                             return mapper.getNodeFactory().textNode(txt);
                         }
                     }
-
-                    // 4. Plain string -> keep as text
                     return mapper.getNodeFactory().textNode(txt);
                 }
 
-                // CASE 2: Structural YAML/JSON (Map/Array)
-                // Recursively walk the tree and template string values
                 return templateNodeStrings(payload, vars, tpl);
             }
 
@@ -2165,7 +2247,7 @@ public final class Moxter
                     final Map<String,String> headers0 = tpl.applyMapValuesOnly(spec.getHeaders(), vars);
                     final Map<String,String> query    = tpl.applyMapValuesOnly(spec.getQuery(), vars);
                     final URI uri = URI.create(Utils.Http.appendQuery(endpoint, query));
-                    final JsonNode payloadNode = payloads.resolve(spec.getBody(), baseDir, vars, tpl);
+                    final JsonNode payloadNode = payloads.resolve(spec, baseDir, vars, tpl);
 
                     logExecutionStart(name, method, uri, headers0, query, vars, payloadNode);
 
@@ -2256,7 +2338,7 @@ public final class Moxter
                                     : (pFilename != null && pFilename.endsWith(".png")) ? "image/png"
                                     : "application/octet-stream";
                     } else {
-                        JsonNode resolvedPartBody = payloads.resolve(part.body, baseDir, vars, tpl);
+                        JsonNode resolvedPartBody = payloads.resolveSingleNode(part.body, baseDir, vars, tpl);
                         if ("json".equals(pType) || resolvedPartBody.isContainerNode()) {
                             contentBytes = jsonMapper.writeValueAsBytes(resolvedPartBody);
                             contentType = "application/json";
@@ -2352,7 +2434,7 @@ public final class Moxter
                 try {
                     if (env.raw() == null || env.raw().isBlank()) throw new AssertionError("Response body is empty.");
                     
-                    JsonNode expectedNode = payloads.resolve(matchDef.getContent(), baseDir, vars, tpl);
+                    JsonNode expectedNode = payloads.resolveSingleNode(matchDef.getContent(), baseDir, vars, tpl);
                     String expectedJsonStr = jsonMapper.writeValueAsString(expectedNode);
                     String actualJsonStr = env.raw();
 
@@ -2382,7 +2464,7 @@ public final class Moxter
                 DocumentContext actCtx = com.jayway.jsonpath.JsonPath.using(jsonPathConfig).parse(env.raw());
                 assertDef.getPaths().forEach((path, rawExpectedNode) -> {
                     try {
-                        com.fasterxml.jackson.databind.JsonNode expectedNode = payloads.resolve(rawExpectedNode, baseDir, vars, tpl);
+                        com.fasterxml.jackson.databind.JsonNode expectedNode = payloads.resolveSingleNode(rawExpectedNode, baseDir, vars, tpl);
                         Object actualValue = actCtx.read(path);
                         
                         if (expectedNode.isNull()) {
@@ -2895,11 +2977,22 @@ public final class Moxter
                 }
             }
 
-
             /** 
-             * If the node is textual and looks like JSON, parse it to a JSON tree; otherwise return as is. 
+             * Robustly converts textual JSON (including block scalars) into a JsonNode 
+             * so it can participate in deep-merging operations.
+             * Otherwise return as is. 
              */
-            private static JsonNode coerceJsonTextToNode(ObjectMapper mapper, JsonNode n) {
+            public static JsonNode coerceJsonTextToNode(ObjectMapper mapper, JsonNode n) {
+                if (n == null || !n.isTextual()) return n;
+                
+                String s = n.asText().trim();
+                // Check if it's a "sniffed" JSON string or a classpath reference
+                if (looksLikeJson(s)) {
+                    try { return mapper.readTree(s); } catch (Exception ignore) { return n; }
+                }
+                return n;
+            }
+            private static JsonNode coerceJsonTextToNodeOLD(ObjectMapper mapper, JsonNode n) {
                 if (n == null) return null;
                 if (n.isTextual()) {
                     String s = n.asText().trim();
@@ -3092,6 +3185,13 @@ public final class Moxter
             private List<MultipartDef> multipart;
             private Map<String, Object> vars;
             private ExpectDef expect;
+
+            /** 
+             * Holds the hierarchy of bodies: [Parent, Child].
+             * This allows deep-merging to be deferred until runtime when 
+             * variables are actually available.
+             */
+            private List<JsonNode> bodyStack = new ArrayList<>();
         }
 
 

@@ -57,7 +57,7 @@ public class Species
      */
     @NotNull
     @Min(1)
-    @Max(200)
+    @Max(250)
     private int expectedLifespan;
 
     @NotNull
