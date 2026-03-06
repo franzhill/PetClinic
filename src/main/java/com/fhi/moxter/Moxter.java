@@ -36,6 +36,7 @@ import org.assertj.core.api.ObjectAssert;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.security.core.Authentication;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.request.MockMultipartHttpServletRequestBuilder;
@@ -53,6 +54,10 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.fhi.moxter.Moxter.Model.ExpectBodyMatchDef;
+import com.fhi.moxter.Moxter.Runtime.HttpExecutor;
+import com.fhi.moxter.Moxter.Runtime.PayloadResolver;
+import com.fhi.moxter.Moxter.Runtime.StatusMatcher;
+import com.fhi.moxter.Moxter.Runtime.Templating;
 import com.jayway.jsonpath.Configuration;
 import com.jayway.jsonpath.DocumentContext;
 import com.jayway.jsonpath.JsonPath;
@@ -143,8 +148,8 @@ public final class Moxter
     private final String moxturesBaseDir;
 
     // For hierarchical lookup
-    private final IO.ClasspathMoxtureRepository repo;
-    private final IO.MoxtureConfig cfg;
+    private final MoxtureLoader.ClasspathMoxtureRepository repo;
+    private final MoxtureLoader.MoxtureLoadingConfig cfg;
     private final ObjectMapper yamlMapper;
     // Keep JSON mapper for HTTP
     private final ObjectMapper jsonMapper; // NOSONAR yes it's used!
@@ -264,7 +269,7 @@ public final class Moxter
         this.builderAuthSupplier = authSupplier;
 
         // Build minimal config internally
-        IO.MoxtureConfig cfg = new IO.MoxtureConfig(
+        MoxtureLoader.MoxtureLoadingConfig cfg = new MoxtureLoader.MoxtureLoadingConfig(
                 DEFAULT_MOXTURES_ROOT_PATH,
                 DEFAULT_USE_PER_TESTCLASS_DIRECTORY,
                 DEFAULT_MOXTURES_BASENAME
@@ -278,8 +283,8 @@ public final class Moxter
         this.jsonMapper = jsonMapper;
 
         // Load closest moxtures file (read with YAML)
-        IO.ClasspathMoxtureRepository repo = new IO.ClasspathMoxtureRepository(yamlMapper);
-        IO.MoxtureRepository.LoadedSuite loaded = repo.loadFor(testClass, cfg);
+        MoxtureLoader.ClasspathMoxtureRepository repo = new MoxtureLoader.ClasspathMoxtureRepository(yamlMapper);
+        MoxtureLoader.MoxtureRepository.LoadedSuite loaded = repo.loadFor(testClass, cfg);
 
         // IMPORTANT: keep RAW suite (no pre-materialization at load time)
         this.suite = loaded.suite;
@@ -363,7 +368,7 @@ public final class Moxter
      * (no merging). If no file defines {@code vars}, returns an empty map.
      */
     @SuppressWarnings("unchecked")
-    private Map<String,Object> loadHierarchicalVars(Class<?> testClass, IO.MoxtureConfig cfg, ObjectMapper yamlMapper) {
+    private Map<String,Object> loadHierarchicalVars(Class<?> testClass, MoxtureLoader.MoxtureLoadingConfig cfg, ObjectMapper yamlMapper) {
         List<String> candidates = repo.candidateAncestorPaths(testClass, cfg);
         Map<String,Object> last = null;
 
@@ -482,7 +487,7 @@ public final class Moxter
             }
 
             // 2) Hierarchical lookup upwards (closest → ... → root) starting from the test class location
-            IO.ClasspathMoxtureRepository.RawMoxture found = moxter.repo.findFirstByName(moxter.testClass, moxter.cfg, name, moxter.yamlMapper);
+            MoxtureLoader.ClasspathMoxtureRepository.RawMoxture found = moxter.repo.findFirstByName(moxter.testClass, moxter.cfg, name, moxter.yamlMapper);
             if (found == null) {
                 List<String> attempted = moxter.repo.candidateAncestorPaths(moxter.testClass, moxter.cfg);
                 throw new IllegalArgumentException("Moxture/Group not found by name: " + name
@@ -537,7 +542,7 @@ public final class Moxter
             stack.addLast(key);
 
             // Resolve parent by searching from THIS node’s file directory upwards (closest → parents → root)
-            IO.ClasspathMoxtureRepository.RawMoxture parentResolved =
+            MoxtureLoader.ClasspathMoxtureRepository.RawMoxture parentResolved =
                     moxter.repo.findFirstByNameFromBaseDir(moxter.testClass, moxter.cfg, nodeBaseDir, parentName, moxter.yamlMapper);
 
             if (parentResolved == null) {
@@ -1652,17 +1657,31 @@ public final class Moxter
     // ############################################################################
 
     /** 
-     * Loading moxtures from classpath. 
+     * For loading moxtures from classpath. 
+     * 
+     * <p>A specialized loader responsible for resolving and parsing Moxture files from the classpath.
+     * 
+     * <p>This class acts as the entry point for the test suite's data layer. It handles:
+     * <ul>
+     *   <li>Classpath resource discovery via {@link ClassLoader}.</li>
+     *   <li>Automatic translation of YAML source text into the {@link Model.File} object graph.</li>
+     *   <li>Path normalization (handling of relative vs. absolute resource paths).</li>
+     * </ul>
+     * 
+     * <p>It utilizes a YAML-configured {@link ObjectMapper} to ensure that Moxture features 
+     * like {@code !include} or custom tags are respected during the initial load phase.
      */
-    static final class IO 
+    static final class MoxtureLoader 
     {
-        /** Immutable configuration used for locating moxtures on classpath. */
-        static final class MoxtureConfig {
+        /** 
+         * Immutable configuration used for locating moxtures on classpath. 
+         */
+        static final class MoxtureLoadingConfig {
             final String rootPath;                // e.g., "integrationtests2/moxtures"
             final boolean perTestClassDirectory;  // true => add "/{TestClassName}"
             final String fileName;                // "moxtures.yaml" (includes extension)
 
-            MoxtureConfig(String rootPath, boolean perTestClassDirectory, String fileName) {
+            MoxtureLoadingConfig(String rootPath, boolean perTestClassDirectory, String fileName) {
                 this.rootPath = trim(rootPath);
                 this.perTestClassDirectory = perTestClassDirectory;
                 this.fileName = trim(fileName);
@@ -1683,7 +1702,7 @@ public final class Moxter
                 public final String baseDir; // classpath folder where the moxtures file lives
                 public LoadedSuite(Model.MoxtureFile suite, String baseDir) { this.suite = suite; this.baseDir = baseDir; }
             }
-            LoadedSuite loadFor(Class<?> testClass, IO.MoxtureConfig cfg);
+            LoadedSuite loadFor(Class<?> testClass, MoxtureLoader.MoxtureLoadingConfig cfg);
         }
 
         /**
@@ -1698,7 +1717,7 @@ public final class Moxter
 
             ClasspathMoxtureRepository(ObjectMapper mapper) { this.mapper = mapper; }
 
-            public LoadedSuite loadFor(Class<?> testClass, IO.MoxtureConfig cfg) {
+            public LoadedSuite loadFor(Class<?> testClass, MoxtureLoader.MoxtureLoadingConfig cfg) {
                 final String classpath = buildClosestClasspath(testClass, cfg);
                 final String displayPath = "classpath:/" + classpath;
 
@@ -1717,11 +1736,11 @@ public final class Moxter
                     );
                 }
 
-                if (isDebug()) System.out.println("[Moxter] Loading " + displayPath + " -> " + url);
+                log.debug("[Moxter] Loading {} -> {}", displayPath, url);
 
                 try (InputStream in = url.openStream()) {
                     Model.MoxtureFile suite = mapper.readValue(in, Model.MoxtureFile.class); // YAML mapper parses JSON too
-                    String baseDir = parentDirOf(classpath);
+                    String baseDir = Utils.IO.parentDirOf(classpath);
                     return new LoadedSuite(suite, baseDir);
                 } catch (IOException e) {
                     throw new RuntimeException("Failed loading moxtures: " + displayPath, e);
@@ -1731,7 +1750,7 @@ public final class Moxter
             /* ===== Hierarchical lookup (helpers) ===== */
 
             /** Returns candidate ancestor classpaths from closest → root (inclusive). */
-            List<String> candidateAncestorPaths(Class<?> testClass, IO.MoxtureConfig cfg) {
+            List<String> candidateAncestorPaths(Class<?> testClass, MoxtureLoader.MoxtureLoadingConfig cfg) {
                 List<String> out = new ArrayList<>();
                 String pkg = (testClass.getPackageName() == null ? "" : testClass.getPackageName().replace('.', '/'));
 
@@ -1756,7 +1775,7 @@ public final class Moxter
             }
 
             /** Finds the first (closest) occurrence of a moxture by name across ancestor files (starting from test package). */
-            RawMoxture findFirstByName(Class<?> testClass, IO.MoxtureConfig cfg, String name, ObjectMapper yamlMapper) {
+            RawMoxture findFirstByName(Class<?> testClass, MoxtureLoader.MoxtureLoadingConfig cfg, String name, ObjectMapper yamlMapper) {
                 List<String> candidates = candidateAncestorPaths(testClass, cfg);
                 ClassLoader tccl = Thread.currentThread().getContextClassLoader();
                 ClassLoader fallback = Moxter.class.getClassLoader();
@@ -1770,7 +1789,7 @@ public final class Moxter
                         // NOTE: do NOT materialize here; scan raw and return the raw hit.
                         for (Model.Moxture f : raw.moxtures()) {
                             if (name.equals(f.getName())) {
-                                String baseDir = parentDirOf(cp);
+                                String baseDir = Utils.IO.parentDirOf(cp);
                                 return new RawMoxture(f, baseDir, "classpath:/" + cp);
                             }
                         }
@@ -1782,7 +1801,7 @@ public final class Moxter
             }
 
             /** Returns candidate ancestor classpaths starting at an arbitrary baseDir (closest → root). */
-            List<String> candidateAncestorPathsFromBaseDir(String baseDir, IO.MoxtureConfig cfg) {
+            List<String> candidateAncestorPathsFromBaseDir(String baseDir, MoxtureLoader.MoxtureLoadingConfig cfg) {
                 List<String> out = new ArrayList<>();
                 String cur = (baseDir == null) ? "" : baseDir;
                 while (cur.endsWith("/")) cur = cur.substring(0, cur.length() - 1);
@@ -1803,7 +1822,7 @@ public final class Moxter
             }
 
             /** Finds the first (closest) occurrence of a moxture by name, starting from an arbitrary baseDir. */
-            RawMoxture findFirstByNameFromBaseDir(Class<?> testClass, IO.MoxtureConfig cfg,
+            RawMoxture findFirstByNameFromBaseDir(Class<?> testClass, MoxtureLoader.MoxtureLoadingConfig cfg,
                                                 String startBaseDir, String name, ObjectMapper yamlMapper) {
                 List<String> candidates = candidateAncestorPathsFromBaseDir(startBaseDir, cfg);
                 ClassLoader tccl = Thread.currentThread().getContextClassLoader();
@@ -1817,7 +1836,7 @@ public final class Moxter
 
                         for (Model.Moxture f : raw.moxtures()) {
                             if (name.equals(f.getName())) {
-                                String baseDir = parentDirOf(cp);
+                                String baseDir = Utils.IO.parentDirOf(cp);
                                 return new RawMoxture(f, baseDir, "classpath:/" + cp);
                             }
                         }
@@ -1867,22 +1886,15 @@ public final class Moxter
                 return (fallback != null ? fallback.getResource(path) : null);
             }
 
-            private static String buildClosestClasspath(Class<?> testClass, IO.MoxtureConfig cfg) {
+            private static String buildClosestClasspath(Class<?> testClass, MoxtureLoader.MoxtureLoadingConfig cfg) {
                 String pkg = (testClass.getPackageName() == null ? "" : testClass.getPackageName().replace('.', '/'));
                 String classDir = cfg.perTestClassDirectory ? ("/" + testClass.getSimpleName()) : "";
                 String base = (pkg.isEmpty() ? cfg.rootPath : (cfg.rootPath + "/" + pkg)) + classDir + "/";
                 String full = base + cfg.fileName; // EXACT file name (e.g., "moxtures.yaml")
-                if (isDebug()) System.out.println("[Moxter] Expecting moxtures at: classpath:/" + full + " for " + testClass.getName());
+                log.debug("[Moxter] Expecting moxtures at: classpath:/{} for {}", full, testClass.getName());
                 return full;
             }
 
-            private static String parentDirOf(String path) {
-                int i = path.lastIndexOf('/');
-                return (i > 0) ? path.substring(0, i) : "";
-            }
-            private static boolean isDebug() {
-                return "true".equalsIgnoreCase(System.getProperty("Moxter.debug", "false"));
-            }
         }
     }
 
@@ -1896,10 +1908,10 @@ public final class Moxter
      * (flattened), the classes in this namespace take over to perform the actual test execution. 
      * Their responsibilities include:
      * <ul>
-     * <li><b>Templating:</b> Interpolating dynamic variables into endpoints, headers, and payloads.</li>
-     * <li><b>Payload Resolution:</b> Parsing and resolving complex or external JSON/YAML request bodies.</li>
-     * <li><b>HTTP Execution:</b> Translating the moxture into a Spring MockMvc request and firing it.</li>
-     * <li><b>Response Handling:</b> Capturing the raw network response and packaging it into an internal envelope.</li>
+     *   <li><b>Templating:</b> Interpolating dynamic variables into endpoints, headers, and payloads.</li>
+     *   <li><b>Payload Resolution:</b> Parsing and resolving complex or external JSON/YAML request bodies.</li>
+     *   <li><b>HTTP Execution:</b> Translating the moxture into a Spring MockMvc request and firing it.</li>
+     *   <li><b>Response Handling:</b> Capturing the raw network response and packaging it into an internal envelope.</li>
      * </ul>
      * 
      * <p><b>Note:</b> Classes within this namespace are strictly internal to the Moxter engine 
@@ -1964,17 +1976,38 @@ public final class Moxter
 
         // ############################################################################
 
-
-
-
         /**
+         * Resolves raw payload definitions into finalized JSON nodes by processing variable 
+         * interpolation, classpath resource loading, and structural recursion.
          * 
+         * <p>The resolver handles two primary formats:
+         * <ul>
+         * <li><b>String/Scalar:</b> Can be a "classpath:..." reference, a raw JSON string, 
+         * or a plain text body. All variables are interpolated before parsing.</li>
+         * <li><b>Structural:</b> A YAML map or array. The resolver recursively walks 
+         * the tree and applies templating to every string leaf node.</li>
+         * </ul>
          */
         static final class PayloadResolver 
         {
             private final ObjectMapper mapper;
+
+            /**
+             * @param mapper The Jackson mapper (typically a YAML-aware instance) used 
+             * to parse strings and manipulate nodes.
+             */
             PayloadResolver(ObjectMapper mapper) { this.mapper = mapper; }
 
+            /**
+             * The main entry point for payload resolution.
+             * 
+             * @param payload The raw JsonNode from the YAML moxture definition.
+             * @param baseDir The directory of the current moxture file (used for relative classpath resolution).
+             * @param vars    The variable context for interpolation.
+             * @param tpl     The templating engine for macro expansion.
+             * @return A finalized {@link JsonNode} ready for HTTP execution.
+             * @throws IOException If a classpath resource cannot be read or JSON is malformed.
+             */
             JsonNode resolve(JsonNode payload, String baseDir, Map<String, Object> vars, Templating tpl) throws IOException {
                 if (payload == null) return null;
 
@@ -1983,130 +2016,58 @@ public final class Moxter
                     String txt = payload.asText().trim();
                     
                     // 1. Interpolate variables FIRST
-                    // We use our helper because it safely handles unquoted integers ({{id}} -> 3)
-                    // If your 'tpl.apply' does this correctly, you can use that. 
-                    // But the helper is safer for JSON generation.
-                    txt = replaceVariablesInString(txt, vars); 
+                    // This handles types correctly (e.g. {{id}} -> 3) before we try to parse as JSON.
+                    txt = Utils.Interpolation.interpolate(txt, vars); 
                     
-                    // 2. Also run the original Templating engine (optional, if you have other macros)
-                    // txt = tpl.apply(txt, vars); 
-
-                    // 3. Handle 'classpath:' prefix
+                    // 2. Handle 'classpath:' prefix
                     String lower = txt.toLowerCase(Locale.ROOT);
                     if (lower.startsWith("classpath:")) {
                         String rawPath = txt.substring(txt.indexOf(':') + 1).trim();
-                        // Recursive call to load and resolve the file content
+                        // Load the file and recurse to allow variables inside the external file
                         JsonNode fileContent = loadClasspathPayload(baseDir, rawPath);
                         return resolve(fileContent, baseDir, vars, tpl);
                     }
 
-                    // 4. Raw JSON string? -> Parse it!
-                    // Now that {{id}} is replaced with 3, readTree will succeed.
-                    if (looksLikeJson(txt)) {
+                    // 3. Heuristic JSON check
+                    // If it looks like JSON after interpolation, we parse it into a tree.
+                    if (Utils.Json.looksLikeJson(txt)) {
                         try {
                             return mapper.readTree(txt);
                         } catch (JsonProcessingException e) {
-                            // Fallback: If parsing fails, return as simple text
-                            // This helps debug if interpolation missed something
+                            // Fallback to text node if it's just a string that happens to start with {
                             return mapper.getNodeFactory().textNode(txt);
                         }
                     }
 
-                    // 5. Plain string -> keep as text
+                    // 4. Plain string -> keep as text
                     return mapper.getNodeFactory().textNode(txt);
                 }
 
-                // CASE 2: Structural YAML/JSON (Map/Array) - e.g. payload: { key: val }
+                // CASE 2: Structural YAML/JSON (Map/Array)
                 // Recursively walk the tree and template string values
                 return templateNodeStrings(payload, vars, tpl);
             }
 
 
-            private String replaceVariablesInString(String template, Map<String, Object> variables) {
-                if (template == null || !template.contains("{{")) {
-                    return template;
-                }
-
-                // Regex to find {{ key }}
-                // Matches {{ followed by any character except } repeatedly, ending with }}
-                Pattern pattern = Pattern.compile("\\{\\{([^}]+)\\}\\}");
-                Matcher matcher = pattern.matcher(template);
-                StringBuffer sb = new StringBuffer();
-
-                while (matcher.find()) {
-                    // group(1) is the inner text (e.g. "param.link")
-                    String key = matcher.group(1).trim(); 
-
-                    if (variables.containsKey(key)) {
-                        Object value = variables.get(key);
-                        String replacement = (value == null) ? "null" : String.valueOf(value);
-                        
-                        // Quote the replacement to ensure $ or \ in the value don't break the matcher
-                        matcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
-                    } else {
-                        // Warning for missing variable
-                        log.warn("[Moxter] Interpolation warning: Variable '{{{}}}' found in payload " +
-                                 "but missing from vars! (Leaving as-is). This will probably cause the " +
-                                 "moxture call to fail.", key);
-
-                        // Keep the original {{key}} in the text so the error is visible in the output/logs
-                        matcher.appendReplacement(sb, Matcher.quoteReplacement(matcher.group(0)));
-                    }
-                }
-                matcher.appendTail(sb);
-                return sb.toString();
-            }
-
-
-            byte[] readResourceBytes(String baseDir, String rawPath) 
-            {
-                // Resolve path (relative or absolute)
-                String path = rawPath.startsWith("/") ? rawPath.substring(1) : (baseDir + "/" + rawPath);
-
-                URL url = null;
-                ClassLoader tccl = Thread.currentThread().getContextClassLoader();
-                if (tccl != null) url = tccl.getResource(path);
-                if (url == null) {
-                    ClassLoader fallback = Moxter.class.getClassLoader();
-                    if (fallback != null) url = fallback.getResource(path);
-                }
-
-                if (url == null) throw new IllegalArgumentException("Resource not found: " + rawPath);
-
-                try (InputStream in = url.openStream()) {
-                    return in.readAllBytes();
-                } catch (IOException e) {
-                    throw new RuntimeException("Failed reading bytes from " + path, e);
-                }
-            }
-
-
+            /**
+             * Loads a YAML or JSON file from the classpath and returns it as a JsonNode.
+             */
             private JsonNode loadClasspathPayload(String baseDir, String rawPath) throws IOException {
-                // Relative to the moxtures file directory unless absolute "/..."
                 String path = rawPath.startsWith("/") ? rawPath.substring(1) : (baseDir + "/" + rawPath);
+                URL url = Utils.IO.findResource(path);
 
-                URL url = null;
-                ClassLoader tccl = Thread.currentThread().getContextClassLoader();
-                if (tccl != null) url = tccl.getResource(path);
-                if (url == null) {
-                    ClassLoader fallback = Moxter.class.getClassLoader();
-                    if (fallback != null) url = fallback.getResource(path);
-                }
-
-                if (url == null) throw new IllegalArgumentException("Resource not found on classpath: " + rawPath + " (resolved: " + path + ")");
+                if (url == null) throw new IllegalArgumentException("Resource not found on classpath: " + path);
 
                 try (InputStream in = url.openStream()) {
-                    return mapper.readTree(in); // YAML mapper parses YAML or JSON
+                    return mapper.readTree(in);
                 }
             }
 
-            private static boolean looksLikeJson(String s) {
-                if (s == null || s.isEmpty()) return false;
-                char first = s.charAt(0), last = s.charAt(s.length() - 1);
-                return (first == '{' && last == '}') || (first == '[' && last == ']');
-            }
 
-            /** Recursively apply templating to all string leaves of a JSON/YAML node. */
+            /**
+             * Recursively walks a JSON tree and applies templating to all string leaves. 
+             * This ensures that variables inside YAML maps/lists are properly expanded.
+             */
             private JsonNode templateNodeStrings(JsonNode node, Map<String,Object> vars, Templating tpl) {
                 if (node == null) return null;
                 if (node.isTextual()) {
@@ -2130,6 +2091,401 @@ public final class Moxter
                 return node;
             }
         }
+
+
+        /**
+         * The primary engine responsible for executing Moxture definitions against a MockMvc instance.
+         * 
+         * <p>The execution lifecycle follows a strict sequence:
+         * <ol>
+         *   <li><b>Resolution:</b> Variables and templates in the URL, headers, and body are resolved.</li>
+         *   <li><b>Payload Preparation:</b> External resources (classpath) are loaded if specified.</li>
+         *   <li><b>Request Construction:</b> A {@link MockHttpServletRequestBuilder} is initialized with 
+         *       the appropriate method, URI, and security context (CSRF, Authentication).</li>
+         *   <li><b>Execution:</b> The request is dispatched via {@code MockMvc.perform()}.</li>
+         *   <li><b>State Management:</b> Response data (JSON body, headers) is extracted and stored 
+         *       back into the variable context for use by subsequent moxtures.</li>
+         *   <li><b>Validation:</b> Status codes and body contents are asserted against the 
+         *       {@code expect} block.</li>
+         * </ol>
+         */
+        @Slf4j
+        static final class HttpExecutor 
+        {
+            private final MockMvc mockMvc;
+            private final ObjectMapper jsonMapper;  // to send the payload as JSON
+            private final Templating tpl;
+            private final PayloadResolver payloads;
+            private final StatusMatcher statusMatcher;
+            private final java.util.function.Supplier<org.springframework.security.core.Authentication> authSupplier;
+
+            HttpExecutor(MockMvc mockMvc, ObjectMapper jsonMapper, Templating tpl,
+                         PayloadResolver payloads, StatusMatcher statusMatcher,
+                         java.util.function.Supplier<org.springframework.security.core.Authentication> authSupplier) {
+                this.mockMvc = mockMvc;
+                this.jsonMapper = jsonMapper;
+                this.tpl = tpl;
+                this.payloads = payloads;
+                this.statusMatcher = statusMatcher;
+                this.authSupplier = authSupplier;
+            }
+
+            /**
+             * Strict convenience.
+             */
+            Runtime.ResponseEnvelope execute(Model.Moxture spec, String baseDir, Map<String,Object> vars) {
+                return execute(spec, baseDir, vars, false, false);
+            }
+
+            /**
+             * Execute a single moxture call.
+             * Logs a concise start line, rich DEBUG details, response preview, a finish line with duration,
+             * and a compact warning when the expected status does not match.
+             *
+             * @param spec
+             * @param baseDir
+             * @param vars
+             * @param lax do not fail on expected-status mismatches (still throws for infra errors)
+             * @param jsonPathLax see callMoxture(...)
+             */
+            Runtime.ResponseEnvelope execute(Model.Moxture spec, String baseDir, 
+                                           Map<String,Object> vars, boolean lax, boolean jsonPathLax) 
+            {
+                final long t0 = System.nanoTime();
+                final String name   = (spec.getName() == null || spec.getName().isBlank()) ? "<unnamed>" : spec.getName();
+                final String method = Utils.Http.safeMethod(spec.getMethod());
+                final Configuration jsonPathConfig = jsonPathLax ? JSONPATH_CONF_LAX : JSONPATH_CONF_STRICT;
+
+                try {
+                    // 1. Prepare URI, Headers, and Payload
+                    if (spec.getEndpoint() == null || spec.getEndpoint().isBlank()) {
+                        throw new IllegalArgumentException("Moxture '" + name + "' has no 'endpoint'.");
+                    }
+                    final String endpoint = tpl.apply(spec.getEndpoint(), vars);
+                    final Map<String,String> headers0 = tpl.applyMapValuesOnly(spec.getHeaders(), vars);
+                    final Map<String,String> query    = tpl.applyMapValuesOnly(spec.getQuery(), vars);
+                    final URI uri = URI.create(Utils.Http.appendQuery(endpoint, query));
+                    final JsonNode payloadNode = payloads.resolve(spec.getBody(), baseDir, vars, tpl);
+
+                    logExecutionStart(name, method, uri, headers0, query, vars, payloadNode);
+
+                    // 2. Build the Spring MockMvc Request
+                    MockHttpServletRequestBuilder req = buildRequest(spec, baseDir, vars, method, uri, headers0, payloadNode);
+
+                    // 3. Execute HTTP Call & Parse Response
+                    MockHttpServletResponse mvcResp = mockMvc.perform(req).andDo(print()).andReturn().getResponse();
+                    Runtime.ResponseEnvelope env = parseResponse(mvcResp);
+
+                    logResponsePreview(env);
+
+                    // 4. Verify Expectations (Status, Match, Assert)
+                    verifyExpectations(spec, env, baseDir, vars, name, method, uri, lax, jsonPathConfig);
+
+                    // 5. Save Variables for future moxtures
+                    processSaves(spec, env, vars, name, jsonPathConfig);
+
+                    logExecutionEnd(name, method, uri, env.status(), t0);
+                    return env;
+
+                } catch (RuntimeException re) {
+                    log.warn("[Moxter] X [{}] {} failed: {}", method, name, Utils.Misc.rootMessage(re));
+                    throw re;
+                } catch (Exception e) {
+                    log.warn("[Moxter] X [{}] {} errored: {}", method, name, Utils.Misc.rootMessage(e));
+                    throw new RuntimeException("Error executing moxture '" + name + "'", e);
+                }
+            }
+
+            // =========================================================================
+            //  Phase 1: Request Building
+            // =========================================================================
+
+            private MockHttpServletRequestBuilder buildRequest(Model.Moxture spec, String baseDir, Map<String,Object> vars, 
+                                                               String method, URI uri, Map<String,String> headers0, 
+                                                               JsonNode payloadNode) throws Exception 
+            {
+                MockHttpServletRequestBuilder req;
+                Map<String,String> headers = (headers0 == null) ? new LinkedHashMap<>() : new LinkedHashMap<>(headers0);
+
+                if (spec.getMultipart() != null && !spec.getMultipart().isEmpty()) {
+                    req = buildMultipartRequest(spec, baseDir, vars, method, uri, headers);
+                } else {
+                    req = Utils.Http.toRequestBuilder(method, uri);
+                    if (payloadNode != null) {
+                        req.content(jsonMapper.writeValueAsBytes(payloadNode));
+                        if (!headers.containsKey(HttpHeaders.CONTENT_TYPE)) {
+                            req.contentType(MediaType.APPLICATION_JSON);
+                        }
+                    }
+                }
+
+                // Attach Auth & CSRF
+                attachSecurity(req, method);
+
+                // Attach standard headers
+                for (Map.Entry<String,String> e : headers.entrySet()) {
+                    req.header(e.getKey(), e.getValue());
+                }
+                return req;
+            }
+
+            private MockHttpServletRequestBuilder buildMultipartRequest(Model.Moxture spec, String baseDir, Map<String,Object> vars, 
+                                                                      String method, URI uri, Map<String,String> headers) throws Exception 
+            {
+                log.debug("[Moxter] Multipart detected");
+                headers.remove(HttpHeaders.CONTENT_TYPE);
+                headers.remove("Content-Type");
+
+                MockMultipartHttpServletRequestBuilder multiReq = MockMvcRequestBuilders.multipart(uri);
+                String effectiveMethod = (method == null) ? "POST" : method.toUpperCase(Locale.ROOT);
+                multiReq.with(r -> { r.setMethod(effectiveMethod); return r; });
+
+                for (Model.MultipartDef part : spec.getMultipart()) {
+                    String pName = tpl.apply(part.name, vars);
+                    String pType = (part.type != null) ? part.type.toLowerCase() : "json";
+                    String pFilename = tpl.apply(part.filename, vars);
+
+                    byte[] contentBytes;
+                    String contentType;
+
+                    if ("file".equals(pType)) {
+                        String path = part.body.asText();
+                        if (path.toLowerCase().startsWith("classpath:")) path = path.substring(10).trim();
+                        contentBytes = Utils.IO.readResourceBytes(baseDir, tpl.apply(path, vars));
+                        contentType = (pFilename != null && pFilename.endsWith(".pdf")) ? "application/pdf"
+                                    : (pFilename != null && pFilename.endsWith(".png")) ? "image/png"
+                                    : "application/octet-stream";
+                    } else {
+                        JsonNode resolvedPartBody = payloads.resolve(part.body, baseDir, vars, tpl);
+                        if ("json".equals(pType) || resolvedPartBody.isContainerNode()) {
+                            contentBytes = jsonMapper.writeValueAsBytes(resolvedPartBody);
+                            contentType = "application/json";
+                            if (pFilename == null) pFilename = "";
+                        } else {
+                            contentBytes = resolvedPartBody.asText().getBytes(StandardCharsets.UTF_8);
+                            contentType = "text/plain";
+                        }
+                    }
+                    multiReq.file(new org.springframework.mock.web.MockMultipartFile(pName, pFilename, contentType, contentBytes));
+                }
+                return multiReq;
+            }
+
+            private void attachSecurity(MockHttpServletRequestBuilder req, String method) {
+                org.springframework.security.core.Authentication auth = null;
+                if (authSupplier != null) {
+                    try { auth = authSupplier.get(); } catch (Exception ignore) {}
+                }
+                if (auth == null) {
+                    auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+                }
+                if (auth != null) {
+                    req.with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication(auth));
+                    log.debug("[Moxter] using Authentication principal={}", Utils.Misc.safeName(auth));
+                }
+                if (Utils.Http.requiresCsrf(method)) {
+                    req.with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf());
+                    log.debug("[Moxter] CSRF token added for {}", method);
+                }
+            }
+
+            // =========================================================================
+            //  Phase 2: Response Parsing
+            // =========================================================================
+
+            private Runtime.ResponseEnvelope parseResponse(MockHttpServletResponse mvcResp) throws Exception {
+                final String raw = mvcResp.getContentAsString(StandardCharsets.UTF_8);
+                final String ctHeader = mvcResp.getHeader(HttpHeaders.CONTENT_TYPE);
+                final boolean hasBody   = raw != null && !raw.isBlank();
+                final boolean isJsonCT  = Utils.Http.isJsonContentType(ctHeader);
+                final boolean looksJson = hasBody && Utils.Json.looksLikeJson(raw);
+
+                JsonNode body = null;
+                if (hasBody && (isJsonCT || looksJson)) {
+                    try { body = jsonMapper.readTree(raw); } 
+                    catch (Exception parseEx) {
+                        log.debug("[Moxter] Non-JSON body (ct='{}') could not be parsed: {}", ctHeader, Utils.Misc.rootMessage(parseEx));
+                    }
+                }
+                return new Runtime.ResponseEnvelope(mvcResp.getStatus(), Utils.Http.copyHeaders(mvcResp), body, raw);
+            }
+
+            // =========================================================================
+            //  Phase 3: Verification (Expectations)
+            // =========================================================================
+
+            private void verifyExpectations(Model.Moxture spec, Runtime.ResponseEnvelope env, String baseDir, Map<String,Object> vars, 
+                                            String name, String method, URI uri, boolean lax, Configuration jsonPathConfig) throws Exception 
+            {
+                if (spec.getExpect() == null) return;
+
+                // 1. Check Status
+                if (spec.getExpect().getStatus() != null) {
+                    if (!statusMatcher.matches(spec.getExpect().getStatus(), env.status())) {
+                        String bodyPreview = (env.raw() == null || env.raw().isBlank()) ? "<empty>" : Utils.Logging.truncate(env.raw(), 500);
+                        String msg = String.format(Locale.ROOT, "Unexpected HTTP %d for '%s' %s %s, expected=%s. Body=%s",
+                                env.status(), name, method, uri, expectedStatusPreview(spec.getExpect().getStatus()), bodyPreview);
+                        if (lax) log.info("[Moxter] (lax mode allowed failure): {}", msg);
+                        else throw new AssertionError(msg);
+                    }
+                }
+
+                // 2. Check Body Assertions
+                Model.ExpectBodyDef bodyDef = spec.getExpect().getBody();
+                if (bodyDef == null) return;
+                boolean failOnError = spec.getExpect().isFailOnError();
+
+                // 2a. Match
+                if (bodyDef.getMatch() != null) {
+                    verifyMatch(bodyDef.getMatch(), env, baseDir, vars, name, failOnError, jsonPathConfig);
+                }
+
+                // 2b. Assert
+                if (bodyDef.getAssertDef() != null && !bodyDef.getAssertDef().isEmpty()) {
+                    verifySurgicalAsserts(bodyDef.getAssertDef(), env, baseDir, vars, jsonPathConfig);
+                }
+            }
+
+            private void verifyMatch(Model.ExpectBodyMatchDef matchDef, Runtime.ResponseEnvelope env, String baseDir, 
+                                     Map<String,Object> vars, String name, boolean failOnError, Configuration jsonPathConfig) throws Exception 
+            {
+                try {
+                    if (env.raw() == null || env.raw().isBlank()) throw new AssertionError("Response body is empty.");
+                    
+                    JsonNode expectedNode = payloads.resolve(matchDef.getContent(), baseDir, vars, tpl);
+                    String expectedJsonStr = jsonMapper.writeValueAsString(expectedNode);
+                    String actualJsonStr = env.raw();
+
+                    if (matchDef.getIgnorePaths() != null && !matchDef.getIgnorePaths().isEmpty()) {
+                        DocumentContext actCtx = JsonPath.using(jsonPathConfig).parse(actualJsonStr);
+                        DocumentContext expCtx = JsonPath.using(jsonPathConfig).parse(expectedJsonStr);
+                        for (String path : matchDef.getIgnorePaths()) {
+                            try { actCtx.delete(path); } catch (Exception ignore) {}
+                            try { expCtx.delete(path); } catch (Exception ignore) {}
+                        }
+                        actualJsonStr = actCtx.jsonString();
+                        expectedJsonStr = expCtx.jsonString();
+                    }
+
+                    boolean strictMode = "full".equalsIgnoreCase(matchDef.getMode());
+                    JSONAssert.assertEquals(expectedJsonStr, actualJsonStr, strictMode);
+                } catch (AssertionError e) {
+                    String msg = String.format("Moxture '%s' JSON match failed: %s", name, e.getMessage());
+                    if (failOnError) throw new AssertionError(msg, e);
+                    else log.warn("[Moxter] (failOnError=false) {}", msg);
+                }
+            }
+
+            private void verifySurgicalAsserts(Model.ExpectBodyAssertDef assertDef, Runtime.ResponseEnvelope env, 
+                                               String baseDir, Map<String,Object> vars, Configuration jsonPathConfig) throws Exception 
+            {
+                DocumentContext actCtx = com.jayway.jsonpath.JsonPath.using(jsonPathConfig).parse(env.raw());
+                assertDef.getPaths().forEach((path, rawExpectedNode) -> {
+                    try {
+                        com.fasterxml.jackson.databind.JsonNode expectedNode = payloads.resolve(rawExpectedNode, baseDir, vars, tpl);
+                        Object actualValue = actCtx.read(path);
+                        
+                        if (expectedNode.isNull()) {
+                            org.assertj.core.api.Assertions.assertThat(actualValue).as("Path '%s'", path).isNull();
+                        } else if (expectedNode.isNumber()) {
+                            org.assertj.core.api.Assertions.assertThat(((Number) actualValue).doubleValue())
+                                    .as("Path '%s'", path).isEqualTo(expectedNode.asDouble());
+                        } else if (expectedNode.isBoolean()) {
+                            org.assertj.core.api.Assertions.assertThat(actualValue)
+                                    .as("Path '%s'", path).isEqualTo(expectedNode.asBoolean());
+                        } else if (expectedNode.isContainerNode()) {
+                            String expectedJson = jsonMapper.writeValueAsString(expectedNode);
+                            String actualJson = jsonMapper.writeValueAsString(actualValue);
+                            org.skyscreamer.jsonassert.JSONAssert.assertEquals(expectedJson, actualJson, true);
+                        } else {
+                            org.assertj.core.api.Assertions.assertThat(String.valueOf(actualValue))
+                                    .as("Path '%s'", path).isEqualTo(expectedNode.asText());
+                        }
+                    } catch (com.jayway.jsonpath.PathNotFoundException e) {
+                        throw new AssertionError("Surgical assert failed: Path '" + path + "' was not found in the response.");
+                    } catch (AssertionError e) {
+                        throw e; 
+                    } catch (Exception e) {
+                        throw new RuntimeException("Failed to evaluate assert for path: " + path, e);
+                    }
+                });
+            }
+
+            // =========================================================================
+            //  Phase 4: Save & Logging Helpers
+            // =========================================================================
+
+            private void processSaves(Model.Moxture spec, Runtime.ResponseEnvelope env, Map<String,Object> vars, String name, Configuration jsonPathConfig) {
+                if (spec.getSave() != null && !spec.getSave().isEmpty()) {
+                    if (env.body() != null) {
+                        DocumentContext ctx = JsonPath.using(jsonPathConfig).parse(env.raw());
+                        for (Map.Entry<String, String> e : spec.getSave().entrySet()) {
+                            vars.put(e.getKey(), ctx.read(e.getValue()));
+                        }
+                        log.debug("[Moxter] saved vars from '{}': {}", name, spec.getSave().keySet());
+                    }
+                }
+            }
+
+            private void logExecutionStart(String name, String method, URI uri, Map<String,String> headers, Map<String,String> query, Map<String,Object> vars, JsonNode payload) {
+                log.info("[Moxter] >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+                log.info("[Moxter] >>> Executing moxture:  [{}, {}, {}]", name, method, uri);
+                if (log.isDebugEnabled()) {
+                    log.debug("[Moxter] more info: headers={} query={} vars={} payload={}",
+                            Utils.Logging.previewHeaders(headers),
+                            (query == null || query.isEmpty() ? "{}" : query.toString()),
+                            Utils.Logging.previewVars(vars),
+                            Utils.Logging.previewNode(payload));
+                }
+            }
+
+            private void logResponsePreview(Runtime.ResponseEnvelope env) {
+                if (log.isDebugEnabled()) {
+                    log.debug("[Moxter] response preview: status={} headers={} body={}",
+                            env.status(), Utils.Logging.previewRespHeaders(env.headers()), Utils.Logging.previewNode(env.body()));
+                }
+                if (log.isTraceEnabled()) {
+                    log.trace("[Moxter] Raw body (len={}): {}", env.raw() == null ? 0 : env.raw().length(), Utils.Logging.truncate(env.raw(), 4000));
+                }
+            }
+
+            private void logExecutionEnd(String name, String method, URI uri, int status, long startTimeNano) {
+                long tookMs = (System.nanoTime() - startTimeNano) / 1_000_000L;
+                log.info("[Moxter] <<< Finished executing moxture: [{}, {}, {}] with status: [{}], in {} ms", name, method, uri, status, tookMs);
+                log.info("[Moxter] <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<");
+            }
+
+            // =========================================================================
+            // Helpers
+            // =========================================================================
+            private static String expectedStatusPreview(JsonNode expected) {
+                if (expected == null || expected.isNull()) return "(none)";
+                return expected.toString();
+            }
+        }
+
+
+
+        /**
+         * An internal, immutable container representing the raw HTTP response returned by 
+         * the execution engine.
+         *
+         * <p>This class acts as a bridge between the underlying HTTP client (Spring MockMvc) 
+         * and Moxter's public API. It captures the exact state of the network response 
+         * immediately after execution, before it is wrapped in a user-friendly 
+         * {@link MoxtureResult} for assertions.
+         *
+         * @param status  The HTTP status code returned by the server (e.g., 200, 404).
+         * @param headers The HTTP response headers, mapped by header name to a list of values.
+         * @param body    The response body parsed into a Jackson JSON tree (null if not JSON).
+         * @param raw     The raw, unparsed string representation of the HTTP response body.
+         */
+        public record ResponseEnvelope(
+            int status, 
+            Map<String, List<String>> headers, 
+            JsonNode body, 
+            String raw
+        ) {}
 
 
 
@@ -2163,444 +2519,164 @@ public final class Moxter
                 return false;
             }
         }
+    }
 
-        @Slf4j
-        static final class HttpExecutor {
-            private final MockMvc mockMvc;
-            private final ObjectMapper jsonMapper; // to send the payload as JSON
-            private final Templating tpl;
-            private final PayloadResolver payloads;
-            private final StatusMatcher statusMatcher;
-            private final java.util.function.Supplier<org.springframework.security.core.Authentication> authSupplier;
+    // ############################################################################
+    
+    /** 
+     * Small utilities (logging helpers). 
+     */
+    static final class Utils 
+    {
+        /** 
+         * Utilities for string-based variable substitution. 
+         */
+        public static class Interpolation 
+        {
+            /**
+             * Performs a regex-based substitution of variables within a template string.
+             *
+             * <p>Matches the {@code {{variableName}}} syntax and replaces it with the 
+             * string representation of the value found in the provided map. 
+             * 
+             * <p>Features:
+             * <ul>
+             * <li><b>Type Safety:</b> Uses {@code String.valueOf(v)} to handle numbers and booleans.</li>
+             * <li><b>Null Safety:</b> Replaces null values with the literal string "null".</li>
+             * <li><b>Regex Safety:</b> Uses {@code Matcher.quoteReplacement} so that values 
+             * containing special characters (like '$' or '\') don't break the interpolation.</li>
+             * <li><b>Graceful Failure:</b> If a variable is missing, the original placeholder 
+             * {@code {{key}}} is preserved in the output to help with debugging.</li>
+             * </ul>
+             *
+             * @param template  The string containing {@code {{key}}} placeholders.
+             * @param variables The map of available variable keys and values.
+             * @return The interpolated string.
+             */
+            public static String interpolate(String template, Map<String, Object> variables) {
+                if (template == null || !template.contains("{{")) {
+                    return template;
+                }
 
-            HttpExecutor(MockMvc mockMvc,
-                         ObjectMapper jsonMapper,
-                         Templating tpl,
-                         PayloadResolver payloads,
-                         StatusMatcher statusMatcher,
-                         java.util.function.Supplier<org.springframework.security.core.Authentication> authSupplier) {
-                this.mockMvc = mockMvc;
-                this.jsonMapper = jsonMapper;
-                this.tpl = tpl;
-                this.payloads = payloads;
-                this.statusMatcher = statusMatcher;
-                this.authSupplier = authSupplier;
+                // Pattern matches {{ followed by any non-bracket chars, ending in }}
+                Pattern pattern = Pattern.compile("\\{\\{([^}]+)\\}\\}");
+                Matcher matcher = pattern.matcher(template);
+                StringBuilder sb = new StringBuilder();
+
+                while (matcher.find()) {
+                    String key = matcher.group(1).trim(); 
+
+                    if (variables != null && variables.containsKey(key)) {
+                        Object value = variables.get(key);
+                        String replacement = (value == null) ? "null" : String.valueOf(value);
+                        
+                        // quoteReplacement is vital to prevent $1 or \ appearing in 
+                        // data from being interpreted as regex groups
+                        matcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+                    } else {
+                        // Keep the original {{key}} if missing so the user can see the error
+                        log.warn("[Moxter] Interpolation warning: Variable '{{{}}}' missing from context.", key);
+                        matcher.appendReplacement(sb, Matcher.quoteReplacement(matcher.group(0)));
+                    }
+                }
+                matcher.appendTail(sb);
+                return sb.toString();
+            }
+        }
+        public static class IO 
+        {
+            private static String parentDirOf(String path) {
+                int i = path.lastIndexOf('/');
+                return (i > 0) ? path.substring(0, i) : "";
             }
 
-            /** Strict convenience. */
-            Runtime.ResponseEnvelope execute(Model.Moxture spec, String baseDir, Map<String,Object> vars) {
-                return execute(spec, baseDir, vars, false, false);
-            }
 
             /**
-             * Execute a single moxture call.
-             * Logs a concise start line, rich DEBUG details, response preview, a finish line with duration,
-             * and a compact warning when the expected status does not match.
-             *
-             * @param spec
-             * @param baseDir
-             * @param vars
-             * @param lax do not fail on expected-status mismatches (still throws for infra errors)
-             * @param jsonPathLax see callMoxture(...)
+             * Utility to read a classpath resource as a byte array. 
+             * 
+             * Used for binary payloads like images or PDFs.
+             * 
+             * @param baseDir The base directory for relative paths.
+             * @param rawPath The path (relative or absolute starting with /).
+             * @return The raw bytes of the resource.
              */
-            Runtime.ResponseEnvelope execute(Model.Moxture spec, String baseDir, 
-                                           Map<String,Object> vars, boolean lax,
-                                           boolean jsonPathLax 
-                                        )
+            public static byte[] readResourceBytes(String baseDir, String rawPath) 
             {
-                log.debug("Lax mode: lax = {}", lax);
-                final long t0 = System.nanoTime();
-                final String name   = (spec.getName() == null || spec.getName().isBlank()) ? "<unnamed>" : spec.getName();
-                final String method = safeMethod(spec.getMethod());
+                String path = rawPath.startsWith("/") ? rawPath.substring(1) : (baseDir + "/" + rawPath);
+                URL url = findResource(path);
 
-                Configuration jsonPathConfig = jsonPathLax 
-                                                ? JSONPATH_CONF_LAX 
-                                                : JSONPATH_CONF_STRICT;
-                try {
-                    // Endpoint must be present after materialization
-                    if (spec.getEndpoint() == null || spec.getEndpoint().isBlank()) {
-                        throw new IllegalArgumentException("Moxture '" + name + "' has no 'endpoint' after basedOn resolution. " +
-                                "Check that its base defines 'endpoint' (or legacy 'url').");
-                    }
+                if (url == null) throw new IllegalArgumentException("Resource not found: " + rawPath);
 
-                    // 1) Resolve endpoint, headers, query with templating (values only for maps)
-                    final String             endpoint = tpl.apply(spec.getEndpoint(), vars);
-                    final Map<String,String> headers0 = tpl.applyMapValuesOnly(spec.getHeaders(), vars);
-                    final Map<String,String> query    = tpl.applyMapValuesOnly(spec.getQuery(), vars);
-                    final URI                uri      = URI.create(appendQuery(endpoint, query));
-
-                    // 2) Resolve payload (YAML/JSON node or text with classpath: include)
-                    final JsonNode payloadNode = payloads.resolve(spec.getBody(), baseDir, vars, tpl);
-
-                    // 3) Human-friendly start + DEBUG details
-                    log.info("[Moxter] >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
-                    log.info("[Moxter] >>> Executing moxture:  [{}, {}, {}]", name, method, uri);
-                    if (log.isDebugEnabled()) {
-                        log.debug("[Moxter] more info: headers={} query={} vars={} payload={}",
-                                Utils.Logging.previewHeaders(headers0),
-                                (query == null || query.isEmpty() ? "{}" : query.toString()),
-                                Utils.Logging.previewVars(vars),
-                                Utils.Logging.previewNode(payloadNode));
-
-                        //#log.debug("[Moxter] spec=\n{}", jsonMapper.writerWithDefaultPrettyPrinter().writeValueAsString(spec));
-                    }
-
-                    // 4) Build request
-                    MockHttpServletRequestBuilder req;
-                    Map<String,String> headers = (headers0 == null) ? new LinkedHashMap<>() : new LinkedHashMap<>(headers0);
-                    
-                    // --- IF MULTIPART ---
-                    if (spec.getMultipart() != null && !spec.getMultipart().isEmpty()) 
-                    {   log.debug("[Moxter] Multipart detected");
-                        // Remove explicit Content-Type header from the moxture definition.
-                        // We MUST let MockMvc generate "multipart/form-data; boundary=..." 
-                        // automatically. If we send "application/json" here, the backend
-                        // will not parse the parts, causing "Required part 'cmd' is not present".
-                        headers.remove(HttpHeaders.CONTENT_TYPE);
-                        headers.remove("Content-Type");
-
-                        // 1. Create Multipart Builder
-                        MockMultipartHttpServletRequestBuilder multiReq = MockMvcRequestBuilders.multipart(uri);
-
-                        // 2. Fix Method (multipart defaults to POST, but we might need PUT)
-                        String effectiveMethod = (method == null) ? "POST" : method.toUpperCase(Locale.ROOT);
-                        multiReq.with(r -> { r.setMethod(effectiveMethod); return r; });
-
-                        // 3. Add Parts
-                        for (Model.MultipartDef part : spec.getMultipart()) {
-                            String pName = tpl.apply(part.name, vars);
-                            String pType = (part.type != null) ? part.type.toLowerCase() : "json";
-                            String pFilename = tpl.apply(part.filename, vars); // optional
-
-                            byte[] contentBytes;
-                            String contentType;
-
-                            if ("file".equals(pType)) {
-                                // For files, the 'body' is the path string (e.g. "classpath:files/doc.pdf")
-                                String path = part.body.asText();
-                                if (path.toLowerCase().startsWith("classpath:")) {
-                                    path = path.substring(10).trim();
-                                }
-                                // Use the new helper to read raw bytes
-                                contentBytes = payloads.readResourceBytes(baseDir, tpl.apply(path, vars));
-                                // Auto-detect or default content type
-                                contentType = (pFilename != null && pFilename.endsWith(".pdf")) ? "application/pdf"
-                                            : (pFilename != null && pFilename.endsWith(".png")) ? "image/png"
-                                            : "application/octet-stream";
-                            } else {
-                                // For JSON/Text, resolve the body (handles templating {{id}})
-                                JsonNode resolvedPartBody = payloads.resolve(part.body, baseDir, vars, tpl);
-                                if ("json".equals(pType) || (resolvedPartBody.isContainerNode())) {
-                                    contentBytes = jsonMapper.writeValueAsBytes(resolvedPartBody);
-                                    contentType = "application/json";
-                                    if (pFilename == null) pFilename = ""; // JSON parts usually have empty filename
-                                } else {
-                                    // Plain text
-                                    contentBytes = resolvedPartBody.asText().getBytes(StandardCharsets.UTF_8);
-                                    contentType = "text/plain";
-                                }
-                            }
-
-                            multiReq.file(new org.springframework.mock.web.MockMultipartFile(
-                                    pName, pFilename, contentType, contentBytes
-                            ));
-                        }
-                        req = multiReq;
-                    } 
-
-                    // --- IF STANDARD, NON MULTIPART ---
-                    else 
-                    {   log.debug("[Moxter] Standard, NOT Multipart");
-                        req = toRequestBuilder(method, uri);
-                        if (payloadNode != null) {
-                            req.content(jsonMapper.writeValueAsBytes(payloadNode));
-                            if (headers == null || !headers.containsKey(HttpHeaders.CONTENT_TYPE)) {
-                                req.contentType(MediaType.APPLICATION_JSON);
-                            }
-                        }
-                    }
-
-
-
-                    // 4.1) Attach Authentication from supplier/fallback + CSRF
-                    org.springframework.security.core.Authentication auth = null;
-                    if (authSupplier != null) {
-                        try { auth = authSupplier.get(); } catch (Exception ignore) {}
-                    }
-                    if (auth == null) {
-                        auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
-                    }
-                    if (auth != null) {
-                        req.with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication(auth));
-                        log.debug("[Moxter] using Authentication principal={}", safeName(auth));
-                    }
-                    if (requiresCsrf(method)) {
-                        req.with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf());
-                        log.debug("[Moxter] CSRF token added for {}", method);
-                    }
-
-                    if (!headers.isEmpty()) for (Map.Entry<String,String> e : headers.entrySet()) req.header(e.getKey(), e.getValue());
-                    if (payloadNode != null) {
-                        req.content(jsonMapper.writeValueAsBytes(payloadNode));
-                        if (!headers.containsKey(HttpHeaders.CONTENT_TYPE)) {
-                            req.contentType(MediaType.APPLICATION_JSON);
-                        }
-                    }
-
-                    // === 5) Execute + tolerant parsing (non-JSON safe) ===
-                    MockHttpServletResponse mvcResp = mockMvc.perform(req).andDo(print()).andReturn().getResponse();
-
-                    final String raw = mvcResp.getContentAsString(StandardCharsets.UTF_8);
-                    final String ctHeader = mvcResp.getHeader(HttpHeaders.CONTENT_TYPE);
-
-                    final boolean hasBody   = raw != null && !raw.isBlank();
-                    final boolean isJsonCT  = isJsonContentType(ctHeader);
-                    final boolean looksJson = hasBody && looksLikeJson(raw);
-
-                    JsonNode body = null;
-                    if (hasBody && (isJsonCT || looksJson)) {
-                        try {
-                            body = jsonMapper.readTree(raw);
-                        } catch (Exception parseEx) {
-                            // Tolerate non-JSON or malformed JSON — keep raw text and continue
-                            log.debug("[Moxter] Non-JSON body (ct='{}') could not be parsed as JSON: {}",
-                                    ctHeader, rootMessage(parseEx));
-                        }
-                    } else if (hasBody && log.isTraceEnabled()) {
-                        log.trace("[Moxter] Skipping JSON parse for non-JSON response (ct='{}', sample='{}')",
-                                ctHeader, Utils.Logging.truncate(raw, 80));
-                    }
-
-                    Runtime.ResponseEnvelope env = new Runtime.ResponseEnvelope(mvcResp.getStatus(), copyHeaders(mvcResp), body, raw);
-
-                    // 5.5) DEBUG response preview
-                    if (log.isDebugEnabled()) {
-                        log.debug("[Moxter] response preview: status={} headers={} body={}",
-                                env.status(),
-                                Utils.Logging.previewRespHeaders(env.headers()),
-                                Utils.Logging.previewNode(body));
-                    }
-
-                    // 6) Expected status (flexible & optional)
-                    log.trace("[Moxter] examining Expected status ");
-                    if (spec.getExpect() != null)
-                    {   if (spec.getExpect().getStatus() == null)
-                        {   log.debug("[Moxter] No expected status provided, skipping check.");
-                        }
-                        else
-                        {   JsonNode expectedStatus = spec.getExpect().getStatus();
-                            if (statusMatcher.matches(expectedStatus, env.status()))
-                            {   log.debug("[Moxter] Expected status is AS expected");
-                            }
-                            else
-                            {   log.debug("[Moxter] Expected status is NOT as expected");
-                                String bodyPreview = (raw == null || raw.isBlank()) ? "<empty>" : Utils.Logging.truncate(raw, 500);
-                                final String message = String.format(
-                                    Locale.ROOT,
-                                    "Unexpected HTTP %d for '%s' %s %s, expected=%s. Body=%s",
-                                    env.status(), name, method, uri, expectedStatusPreview(expectedStatus), bodyPreview
-                                );
-                                if (lax) {
-                                    log.info("[Moxter] Unexpected return status, but authorized in lax mode, so OK! : {}", message);
-                                } else {
-                                    log.warn("[Moxter] {}", message);
-                                    throw new AssertionError(message);
-                                }
-                            }
-                        }
-                    }
-
-                    // 6.1) Process expect.body.match
-                    if (spec.getExpect() != null && spec.getExpect().getBody() != null) {
-                        Model.ExpectBodyDef bodyDef = spec.getExpect().getBody();
-                        boolean failOnError = spec.getExpect().isFailOnError();
-
-                        // --- OPTION B: Tree Matching (match) ---
-                        if (bodyDef.getMatch() != null) {
-                            Model.ExpectBodyMatchDef matchDef = bodyDef.getMatch();
-                            log.trace("[Moxter] Evaluating expect.body.match");
-                            
-                            try {
-                                if (raw == null || raw.isBlank()) {
-                                    throw new AssertionError("Cannot perform match: Response body is empty.");
-                                }
-
-                                // 1. Resolve expected content (handles {{vars}} and 'classpath:' imports!)
-                                JsonNode expectedNode = payloads.resolve(matchDef.getContent(), baseDir, vars, tpl);
-                                String expectedJsonStr = jsonMapper.writeValueAsString(expectedNode);
-                                String actualJsonStr = raw;
-
-                                // 2. Handle ignorePaths by removing them both from the actual and expected
-                                //    via the "Jayway Delete" before passing them on to the matcher
-                                if (matchDef.getIgnorePaths() != null && !matchDef.getIgnorePaths().isEmpty()) {
-                                    // Parse both actual and expected into mutable Jayway contexts
-                                    DocumentContext actCtx = JsonPath.using(jsonPathConfig).parse(actualJsonStr);
-                                    DocumentContext expCtx = JsonPath.using(jsonPathConfig).parse(expectedJsonStr);
-                                    
-                                    for (String path : matchDef.getIgnorePaths()) {
-                                        try { actCtx.delete(path); } catch (Exception ignore) {} // It's fine if the path doesn't exist
-                                        try { expCtx.delete(path); } catch (Exception ignore) {}
-                                    }
-                                    
-                                    // Re-serialize the pruned trees
-                                    actualJsonStr   = actCtx.jsonString();
-                                    expectedJsonStr = expCtx.jsonString();
-                                }
-
-                                // 3. Execute JSONAssert
-                                boolean strictMode = "full".equalsIgnoreCase(matchDef.getMode());
-                                JSONAssert.assertEquals(
-                                        expectedJsonStr, 
-                                        actualJsonStr, 
-                                        strictMode
-                                );
-                                
-                                log.debug("[Moxter] match (mode={}) successful.", strictMode ? "full" : "partial");
-
-                            } catch (AssertionError e) {
-                                String msg = String.format("Moxture '%s' JSON match failed: %s", name, e.getMessage());
-                                if (failOnError) {
-                                    throw new AssertionError(msg, e);
-                                } else {
-                                    log.warn("[Moxter] (failOnError=false) {}", msg);
-                                }
-                            } catch (Exception e) {
-                                // Catch parsing/resolution errors
-                                String msg = String.format("Moxture '%s' failed to evaluate match config: %s", name, rootMessage(e));
-                                if (failOnError) throw new RuntimeException(msg, e);
-                                else log.warn("[Moxter] (failOnError=false) {}", msg);
-                            }
-                        }
-                    }
-
-
-                    // 6.2) Process expect.body.assert
-                    if (   spec.getExpect() != null 
-                        && spec.getExpect().getBody() != null
-                        && spec.getExpect().getBody().getAssertDef() !=null
-                        && !spec.getExpect().getBody().getAssertDef().isEmpty()) 
-                    {
-                        log.trace("[Moxter] Evaluating expect.body.assert");
-                        
-                        // Parse the actual response once for all path queries
-                        DocumentContext actCtx = com.jayway.jsonpath.JsonPath.using(jsonPathConfig).parse(raw);
-                        
-                        spec.getExpect().getBody().getAssertDef().getPaths().forEach((path, rawExpectedNode) -> {
-                            try {
-                                // 1. Interpolate variables in the expected value from YAML
-                                com.fasterxml.jackson.databind.JsonNode expectedNode = payloads.resolve(rawExpectedNode, baseDir, vars, tpl);
-                                
-                                // 2. Extract actual value from the response using JsonPath
-                                Object actualValue = actCtx.read(path);
-                                
-                                // 3. Type-aware AssertJ Comparisons
-                                if (expectedNode.isNull()) {
-                                    org.assertj.core.api.Assertions.assertThat(actualValue)
-                                            .as("Path '%s'", path).isNull();
-                                } 
-                                else if (expectedNode.isNumber()) {
-                                    org.assertj.core.api.Assertions.assertThat(((Number) actualValue).doubleValue())
-                                            .as("Path '%s'", path).isEqualTo(expectedNode.asDouble());
-                                } 
-                                else if (expectedNode.isBoolean()) {
-                                    org.assertj.core.api.Assertions.assertThat(actualValue)
-                                            .as("Path '%s'", path).isEqualTo(expectedNode.asBoolean());
-                                } 
-                                else if (expectedNode.isContainerNode()) {
-                                    // If they are asserting an entire sub-object or array
-                                    String expectedJson = jsonMapper.writeValueAsString(expectedNode);
-                                    String actualJson = jsonMapper.writeValueAsString(actualValue);
-                                    org.skyscreamer.jsonassert.JSONAssert.assertEquals(expectedJson, actualJson, true);
-                                } 
-                                else {
-                                    // Fallback for Strings, Enums, Dates, etc.
-                                    org.assertj.core.api.Assertions.assertThat(String.valueOf(actualValue))
-                                            .as("Path '%s'", path).isEqualTo(expectedNode.asText());
-                                }
-                            } catch (com.jayway.jsonpath.PathNotFoundException e) {
-                                throw new AssertionError("Surgical assert failed: Path '" + path + "' was not found in the response.");
-                            } catch (AssertionError e) {
-                                // Let AssertJ errors bubble up cleanly
-                                throw e; 
-                            } catch (Exception e) {
-                                throw new RuntimeException("Failed to evaluate assert for path: " + path, e);
-                            }
-                        });
-                        log.debug("[Moxter] All surgical assertions passed.");
-                    }
-
-                    // 7) Finish line + duration
-                    final long tookMs = (System.nanoTime() - t0) / 1_000_000L;
-                    log.info("[Moxter] <<< Finished executing moxture: [{}, {}, {}] with status: [{}], in {} ms",
-                            name, method, uri, env.status(), tookMs);
-                    log.info("[Moxter] <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<");
-
-                    // === 8) Save variables only if JSON ===
-                    if (spec.getSave() != null && !spec.getSave().isEmpty()) {
-                        if (env.body() != null) {
-                            DocumentContext ctx = JsonPath.using(jsonPathConfig).parse(raw);
-                            for (Map.Entry<String, String> e : spec.getSave().entrySet()) {
-                                // NOTE: initial vars are loaded at construction; runtime 'save' still writes directly.
-                                // If you later want to enforce strictness here, route via varsPut / varsPutIfAbsent.
-                                vars.put(e.getKey(), ctx.read(e.getValue()));
-                            }
-                            log.debug("[Moxter]    saved vars from '{}': {}", name, spec.getSave().keySet());
-                        } else if (log.isDebugEnabled()) {
-                            log.debug("[Moxter]    save skipped for '{}': response is not JSON", name);
-                        }
-                    }
-
-                    if (log.isTraceEnabled()) log.trace("[Moxter] Raw body (len={}): {}", raw == null ? 0 : raw.length(), Utils.Logging.truncate(raw, 4000));
-                    return env;
-
-                } catch (RuntimeException re) {
-                    log.warn("[Moxter] X [{}] {} failed: {}", method, name, rootMessage(re));
-                    throw re;
-                } catch (Exception e) {
-                    // NOTE: Non-JSON bodies no longer cause JsonParseException to escape here.
-                    log.warn("[Moxter] X [{}] {} errored: {}", method, name, rootMessage(e));
-                    throw new RuntimeException("Error executing moxture '" + name + "'", e);
+                try (InputStream in = url.openStream()) {
+                    return in.readAllBytes();
+                } catch (IOException e) {
+                    throw new RuntimeException("Failed reading bytes from " + path, e);
                 }
             }
 
-            /* === helpers =========================================================== */
+            /**
+             * Helper to locate resources using the Thread Context ClassLoader or Moxter ClassLoader.
+             */
+            public static URL findResource(String path) {
+                URL url = null;
+                ClassLoader tccl = Thread.currentThread().getContextClassLoader();
+                if (tccl != null) url = tccl.getResource(path);
+                if (url == null) {
+                    ClassLoader fallback = Moxter.class.getClassLoader();
+                    if (fallback != null) url = fallback.getResource(path);
+                }
+                return url;
+            }
 
-            private static boolean isJsonContentType(String ctHeader) {
+        }
+
+        public static class Http 
+        {
+            /**
+             * Determines if a Content-Type header indicates a JSON payload.
+             * 
+             * <p>This method is intentionally broad. It safely handles nulls, ignores case, 
+             * ignores additional parameters (like {@code charset=utf-8}), and specifically 
+             * supports vendor-specific JSON extensions (like {@code application/problem+json} 
+             * or {@code application/vnd.api+json}).
+             *
+             * @param ctHeader The raw Content-Type header string (can be null).
+             * @return {@code true} if the header implies JSON content, {@code false} otherwise.
+             */
+            public static boolean isJsonContentType(String ctHeader) {
                 if (ctHeader == null) return false;
-                // Be tolerant of charset/parameters and vendor types
                 String ct = ctHeader.toLowerCase(Locale.ROOT);
-                return ct.contains("application/json")
-                    || ct.contains("+json"); // e.g., application/problem+json
+                return ct.contains("application/json") || ct.contains("+json");
             }
 
-            private static boolean looksLikeJson(String body) {
-                if (body == null) return false;
-                String s = body.stripLeading();
-                return (s.startsWith("{") || s.startsWith("["));
-            }
-
-            private static boolean requiresCsrf(String method) {
+            /**
+             * Checks if an HTTP method typically requires a CSRF token.
+             * 
+             * <p>In Spring Security, state-changing methods require CSRF protection by default. 
+             * Moxter uses this to automatically inject a valid CSRF token into the MockMvc 
+             * request so developers don't have to manually mock CSRF handshakes in their YAML.
+             *
+             * @param method The HTTP method (e.g., "POST", "GET").
+             * @return {@code true} if the method is POST, PUT, PATCH, or DELETE.
+             */
+            public static boolean requiresCsrf(String method) {
                 if (method == null) return false;
                 String m = method.toUpperCase(Locale.ROOT);
                 return m.equals("POST") || m.equals("PUT") || m.equals("PATCH") || m.equals("DELETE");
             }
 
-            private static String safeName(org.springframework.security.core.Authentication a) {
-                try { return a.getName(); } catch (Exception ignore) { return "(unknown)"; }
-            }
-
-            private static String rootMessage(Throwable t) {
-                if (t == null) return "(no message)";
-                String m = t.getMessage();
-                if (m != null && !m.isBlank()) return m;
-                Throwable c = t.getCause();
-                if (c != null && c.getMessage() != null && !c.getMessage().isBlank()) return c.getMessage();
-                return t.toString();
-            }
-
-            /* HTTP utils */
-
-            private static MockHttpServletRequestBuilder toRequestBuilder(String method, URI uri) {
+            /**
+             * Translates a string-based HTTP method into a Spring {@link MockHttpServletRequestBuilder}.
+             * 
+             * <p>Acts as the core factory for the HTTP execution pipeline, mapping the declarative 
+             * YAML method string into the actual Spring testing component.
+             *
+             * @param method The HTTP method (defaults to "GET" if null).
+             * @param uri    The fully resolved target URI.
+             * @return A builder initialized for the specified HTTP method.
+             * @throws IllegalArgumentException if the HTTP method is unsupported.
+             */
+            public static MockHttpServletRequestBuilder toRequestBuilder(String method, URI uri) {
                 String m = (method == null) ? "GET" : method.toUpperCase(Locale.ROOT);
                 return switch (m) {
                     case "GET"     -> org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(uri);
@@ -2614,7 +2690,17 @@ public final class Moxter
                 };
             }
 
-            private static String appendQuery(String endpoint, Map<String,String> query) {
+            /**
+             * Appends a map of query parameters to a given endpoint URL.
+             * 
+             * <p>It correctly handles URLs that already contain query parameters (appending with 
+             * {@code &} instead of {@code ?}) and ensures all keys and values are URL-encoded.
+             *
+             * @param endpoint The base URL (e.g., "/api/pets" or "/api/pets?sort=asc").
+             * @param query    A map of query parameters to append.
+             * @return The fully constructed URI string.
+             */
+            public static String appendQuery(String endpoint, Map<String,String> query) {
                 if (query == null || query.isEmpty()) return endpoint;
                 StringBuilder sb = new StringBuilder(endpoint);
                 sb.append(endpoint.contains("?") ? "&" : "?");
@@ -2627,81 +2713,152 @@ public final class Moxter
                 return sb.toString();
             }
 
-            private static String urlEncode(String s) {
+            /**
+             * URL-encodes a string using UTF-8.
+             * 
+             * <p>Wraps {@link URLEncoder#encode(String, String)} to hide the checked 
+             * {@code UnsupportedEncodingException}, as UTF-8 is guaranteed to be available 
+             * on all modern JVMs.
+             *
+             * @param s The string to encode.
+             * @return The URL-encoded string.
+             */
+            public static String urlEncode(String s) {
                 try { return URLEncoder.encode(s, StandardCharsets.UTF_8.toString()); }
                 catch (Exception e) { throw new RuntimeException(e); }
             }
 
-            private static Map<String, List<String>> copyHeaders(MockHttpServletResponse r) {
+            /**
+             * Extracts all headers from a Spring MockMvc response into a standard Map.
+             * 
+             * <p>This isolates Moxter's internal {@code ResponseEnvelope} from Spring-specific 
+             * classes, making the response data agnostic and easier to assert against.
+             *
+             * @param r The Spring MockHttpServletResponse.
+             * @return A map of header names to lists of header values.
+             */
+            public static Map<String, List<String>> copyHeaders(MockHttpServletResponse r) {
                 Map<String, List<String>> h = new LinkedHashMap<>();
                 for (String name : r.getHeaderNames()) h.put(name, new ArrayList<>(r.getHeaders(name)));
                 return h;
             }
 
-            private static String safeMethod(String method) { return method == null ? "GET" : method; }
-
-            private static String expectedStatusPreview(JsonNode expected) {
-                if (expected == null || expected.isNull()) return "(none)";
-                return expected.toString();
+            /**
+             * Ensures an HTTP method string is never null.
+             *
+             * @param method The method string to check.
+             * @return The original method, or "GET" if it was null.
+             */
+            public static String safeMethod(String method) { 
+                return method == null ? "GET" : method; 
             }
         }
 
 
-        /**
-         * An internal, immutable container representing the raw HTTP response returned by 
-         * the execution engine.
-         *
-         * <p>This class acts as a bridge between the underlying HTTP client (Spring MockMvc) 
-         * and Moxter's public API. It captures the exact state of the network response 
-         * immediately after execution, before it is wrapped in a user-friendly 
-         * {@link MoxtureResult} for assertions.
-         *
-         * @param status  The HTTP status code returned by the server (e.g., 200, 404).
-         * @param headers The HTTP response headers, mapped by header name to a list of values.
-         * @param body    The response body parsed into a Jackson JSON tree (null if not JSON).
-         * @param raw     The raw, unparsed string representation of the HTTP response body.
-         */
-        public record ResponseEnvelope(
-            int status, 
-            Map<String, List<String>> headers, 
-            JsonNode body, 
-            String raw
-        ) {}
-
-
-    }
-
-
-
-    // ############################################################################
-    
-    /** 
-     * Small utilities (logging helpers). 
-     */
-    static final class Utils 
-    {
         public static class Misc
         {
+            /**
+             * Safely extracts the principal's name from a Spring Security Authentication object.
+             * 
+             * <p>This is strictly used for logging. It swallows any potential exceptions 
+             * (like uninitialized proxy objects or custom auth implementations throwing 
+             * unexpected errors) to ensure that a simple debug log statement never crashes 
+             * an otherwise successful test execution.
+             *
+             * @param a The Spring Security Authentication object (can be null).
+             * @return The principal's name, or "(unknown)" if extraction fails.
+             */
+            public static String safeName(Authentication a) {
+                try { return a.getName(); } catch (Exception ignore) { return "(unknown)"; }
+            }
 
+            /**
+             * Extracts the most meaningful error message from a Throwable.
+             * 
+             * <p>Frameworks like Spring or Jackson often wrap the true cause of an error in 
+             * generic wrapper exceptions with blank messages. This method digs down one level 
+             * to the cause if the top-level message is missing, ensuring the console logs 
+             * actually tell the developer what went wrong.
+             *
+             * @param t The exception thrown during execution.
+             * @return A non-blank string representing the best available error message.
+             */
+            public static String rootMessage(Throwable t) {
+                if (t == null) return "(no message)";
+                String m = t.getMessage();
+                if (m != null && !m.isBlank()) return m;
+                Throwable c = t.getCause();
+                if (c != null && c.getMessage() != null && !c.getMessage().isBlank()) return c.getMessage();
+                return t.toString();
+            }
+
+            /**
+             * Returns the first string that is neither null nor completely blank.
+             * 
+             * <p>Used heavily during the `basedOn` materialization phase to determine if a 
+             * child moxture has overridden a scalar value from its parent (e.g., overriding 
+             * the HTTP method or endpoint).
+             *
+             * @param a The primary string to check (usually the child's value).
+             * @param b The fallback string (usually the parent's value).
+             * @return The first valid string, or {@code b} if {@code a} is blank.
+             */
             public static String firstNonBlank(String a, String b) {
                 return (a != null && !a.isBlank()) ? a : b;
             }
 
-            private static <K, V> Map<K, V> mergeMap(Map<K, V> parent, Map<K, V> child) {
+            /**
+             * Performs a shallow merge of two maps, with the child map taking precedence.
+             * 
+             * <p>Used during the `basedOn` materialization phase to merge HTTP headers, 
+             * query parameters, and variable scopes. It guarantees that if a child defines 
+             * the same key as a parent, the child's value completely overwrites the parent's.
+             * 
+             * <p>Note: This method intentionally returns a {@link LinkedHashMap} to preserve 
+             * the exact insertion order defined by the user in the YAML file.
+             *
+             * @param parent The base map from the parent moxture.
+             * @param child  The overriding map from the child moxture.
+             * @param <K>    The type of keys maintained by this map.
+             * @param <V>    The type of mapped values.
+             * @return A new, order-preserving map containing the merged result.
+             */
+            public static <K, V> Map<K, V> mergeMap(Map<K, V> parent, Map<K, V> child) {
                 if ((parent == null || parent.isEmpty()) && (child == null || child.isEmpty())) {
                     return child;
                 }
                 Map<K, V> out = new LinkedHashMap<>();
                 if (parent != null) out.putAll(parent);
-                if (child != null) out.putAll(child);
+                if (child != null) out.putAll(child); // Child overwrites parent keys here
                 return out;
             }
         }
 
 
-
         public static class Json 
         {
+            /**
+             * Performs a fast, heuristic check to determine if a string loosely resembles a JSON payload.
+             *
+             * <p>This method strips leading and trailing whitespace and checks if the string 
+             * is properly enclosed in object ('{}') or array ('[]') delimiters. This acts as a cheap 
+             * "sniff test" to prevent handing plain text or HTML to Jackson, avoiding expensive 
+             * and unnecessary parsing exceptions.
+             *
+             * @param text The raw string content to inspect.
+             * @return {@code true} if the non-blank string starts and ends with matching JSON delimiters, 
+             * {@code false} otherwise.
+             */
+            public static boolean looksLikeJson(String text) {
+                if (text == null || text.isBlank()) return false;
+                
+                String s = text.strip();
+                char first = s.charAt(0);
+                char last = s.charAt(s.length() - 1);
+                
+                return (first == '{' && last == '}') || (first == '[' && last == ']');
+            }
+
             /**
              * Extracts a value from a JSON string using a JsonPath expression.
              * <p>
@@ -2759,12 +2916,31 @@ public final class Moxter
 
         static final class Logging 
         {
+            /**
+             * Safely truncates a string to a maximum length to prevent log bloat.
+             * 
+             * <p>If the string exceeds the maximum length, it cuts the string and appends 
+             * a helpful suffix indicating exactly how many characters were omitted.
+             *
+             * @param s   The string to truncate (can be null).
+             * @param max The maximum allowed length before truncation kicks in.
+             * @return The truncated string, or the original if it was within limits.
+             */
             static String truncate(String s, int max) {
                 if (s == null) return null;
                 if (s.length() <= max) return s;
                 return s.substring(0, max) + " ...(" + (s.length() - max) + " more chars)";
             }
 
+            /**
+             * Creates a sanitized preview of the variable context for debug logging.
+             * 
+             * <p>This method prevents credential leakage in CI/CD logs by actively looking for 
+             * keys containing the word "token" (case-insensitive) and masking their values.
+             *
+             * @param vars The current map of scoped variables.
+             * @return A sanitized, shallow copy of the variables map.
+             */
             static Map<String,Object> previewVars(Map<String,Object> vars) {
                 Map<String,Object> out = new LinkedHashMap<>();
                 for (Map.Entry<String, Object> e : vars.entrySet()) {
@@ -2775,6 +2951,15 @@ public final class Moxter
                 return out;
             }
 
+            /**
+             * Creates a sanitized preview of HTTP request headers for debug logging.
+             * 
+             * <p>Specifically targets and masks the {@code Authorization} header so Bearer 
+             * tokens or Basic Auth credentials are not printed in plain text.
+             *
+             * @param headers The HTTP request headers.
+             * @return A string representation of the sanitized headers.
+             */
             static String previewHeaders(Map<String,String> headers) {
                 if (headers == null || headers.isEmpty()) return "{}";
                 Map<String,String> out = new LinkedHashMap<>();
@@ -2786,7 +2971,16 @@ public final class Moxter
                 return out.toString();
             }
 
-            /** Pretty-print response headers (Map<String, List<String>>), masking Authorization. */
+            /** 
+             * Flattens and sanitizes HTTP response headers for debug logging.
+             * 
+             * <p>Since MockMvc returns headers as a {@code Map<String, List<String>>}, 
+             * this method joins multiple values with a comma to keep the log output 
+             * compact, while still masking the {@code Authorization} header.
+             * 
+             * @param headers The HTTP response headers.
+             * @return A string representation of the flattened, sanitized headers.
+             */
             static String previewRespHeaders(Map<String, List<String>> headers) {
                 if (headers == null || headers.isEmpty()) return "{}";
                 Map<String,String> flat = new LinkedHashMap<>();
@@ -2799,11 +2993,31 @@ public final class Moxter
                 return flat.toString();
             }
 
+            /**
+             * Attempts to pretty-print a Jackson JSON tree for debug output.
+             * 
+             * <p>Logging should never crash an application. If pretty-printing fails 
+             * for any reason (e.g., circular references or custom serializers), this 
+             * catches the exception and falls back to a standard {@code toString()}.
+             *
+             * @param n The JsonNode to format.
+             * @return A safely formatted JSON string, or "(none)" if null.
+             */
             static String previewNode(JsonNode n) {
                 if (n == null) return "(none)";
                 try { return n.toPrettyString(); } catch (Exception e) { return n.toString(); }
             }
 
+            /**
+             * Generates a safe, truncated string representation of an arbitrary object.
+             * 
+             * <p>Used primarily when dumping variables of unknown types, ensuring that 
+             * a massive object structure doesn't accidentally dump thousands of lines 
+             * into the console. Caps the output at 200 characters.
+             *
+             * @param v The object to preview.
+             * @return A truncated string representation.
+             */
             static String previewValue(Object v) {
                 if (v == null) return "null";
                 String s = String.valueOf(v);
@@ -2866,7 +3080,6 @@ public final class Moxter
             private String endpoint;
             private Map<String,String> headers;
             private Map<String,String> query;
-            //# private JsonNode payload;        
             private JsonNode body;           // Replaces 'payload'
                                              // YAML object/array OR text ("classpath:..." or raw JSON string)
             private Map<String,String> save; // varName -> JSONPath

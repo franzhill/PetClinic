@@ -1,4 +1,4 @@
-package com.airbus.ebcs.tools.profiling;
+package com.fhi.pet_clinic.tools;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
