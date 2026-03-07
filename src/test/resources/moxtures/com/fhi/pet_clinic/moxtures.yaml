@@ -1,106 +1,63 @@
-
+  # ==================================================================
+  #
+  # This file being at the root of the hierarchy exposes moxtures available 
+  # to all JUnit test classes and all moxtures files (via basedOn/extends)
+  #
+  # So the idea is to keep them versatile, generic, and keep the 
+  # complex assertions out of them.
+  # ==================================================================
 
 moxtures:
 
-  - name: BeforeAll
-    moxtures: 
-      - create_species_dog
-      - create_species_cat
-      - create_species_dragon
-
-
-  - name: AfterAll
-    moxtures: []
-
-
-  - name: BeforeEach
-    moxtures: []
-
-
-  - name: AfterEach
-    moxtures: []
-
-
-
-  - name: create_species_dog
-    endpoint: "/api/species"
+  - name: create_species
     method: POST
-    lax: true         # Ignores errors if 'Dog' already exists
-    body: |           # Literal Block Scalar operator. Preserves every single newline and space exactly as you typed it.
-      { "name": "Dog",
-        "expectedLifespan": 12,
-        "avgLitterSize": 4,
-        "fertilityAgeWindow": {
-          "from": 1,
-          "to": 8
-        }
-      }
+    endpoint: /api/species
+    save:
+      speciesId: "$.id"
     expect:
       status: 201       # 2xx    also accepted
 
 
 
-  - name: create_species_cat
-    extends: create_species_dog
-    body: |                         # full override
-      { "name": "Cat",
-        "expectedLifespan": 18,
-        "avgLitterSize": 5,
-        "fertilityAgeWindow": {
-          "from": 1,
-          "to": 10
-        }
-      }
-
-
-  - name: create_species_dragon
-    extends: create_species_dog
-    body: |
-      { "name": "Dragon",
-        "expectedLifespan": 250,
-        "avgLitterSize": 7,
-        "fertilityAgeWindow": {
-          "from": 18,
-          "to": 100
-        }
-      }
-
-
-
   - name: create_owner
-    endpoint: "/owners"
     method: POST
+    endpoint: /owners
+    vars:
+      in.name     : "Tintin"
     body: |
-      { "name": "Tintin"
+      { "name": {{in.name}}
       }
     save:
       ownerId: "$.id"
-    expect:
-      status: 201
-
 
 
   - name: create_pet_for_owner
     endpoint: "/api/pets"
     method: POST
     vars:
-      in_name     : "Snowy"
-      in_sex      :  "MALE"
-      in_birthDate: "2020-01-01"
-      in_species  : "Dog"
+      in.name     : "Snowy"         # the 'in.' prefix is just a convention. It could have been 'in_name' too.
+      in.sex      :  "MALE"         # Here we define a default value.
+      in.birthDate: "2020-01-01"    # Here too.
+      in.species  : "Dog"           # Default values can be overridden at call time.
+      in.ownerId  : "{{ownerId}}"   # Here we are using the global 'ownerId' as the default.
+                                    # This lets us nicely chain after calling 'create_owner'.
+                                    # OR as always, override at call time.
     body: |
       {
-        "name": {{in_name}},             # No quotes needed (works with too: "{{in_name}}")
-        "sex": {{in_sex}},
-        "birthDate": {{in_birthDate}},
+        "name": "{{in.name}}",
+        "sex": "{{in.sex}}",
+        "birthDate": "{{in.birthDate}}",
         "species": {
-          "name": {{in_species}}
+          "name": "{{in.species}}"
         },
         "owner": {
-          "id": {{ownerId}}
+          "id": {{in.ownerId}}
         }
       }
     save:
+      # Variables are global and can be reused in this fixture file through
+      # the following syntax:
+      #    {{name_of_my_variable}}
       petId: "$.id"
       petName: "$.name"
       petOwnerId: "$.owner.id"
@@ -108,98 +65,17 @@ moxtures:
       status: 201
 
 
-  - name: create_pet_for_owner_with_expect_body_match
-    extends: create_pet_for_owner     # alias for 'basedOn'
-    expect:
-      body: 
-        match: 
-          mode: partial   # partial | full
-          #schema: "classpath:schemas/pet.json"  #schema checks the structure and data types of your response.
-          #ignorePaths: ["$.createdAt"]
-          content: |
-            {
-              "name": {{in_name}},
-              "sex": {{in_sex}},
-              "birthDate": "{{in_birthDate}}",
-              "species": {
-                "name": "{{in_species}}"
-              },
-              "owner": {
-                "id": {{ownerId}}
-              }
-            }
 
-
-  - name: create_pet_for_owner_with_expect_body_assert
-    extends: create_pet_for_owner     # alias for 'basedOn'
+  - name: mate_pets
+    method: POST
+    endpoint: /api/pets/mate?motherId={{motherId}}&fatherId={{fatherId}}
     expect:
-      body: 
+      status: 200
+      body:
         assert:
-          # String assertions (quotes mandatory here)
-          "$.name": "{{in_name}}"
-          "$.sex": "{{in_sex}}"
-          "$.species.name": "{{in_species}}"
-
-          # Numeric/ID assertions
-          "$.owner.id": "{{ownerId}}"
-          
-          # Checking a specific nested field without needing the full object tree
-          "$.birthDate": "{{in_birthDate}}"
+          # Verify the service correctly linked the parents and species to the offspring
+          "$.[0].species.name": "{{in_species_name}}"
+          "$.[0].mother.id": "{{motherId}}"
+          "$.[0].father.id": "{{fatherId}}"
 
 
-  - name: create_pet_for_owner_with_body_partial_override_yaml
-    extends: create_pet_for_owner
-    body:
-      species:
-        name: "Dragon" # This should deep-merge into the parent 'species' object
-
-
-  - name: create_pet_for_owner_with_body_partial_override_json
-    extends: create_pet_for_owner
-    body: |
-      {
-        "species": {
-          "name": "Dragon"
-        }
-      }
-
-
-
-  - name: group_create_owner_and_pet
-    moxtures: 
-      - create_owner
-      - create_pet_for_owner
-
-
-  - name: group_create_owner_and_pet_with_local_override
-    vars:
-      in_name: "Beethoven"   # overrides 'Snowy'
-    moxtures: 
-      - create_owner
-      - create_pet_for_owner
-
-
-  - name: group_create_owner_and_pet_with_expect_section
-    vars:
-      in_name: "Pongo"   # overrides 'Snowy'
-    moxtures: 
-      - create_owner
-      - create_pet_for_owner_with_expect_section
-
-
-
-  - name: delete_pet
-    method: DELETE
-    endpoint: /pet/{{petId_local}}/delete
-    expect:
-      status: 200
-
-
-
-
-
-  - name: verify_owner_pets
-    endpoint: "/owners/{{ownerId}}/pets"
-    method: GET
-    expect:
-      status: 200

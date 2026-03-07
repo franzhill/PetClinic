@@ -162,15 +162,135 @@ moxtures:
           # (think ids and dates that are highly variable), the schema checking
           # asserts the type of the response whic is supposed to be rigid.
 
-
-
+        # Assert exception should be thrown:
+        exception:
+          type: "MatingException"           # Unwraps the cause chain to find this class
+          messageContains: "is sterile"     # Convenience check for the message
+          assert:                           # Surgical JSONPath asserts on the Exception object!
+            "$.causeEnum": "STERILE_PARENT"
 ```
+
+---
+### New syntax for group
+
+NOT AS GOOD:
+
+```yaml
+- name: group_create_owner_and_pet
+  moxtures:
+    - create_owner                         # Simple moxture call by name. Saves {{ownerId}} globally
+    - vars:                                # Interaction with global scope:
+        owner: "{{ownerId}}"               #   Swap/Rename/Pipe (for the next moxtures)
+        debug_label: "Created_at_{{now}}"  #   Or create new global context
+    - create_pet_for_owner
+    - name: create_other                   # Call a moxture with added context.
+      with:                                # With call scope
+        in.name: "Rex"                     #   Override default
+        in_owner_id: "{{owner}}"           #   Or use from global context
+```
+
+BETTER:
+
+```yaml
+- name: group_create_owner_and_pet
+  steps:
+    - call: create_owner                    # Simple moxture call by name. Saves {{ownerId}} globally
+    - vars:                                # Interaction with global scope:
+        owner: "{{ownerId}}"               #   Swap/Rename/Pipe (for the next moxtures)
+        debug_label: "Created_at_{{now}}"  #   Or create new global context
+    - call: create_pet_for_owner
+    - call: create_other                   # Call a moxture with added context.
+      with:                                # With call scope
+        in.name: "Rex"                     #   Override default
+        in_owner_id: "{{owner}}"           #   Or use from global context
+```
+
+
+
+
+---
+### Override with jsonpath
+
+mx.caller()
+  // Override variable
+  .with("in.name"   , "Random_afFik874987")
+  // Override body directly with jsonpath
+  .with("$.species.sex"    , "MALE" )   # if begins with $ it's a jsonpath
+  .call(moxtureName);
+
+or name it 
+
+  .override("$.species.sex"    , "MALE" )   # if begins with $ it's a jsonpath
+
+
+=> 
+
+mx.caller()
+  .with("in_name", "Random_afFik874987")  // "Interpolate this variable"
+  .override("$.species.sex", "MALE")      // "Surgically override this JSON path"
+  .call(moxtureName);
+
+
+
+---
+### Assert exceptions
+
+See above
+
+
+
+---
+### Moxtures should not ALL be evaluated at start of Moxter engine
+
+If a moxture is faulty then Moxter crashes
+When the faulty moxture might not ever end up being called at all.
 
 
 
 ---
 ### Should warn when using unknown/wrong yaml
 
+
+
+---
+### Imrpove ERROR/DEBUGGING
+
+We reeally need to improve syntax error support in the moxtures yaml files
+Th error reported needs to clearly indicate the file and the line
+
+Instead of the following, we should have a clear message indicating
+- which moxture is faulty
+- where exactly
+
+
+
+
+
+12:23:52.229 main INFO  o.s.t.w.s.TestDispatcherServlet initServletBean,554 : Completed initialization in 1 ms
+12:23:52.263 main INFO  c.f.p.m.controller.CrudTest logStarted,56 : Started CrudTest in 10.863 seconds (process running for 12.388)
+[ERROR] Tests run: 1, Failures: 0, Errors: 1, Skipped: 0, Time elapsed: 11.81 s <<< FAILURE! -- in com.fhi.pet_clinic.moxter_tests.controller.CrudTest
+[ERROR] com.fhi.pet_clinic.moxter_tests.controller.CrudTest -- Time elapsed: 11.81 s <<< ERROR!
+java.lang.RuntimeException: Failed reading vars from moxtures/com/fhi/pet_clinic/moxtures.yaml
+        at com.fhi.moxter.Moxter.loadHierarchicalVars(Moxter.java:393)
+        at com.fhi.moxter.Moxter.<init>(Moxter.java:296)
+        at com.fhi.moxter.Moxter$MoxBuilder.build(Moxter.java:812)
+        at com.fhi.pet_clinic.moxter_tests.ParentMoxterTest.bootBase(ParentMoxterTest.java:75)
+        at java.base/java.lang.reflect.Method.invoke(Method.java:568)
+        at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+        Suppressed: java.lang.NullPointerException: Cannot invoke "com.fhi.moxter.Moxter.caller()" because "this.mx" is null
+                at com.fhi.pet_clinic.moxter_tests.ParentMoxterTest.teardownBase(ParentMoxterTest.java:85)
+                at java.base/java.lang.reflect.Method.invoke(Method.java:568)
+                at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+                at java.base/java.util.Collections$UnmodifiableCollection.forEach(Collections.java:1092)
+                ... 1 more
+Caused by: com.fasterxml.jackson.databind.JsonMappingException: Expected a field name (Scalar value in YAML), got this instead: <org.yaml.snakeyaml.events.MappingStartEvent(anchor=null, tag=null, implicit=true)>
+ at [Source: (BufferedInputStream); line: 79, column: 32] (through reference chain: com.fhi.moxter.Moxter$Model$MoxtureFile["moxtures"]->java.util.ArrayList[3]->com.fhi.moxter.Moxter$Model$Moxture["expect"]->com.fhi.moxter.Moxter$Model$ExpectDef["body"]->com.fhi.moxter.Moxter$Model$ExpectBodyDef["assert"]->com.fhi.moxter.Moxter$Model$ExpectBodyAssertDef["$.[0].mother.id"])
+
+It is absolutely possible, and it’s a crucial upgrade for Moxter's Developer Experience (DX).
+
+Right now, Jackson (and SnakeYAML underneath it) is reading your file as a BufferedInputStream. Because it's just reading a stream of bytes, it loses the context of the file name and outputs the generic [Source: (BufferedInputStream); line: 79, column: 32].
+
+To fix this, we need to catch Jackson's JsonProcessingException, extract the exact JsonLocation (which holds the line and column data), and combine it with the file path we already know to throw a beautifully formatted, highly visible error.
 
 ---
 ### Improve logging/feedback
@@ -361,18 +481,92 @@ To make Moxter a true competitor to Karate or Postman, you will eventually need 
 <br />
 
 ---
-###  Table of features
+###  Priorities
 <br />
 <br />
 
 
-| Feature | Added Value | Difficulty | Complexity Risk |
-| :--- | :---: | :---: | :--- |
-| **Fluent API** | ⭐⭐⭐⭐⭐ | Moderate | Low |
-| **YAML Vars** | ⭐⭐⭐ | Easy | Low |
-| **Syntax Refresh** | ⭐⭐ | Easy | Low |
-| **JsonPath Assert** | ⭐⭐⭐⭐⭐ | Hard | Moderate |
-| **Partial Match** | ⭐⭐⭐⭐ | Hard | Moderate |
-| **Banner/Alerts** | ⭐⭐⭐⭐ | Easy | Low |
-| **Wait/Sleep** | ⭐⭐ | Easy | Low |
-| **Collision Alerts**| ⭐⭐⭐⭐ | Easy | Low |
+
+🚨 Priority 1: Critical Fixes & DX Foundations (Do Next)
+These are silent killers. They either introduce flaky tests, cripple performance, or cause developer frustration.
+
+1. Shared Mutable State (The Payload Trap)
+
+Evaluation: Critical. Right now, Jackson ObjectNode caching means one test mutating a payload will corrupt it for all subsequent tests.
+
+Action: This must be fixed immediately by invoking .deepCopy() when resolving/passing payloads from the cache.
+
+2. ObjectMapper Churn
+
+Evaluation: High. Instantiating a new Jackson ObjectMapper and YAMLFactory on every MoxBuilder.build() is a massive performance drain. They are designed to be static singletons.
+
+Action: Move them to private static final constants immediately.
+
+3. YAML JSON Schema (The "Whitespace Tax")
+
+Evaluation: High. Without an IDE schema, developers will misspell keys (e.g., lenght() instead of length()) and not know until runtime.
+
+Action: Generate a standard JSON Schema (moxter-schema.json) so VSCode and IntelliJ can provide real-time autocomplete and validation.
+
+4. Severe Log Pollution
+
+Evaluation: High. The giant ASCII banners for every call will make Jenkins/GitHub Actions logs completely unreadable in a suite of 500+ tests.
+
+Action: Add a .silent(true) toggle to MoxBuilder or downgrade the ASCII banners to log.debug().
+
+🟡 Priority 2: Core Execution & Flow Control
+These features make the YAML engine powerful enough to handle complex, real-world testing scenarios.
+
+1. "Circuit Breaker" Assertions (failFast)
+
+Evaluation: Excellent addition. If step 1 (Create) fails, step 2 (Update) will inevitably fail.
+
+Action: Add failFast: true|false at the steps: level to immediately halt the group on the first failure, preventing log floods.
+
+2. Thread.sleep(xxx) (Delays)
+
+Evaluation: Essential for testing async processes (e.g., waiting for an event to publish before checking the DB).
+
+Action: Add a - delay: 2000 or - sleep: 2s command to our new steps grammar.
+
+3. failOnError & Partial Success (Warnings)
+
+Evaluation: Replaces the vague lax: true. If a test is allowed to fail, it shouldn't just vanish into the logs; it needs a visual 🟡 indicator so the pipeline passes but QA is alerted.
+
+4. Concurrent execution map
+
+Evaluation: Swapping LinkedHashMap for ConcurrentHashMap in global vars is necessary if tests run in parallel. However, be careful: true parallel execution of shared global state requires sophisticated scoping (e.g., thread-local variables).
+
+🔵 Priority 3: Reporting & Visibility
+These features elevate Moxter from a "library" to a "testing framework."
+
+1. Startup Banner & Collision Alerts
+
+Evaluation: Showing which moxtures are loaded and explicitly warning when a local moxture "shadows" a global one is a massive debugging aid.
+
+Action: Print a clean, toggleable banner at context startup.
+
+2. Better Final Report
+
+Evaluation: A consolidated summary at the end of the test run showing Warnings, Skipped, and Executed moxtures.
+
+Action: Easily achieved via a JUnit TestExecutionListener or a static reporting hook.
+
+3. "Debug Mode" for Vars
+
+Evaluation: Automatically dumping the current {{vars}} state to the console only when an HTTP call fails saves hours of manual debugging.
+
+🟣 Priority 4: Architectural Strategic Shifts
+These are the "V2" features that will make Moxter a standalone enterprise product, competing with Karate or Postman.
+
+1. Abstract HTTP call engine (Ecosystem Lock-In)
+
+Evaluation: Massive strategic value. Decoupling from MockMvc allows QA teams to use Moxter YAMLs against live, deployed staging environments using Java HttpClient or Spring RestClient.
+
+2. Maven Plugin / Standalone Runner
+
+Evaluation: Moving away from JUnit as the driver. Running mvn moxter:run turns this into a true orchestrator.
+
+3. Moxter Test Generator (Traffic Sniffing)
+
+Evaluation: The ultimate endgame. A proxy that records manual clicks in an app and auto-generates Moxter YAML.

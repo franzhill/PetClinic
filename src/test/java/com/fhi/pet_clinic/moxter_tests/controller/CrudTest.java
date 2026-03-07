@@ -44,7 +44,7 @@ class CrudTest extends ParentMoxterTest
         // 2. Create a Pet for that Owner using the moxture defaults variables
         mx.caller()
           .call("create_pet_for_owner")
-          .assertVar("petName", name -> name.isEqualTo(mx.vars("create_pet_for_owner").get("in_name")));
+          .assertVar("petName", name -> name.isEqualTo(mx.vars("create_pet_for_owner").get("in.name")));
     }
 
 
@@ -63,15 +63,15 @@ class CrudTest extends ParentMoxterTest
 
         // Make sure our vars are different than the moxture default vars 
         // (or we might be hiding failures ^^):
-        assertDifferentFromMoxtureDefaultVar(petName, "create_pet_for_owner", "in_name");
-        assertDifferentFromMoxtureDefaultVar(petSex, "create_pet_for_owner", "in_sex");
-        assertDifferentFromMoxtureDefaultVar(petSex, "create_pet_for_owner", "in_species");
+        assertDifferentFromMoxtureDefaultVar(petName, "create_pet_for_owner", "in.name");
+        assertDifferentFromMoxtureDefaultVar(petSex, "create_pet_for_owner", "in.sex");
+        assertDifferentFromMoxtureDefaultVar(petSex, "create_pet_for_owner", "in.species");
 
 
         mx.caller()
-          .with("in_name"   , petName)  // Overrides the default var provided in the moxture
-          .with("in_sex"    , petSex) 
-          .with("in_species", petSpecies) 
+          .with("in.name"   , petName)  // Overrides the default var provided in the moxture
+          .with("in.sex"    , petSex) 
+          .with("in.species", petSpecies) 
           .call("create_pet_for_owner")
           .assertVar("petId"     , x -> x.isNotNull())
           .assertVar("petOwnerId", x -> x.isEqualTo(mx.vars().get("ownerId")))
@@ -85,8 +85,8 @@ class CrudTest extends ParentMoxterTest
     void test_2() 
     {
         String moxtureLocalpetName = mx.vars("create_pet_for_owner")
-                                       .read("in_name").asString();
-        log.debug("in_name = {}", moxtureLocalpetName);
+                                       .read("in.name").asString();
+        log.debug("in.name = {}", moxtureLocalpetName);
         assertEquals("Snowy", moxtureLocalpetName);
     }
 
@@ -97,10 +97,10 @@ class CrudTest extends ParentMoxterTest
     {
         String petName = "Rex";
 
-        assertDifferentFromMoxtureDefaultVar(petName, "create_pet_for_owner", "in_name");
+        assertDifferentFromMoxtureDefaultVar(petName, "create_pet_for_owner", "in.name");
 
         mx.caller()
-          .with("in_name", petName)  // Overrides the default var provided in the moxture
+          .with("in.name", petName)  // Overrides the default var provided in the moxture
           .call("group_create_owner_and_pet")
           .assertVar("petName", x -> x.isEqualTo(petName));
     }
@@ -111,7 +111,7 @@ class CrudTest extends ParentMoxterTest
     void test_4() 
     {
         String moxtureLocalPetName = mx.vars("create_pet_for_owner")
-                                       .read("in_name").asString();
+                                       .read("in.name").asString();
 
         mx.caller()
           .call("group_create_owner_and_pet")
@@ -127,10 +127,10 @@ class CrudTest extends ParentMoxterTest
 
         // Make sure our vars are different than the moxture default vars 
         // (or we might be hiding failures ^^):
-        assertDifferentFromMoxtureDefaultVar(petName, "group_create_owner_and_pet_with_local_override", "in_name");
+        assertDifferentFromMoxtureDefaultVar(petName, "group_create_owner_and_pet_with_local_override", "in.name");
 
         mx.caller()
-          .with("in_name", petName)  // Overrides the default var provided in the moxture
+          .with("in.name", petName)  // Overrides the default var provided in the moxture
           .call("group_create_owner_and_pet_with_local_override")
           .assertVar("petName", x -> x.isEqualTo(petName));
     }
@@ -140,8 +140,8 @@ class CrudTest extends ParentMoxterTest
     @DisplayName("Group moxture with group-local var, no call override.")
     void test_6() 
     {
-        String groupLocalpetName   = mx.vars("group_create_owner_and_pet_with_local_override").read("in_name").asString();
-        String moxtureLocalPetName = mx.vars("create_pet_for_owner")                          .read("in_name").asString();
+        String groupLocalpetName   = mx.vars("group_create_owner_and_pet_with_local_override").read("in.name").asString();
+        String moxtureLocalPetName = mx.vars("create_pet_for_owner")                          .read("in.name").asString();
 
         // Make sure our vars are different than the moxture default vars 
         // (or we might be hiding failures ^^):
@@ -172,22 +172,20 @@ class CrudTest extends ParentMoxterTest
     void subTest_7(String moxtureName) 
     {
         mx.caller().call("create_owner");
-        mx.caller()
-          .call(moxtureName);
 
         mx.caller()
           // Override moxture defaults:
-          .with("in_name"   , "Random_afFik874987")
-          .with("in_sex"    , "MALE" )    // has to be a valid sex
-          .with("in_species", "Dog")      // has to be a valid species
+          .with("in.name"   , "Random_afFik874987")
+          .with("in.sex"    , "MALE" )    // has to be a valid sex
+          .with("in.species", "Dog")      // has to be a valid species
           // The 'expect' section verifies the input variables appear in the response:
           .call(moxtureName);
 
         mx.caller()
           // Override moxture defaults:
-          .with("in_name"   , "Random_a892222euaonf")
-          .with("in_sex"    , "FEMALE" )  // has to be a valid sex
-          .with("in_species", "Cat")      // has to be a valid species
+          .with("in.name"   , "Random_a892222euaonf")
+          .with("in.sex"    , "FEMALE" )  // has to be a valid sex
+          .with("in.species", "Cat")      // has to be a valid species
           // The 'expect' section verifies the input variables appear in the response:
           .call(moxtureName);
     }
@@ -221,7 +219,7 @@ class CrudTest extends ParentMoxterTest
         // We want to verify it didn't lose 'owner.id' from the parent.
         String desiredPetName = "Puff";
         mx.caller()
-          .with("in_name", desiredPetName)
+          .with("in.name", desiredPetName)
           .call(moxtureName)
           .assertVar("petName", x -> x.isEqualTo(desiredPetName))        // From Parent Vars
           .assertJsonPath("$.species.name", x -> x.isEqualTo("Dragon")) // From Child Body
@@ -237,7 +235,15 @@ class CrudTest extends ParentMoxterTest
     // ====================================================================
 
     /**
-     * Make sure we are overriding with vars that are not the same as the default moxture var!
+     * Use when testing overriding variables: asserts we are overriding different values
+     * than the moxture's default variable.
+     * 
+     * Otherwise we're not really testing the overriding mecanism...
+     * 
+     * @param value       The new value intended to be used as an override.
+     * @param moxtureName The name of the moxture containing the default variable.
+     * @param varKey      The specific variable key/name.
+     * @throws AssertionError if the provided value matches the moxture's default value.
      */
     protected void assertDifferentFromMoxtureDefaultVar(Object value, String moxtureName, String varKey) 
     {

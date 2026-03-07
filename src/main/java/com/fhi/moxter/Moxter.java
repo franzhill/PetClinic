@@ -383,7 +383,15 @@ public final class Moxter
             if (url == null) continue;
 
             try (InputStream in = url.openStream()) {
-                Model.MoxtureFile suite = yamlMapper.readValue(in, Model.MoxtureFile.class);
+
+                // OLD
+                //Model.MoxtureFile suite = yamlMapper.readValue(in, Model.MoxtureFile.class);
+
+                // --- NEW DX WRAPPER HERE ---
+                // We add "classpath:/" to make the file path super clear in the error output
+                Model.MoxtureFile suite = Utils.Yaml.parseFile(yamlMapper, in, "classpath:/" + cp);
+
+
                 Map<String,Object> varsFromFile = suite.vars();
                 if (varsFromFile != null && !varsFromFile.isEmpty()) {
                     // Completely replace (closest wins)
@@ -1000,14 +1008,28 @@ public final class Moxter
             MoxResolver.EffectiveMoxture r = this.moxter.moxResolver.resolveByName(moxtureName);
 
             // 1. Build this moxture's local overrides.
-            // As you requested: The moxture's own YAML vars yield to the passed-in overrides.
+            // The moxture's own YAML vars yield to the passed-in overrides.
             // (If this is a child in a group, callScopedOverrides contains the group's vars)
             Map<String, Object> localOverrides = new LinkedHashMap<>();
+
+            // Build the current running context (globals + call overrides) to resolve interpolations
+            Map<String, Object> runningContext = new LinkedHashMap<>(this.moxter.vars().view());
+            if (overrides != null) {
+                runningContext.putAll(overrides);
+            }
             
             // Local vars provided by the moxture (or the group of moxtures):
             if (r.moxt.getVars() != null) {
-                localOverrides.putAll(r.moxt.getVars());
+                r.moxt.getVars().forEach((k, v) -> {
+                    if (v instanceof String s && s.contains("{{")) {
+                        // Resolve aliases like "{{ownerId}}" to their actual values
+                        localOverrides.put(k, Utils.Interpolation.interpolate(s, runningContext));
+                    } else {
+                        localOverrides.put(k, v);
+                    }
+                });
             }
+
             // Add vars provided by the call or by the previous step (in the case of a group moxture)
             // These take precedence over local vars.
             if (overrides != null) {
@@ -1803,7 +1825,10 @@ public final class Moxter
                 log.debug("[Moxter] Loading {} -> {}", displayPath, url);
 
                 try (InputStream in = url.openStream()) {
-                    Model.MoxtureFile suite = mapper.readValue(in, Model.MoxtureFile.class); // YAML mapper parses JSON too
+                    // OLD
+                    // Model.MoxtureFile suite = mapper.readValue(in, Model.MoxtureFile.class); // YAML mapper parses JSON too
+                    // NEW
+                    Model.MoxtureFile suite = Utils.Yaml.parseFile(mapper, in, displayPath);
                     String baseDir = Utils.IO.parentDirOf(classpath);
                     return new LoadedSuite(suite, baseDir);
                 } catch (IOException e) {
@@ -1847,7 +1872,10 @@ public final class Moxter
                     URL url = firstNonNullUrl(tccl, testClass.getClassLoader(), fallback, cp);
                     if (url == null) continue;
                     try (InputStream in = url.openStream()) {
-                        Model.MoxtureFile raw = yamlMapper.readValue(in, Model.MoxtureFile.class);
+                        // OLD
+                        // Model.MoxtureFile raw = yamlMapper.readValue(in, Model.MoxtureFile.class);
+                        // NEW
+                        Model.MoxtureFile raw = Utils.Yaml.parseFile(yamlMapper, in, "classpath:/" + cp);
                         if (raw.moxtures() == null || raw.moxtures().isEmpty()) continue;
 
                         // NOTE: do NOT materialize here; scan raw and return the raw hit.
@@ -1895,7 +1923,11 @@ public final class Moxter
                     URL url = firstNonNullUrl(tccl, testClass.getClassLoader(), fallback, cp);
                     if (url == null) continue;
                     try (InputStream in = url.openStream()) {
-                        Model.MoxtureFile raw = yamlMapper.readValue(in, Model.MoxtureFile.class);
+                        // OLD
+                        // Model.MoxtureFile raw = yamlMapper.readValue(in, Model.MoxtureFile.class);
+                        // NEW
+                        Model.MoxtureFile raw = Utils.Yaml.parseFile(yamlMapper, in, "classpath:/" + cp);
+
                         if (raw.moxtures() == null || raw.moxtures().isEmpty()) continue;
 
                         for (Model.Moxture f : raw.moxtures()) {
@@ -2610,6 +2642,62 @@ public final class Moxter
      */
     static final class Utils 
     {
+        public static class Yaml 
+        {
+            /**
+             * Parses a YAML file into a {@link Model.MoxtureFile} while providing 
+             * enhanced, developer-friendly error reporting on syntax failures.
+             * 
+             * <p>When Jackson (via SnakeYAML) encounters a parsing error (e.g., an unquoted 
+             * template variable like {@code {{myVar}}} at the start of a YAML value), it typically 
+             * throws a massive stack trace with a generic, hard-to-read message. 
+             * 
+             * <p>This wrapper intercepts that {@link com.fasterxml.jackson.core.JsonProcessingException}, 
+             * extracts the exact line and column number, and throws a cleanly formatted 
+             * 
+             * {@link RuntimeException} that acts as a highly visible "Big Red Box" in the test console.
+             *
+             * @param mapper      The Jackson {@link ObjectMapper} configured with a YAML factory.
+             * @param in          The input stream of the YAML file to parse.
+             * @param displayPath The human-readable path of the file (e.g., "classpath:/moxtures.yaml") 
+             * used to tell the developer exactly which file failed.
+             * @return The fully parsed {@link Model.MoxtureFile} object graph.
+             * @throws IOException If the input stream cannot be read from the file system or classpath.
+             * @throws RuntimeException If a YAML syntax error occurs. The exception message contains 
+             * the formatted, DX-friendly error block.
+             */
+            public static Model.MoxtureFile parseFile(ObjectMapper mapper, InputStream in, String displayPath) throws IOException {
+                try {
+                    return mapper.readValue(in, Model.MoxtureFile.class);
+                } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                    com.fasterxml.jackson.core.JsonLocation loc = e.getLocation();
+                    int line = loc != null ? loc.getLineNr() : -1;
+                    int col = loc != null ? loc.getColumnNr() : -1;
+                    String cleanMessage = e.getOriginalMessage();
+
+                    String dxError = """
+                        
+                        =======================================================
+                        MOXTER YAML SYNTAX ERROR 
+                        =======================================================
+                        File   : %s
+                        Line   : %d
+                        Column : %d
+                        Details: %s
+                        -------------------------------------------------------
+                        Hint: If this is near a variable like {{var}}, make sure 
+                        it is wrapped in double quotes if it's the first thing on the line!
+                        =======================================================
+                        """.formatted(displayPath, line, col, cleanMessage);
+                    
+                    // Throw as RuntimeException to stop execution immediately and print our custom message
+                    throw new RuntimeException(dxError);
+                }
+            }
+        }
+
+
+
         /** 
          * Utilities for string-based variable substitution. 
          */

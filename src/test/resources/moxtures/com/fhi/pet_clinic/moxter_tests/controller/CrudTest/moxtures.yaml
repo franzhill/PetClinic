@@ -1,98 +1,167 @@
-
-
+  # ==================================================================
+  #
+  # This file exposes moxtures available 
+  # to the JUnit test classes/moxtures at the same level or under, 
+  # in the package hierarchy.
+  #
+  # ==================================================================
 
 
 moxtures:
 
+  - name: BeforeAll
+    moxtures: 
+      - create_species_dog
+      - create_species_cat
+      - create_species_dragon
+      - create_species_dog   # should not fail if has failOnError=false
+
+  - name: AfterAll
+    moxtures: []
+
+
+  - name: BeforeEach
+    moxtures: []
+
+
+  - name: AfterEach
+    moxtures: []
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-  - name: create_account
-    method: POST
-    endpoint: /pet/{{petId_1}}/account # petId_1 is created in the BeforeAll fixture
-    expectedStatus: 201
-    # body as raw JSON string body (engine parses it)
-    body: >
-         {  "characteristic": "A",
-         }
-    save:
-      # save the id in this specified variable.
-      # Variables are global and can be reused in this fixture file through
-      # the following syntax:
-      #    {{name_of_my_variable}}
-      # They can also be retrieved in the java test code via: 
-      #   XXXX
-
-      offer1Id: $.id
-
-
-
-  - name: create-account-2
-    baseOn: create-account
-    save: 
-      offer2Id: $.id
-
-
-
-  - name: create-offer-3
-    # basedOn merge rules:
-    # - method, endpoint, expectedStatus: child overrides if present.
-    # - headers, query, save: map merge, child keys override parent keys.
-    # - body: deep-merge objects, replace arrays. Child overrides when conflict.
-    # If parent name not found → fail fast with the layer/file path in the error.
-    basedOn: create-account
-    # Differential body: only specify what differs from basedOn's body.
-    body: >
-        {   "characteristic": "B"
+  - name: create_species_dog
+    extends: create_species
+    body: |           # Literal Block Scalar operator. Preserves every single newline and space exactly as you typed it.
+      { "name": "Dog",
+        "expectedLifespan": 12,
+        "avgLitterSize": 4,
+        "fertilityAgeWindow": {
+          "from": 1,
+          "to": 8
         }
-    save: 
-      offer3Id: $.id
+      }
+    expect:
+      failOnError: false  # Ignores errors if 'Dog' already exists
+                          # Replaces deprecated 'lax: true'
 
 
 
-  # ----------------------------------------------------------------
-  # Examples
-  # ----------------------------------------------------------------
+  - name: create_species_cat
+    extends: create_species
+    body: |
+      { "name": "Cat",
+        "expectedLifespan": 18,
+        "avgLitterSize": 5,
+        "fertilityAgeWindow": {
+          "from": 1,
+          "to": 10
+        }
+      }
+    expect:
+      failOnError: false
 
-  - name: example-yaml
-    method: POST
-    endpoint: /example
-    expectedStatus: 201
-    # body as pure YAML
+
+
+  - name: create_species_dragon
+    extends: create_species
+    body: |
+      { "name": "Dragon",
+        "expectedLifespan": 250,
+        "avgLitterSize": 7,
+        "fertilityAgeWindow": {
+          "from": 18,
+          "to": 100
+        }
+      }
+    expect:
+      failOnError: false
+
+
+
+  - name: create_pet_for_owner_with_expect_body_match
+    extends: create_pet_for_owner     # alias for 'basedOn'
+    expect:
+      body: 
+        match: 
+          mode: partial   # partial | full
+          #schema: "classpath:schemas/pet.json"  #schema checks the structure and data types of your response.
+          #ignorePaths: ["$.createdAt"]
+          content: |
+            {
+              "name": {{in.name}},
+              "sex": {{in.sex}},
+              "birthDate": "{{in.birthDate}}",
+              "species": {
+                "name": "{{in.species}}"
+              },
+              "owner": {
+                "id": {{ownerId}}
+              }
+            }
+
+
+
+  - name: create_pet_for_owner_with_expect_body_assert
+    extends: create_pet_for_owner     # alias for 'basedOn'
+    expect:
+      body: 
+        assert:
+          # String assertions (quotes mandatory here)
+          "$.name": "{{in.name}}"
+          "$.sex": "{{in.sex}}"
+          "$.species.name": "{{in.species}}"
+
+          # Numeric/ID assertions
+          "$.owner.id": "{{ownerId}}"
+          
+          # Checking a specific nested field without needing the full object tree
+          "$.birthDate": "{{in.birthDate}}"
+
+
+
+  - name: create_pet_for_owner_with_body_partial_override_yaml
+    extends: create_pet_for_owner
     body:
-      characteristic1: A
-      characteristic2: B
+      species:
+        name: "Dragon" # This should deep-merge into the parent 'species' object
 
-  - name: example-inline-json
-    method: POST
-    endpoint: /example
-    expectedStatus: 201
-    # body as inline
-    body: {"characteristic1":"A","characteristic2":"B"}
 
-  - name: example-text-json
-    method: POST
-    endpoint: /example
-    expectedStatus: 201
-    # body as raw JSON string body (engine parses it)
-    body: >
-      {"characteristic1":"A","characteristic2":"B"}
 
-  - name: example-from-file
-    method: POST
-    endpoint: /example
-    expectedStatus: 201
-    # body as external file, either .json or .yaml
-    body: classpath:bodys/example.json   # or .yaml
+  - name: create_pet_for_owner_with_body_partial_override_json
+    extends: create_pet_for_owner
+    body: |
+      {
+        "species": {
+          "name": "Dragon"
+        }
+      }
+
+
+
+  - name: group_create_owner_and_pet
+    moxtures: 
+      - create_owner
+      - create_pet_for_owner
+
+
+
+  - name: group_create_owner_and_pet_with_local_override
+    vars:
+      in.name: "Beethoven"   # overrides 'Snowy'
+    moxtures: 
+      - create_owner
+      - create_pet_for_owner
+
+
+
+  - name: group_create_owner_and_pet_with_expect_section
+    vars:
+      in.name: "Pongo"   # overrides 'Snowy'
+    moxtures: 
+      - create_owner
+      - create_pet_for_owner_with_expect_section
+
+
+
+
 
