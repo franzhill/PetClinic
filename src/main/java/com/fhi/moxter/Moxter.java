@@ -539,8 +539,20 @@ public final class Moxter
         @SuppressWarnings("unchecked")
         public Map<String, Object> resolveInitialVars() 
         {
-            // 1. Get the list of potential files from the test class up to the root
-            List<String> candidates = repo.candidateAncestorPaths(testClass, cfg);
+            // 1. Convert Class to Resource Path (e.g., "com/fhi/app/MyTest")
+            String pkg = (testClass.getPackageName() == null ? "" : testClass.getPackageName().replace('.', '/'));
+            String startPath = cfg.rootPath + (pkg.isEmpty() ? "" : "/" + pkg);
+            
+            // 2. Add the class sub-directory if configured
+            if (cfg.perTestClassDirectory) {
+                startPath += "/" + testClass.getSimpleName();
+            }
+
+            // 3. Get the list of potential files from the test class up to the root
+            // Logic: Get every moxtures.yaml from my package up to the root to merge variables
+            // Call the generic walkUp with the string path
+            List<String> candidates = Utils.Classpath.walkUp(startPath, cfg.rootPath, cfg.fileName);
+
             Map<String, Object> last = null;
 
             for (String cp : candidates) {
@@ -661,26 +673,6 @@ public final class Moxter
                 return out;
             }
 
-            /** Returns candidate ancestor classpaths starting at an arbitrary baseDir (closest → root). */
-            List<String> candidateAncestorPathsFromBaseDir(String baseDir, MoxtureLoadingConfig cfg) {
-                List<String> out = new ArrayList<>();
-                String cur = (baseDir == null) ? "" : baseDir;
-                while (cur.endsWith("/")) cur = cur.substring(0, cur.length() - 1);
-
-                if (!cur.isEmpty()) out.add(cur + "/" + cfg.fileName);
-
-                while (!cur.equals(cfg.rootPath)) {
-                    int i = cur.lastIndexOf('/');
-                    if (i <= 0) break;
-                    cur = cur.substring(0, i);
-                    out.add(cur + "/" + cfg.fileName);
-                }
-
-                String root = cfg.rootPath + "/" + cfg.fileName;
-                if (!out.contains(root)) out.add(root);
-                return out;
-            }
-
 
             /** 
              * Finds the first (closest) occurrence of a moxture by name, starting from an arbitrary baseDir. 
@@ -688,9 +680,8 @@ public final class Moxter
             RepoRawMoxture findFirstByNameFromBaseDir(Class<?> testClass, MoxtureLoadingConfig cfg,
                                                     String startBaseDir, String name, ObjectMapper yamlMapper) {
                 
-                // 1. Generate the candidate ancestor paths using the new Utility (if moved) 
-                // or keep the local helper: candidateAncestorPathsFromBaseDir(startBaseDir, cfg)
-                List<String> candidates = candidateAncestorPathsFromBaseDir(startBaseDir, cfg);
+                // 1. Generate the candidate ancestor paths 
+                List<String> candidates = Utils.Classpath.walkUp(startBaseDir, cfg.rootPath, cfg.fileName);
 
                 for (String cp : candidates) {
                     // We pass testClass to provide the secondary ClassLoader context
@@ -2706,6 +2697,37 @@ public final class Moxter
             }
         }
 
+
+
+        public static class Classpath {
+            /**
+             * Generates a list of paths by walking up from the startPath to the limitPath.
+             * @param startPath The deepest directory to start from (e.g., "moxtures/com/fhi/app/MyTest").
+             * @param limitPath The boundary to stop at (e.g., "moxtures").
+             * @param fileName  The name of the file to append to each directory (e.g., "moxtures.yaml").
+             * @return A list of full classpaths from closest to furthest.
+             */
+            public static List<String> walkUp(String startPath, String limitPath, String fileName) {
+                List<String> paths = new ArrayList<>();
+                String current = (startPath == null) ? "" : startPath.replaceAll("/$", "");
+                String limit = (limitPath == null) ? "" : limitPath.replaceAll("/$", "");
+
+                if (!current.isEmpty()) {
+                    paths.add(current + "/" + fileName);
+                }
+
+                while (!current.equals(limit) && current.contains("/")) {
+                    current = current.substring(0, current.lastIndexOf('/'));
+                    paths.add(current + "/" + fileName);
+                }
+
+                String rootFile = limit.isEmpty() ? fileName : limit + "/" + fileName;
+                if (!paths.contains(rootFile)) {
+                    paths.add(rootFile);
+                }
+                return paths;
+            }
+        }
 
 
         /** 
