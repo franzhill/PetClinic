@@ -30,9 +30,10 @@ import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import org.skyscreamer.jsonassert.JSONAssert;
+
 import org.assertj.core.api.Assertions;
 import org.assertj.core.api.ObjectAssert;
+import org.skyscreamer.jsonassert.JSONAssert;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -53,11 +54,6 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
-import com.fhi.moxter.Moxter.Model.ExpectBodyMatchDef;
-import com.fhi.moxter.Moxter.Runtime.HttpExecutor;
-import com.fhi.moxter.Moxter.Runtime.PayloadResolver;
-import com.fhi.moxter.Moxter.Runtime.StatusMatcher;
-import com.fhi.moxter.Moxter.Runtime.Templating;
 import com.jayway.jsonpath.Configuration;
 import com.jayway.jsonpath.DocumentContext;
 import com.jayway.jsonpath.JsonPath;
@@ -136,7 +132,14 @@ public final class Moxter
     // =====================================================================
 
 
-    private final Class<?> testClass;
+    private final IMoxtureLoader loader; 
+
+    // Used if loader = hierarchical package loader
+    private Class<?> testClass;
+    //#private MoxtureLoaderDELETE.ClasspathMoxtureRepository repo;
+    //#private MoxtureLoaderDELETE.MoxtureLoadingConfig cfg;
+
+
     private final Model.MoxtureFile suite;
     private final Map<String, Model.Moxture> byName;
 
@@ -147,9 +150,7 @@ public final class Moxter
     private final Runtime.HttpExecutor executor;
     private final String moxturesBaseDir;
 
-    // For hierarchical lookup
-    private final MoxtureLoader.ClasspathMoxtureRepository repo;
-    private final MoxtureLoader.MoxtureLoadingConfig cfg;
+
     private final ObjectMapper yamlMapper;
     // Keep JSON mapper for HTTP
     private final ObjectMapper jsonMapper; // NOSONAR yes it's used!
@@ -158,17 +159,10 @@ public final class Moxter
     // Auth supplier (fixed or lazy) from builder
     private final java.util.function.Supplier<org.springframework.security.core.Authentication> builderAuthSupplier;
 
-    // ===== Unlimited-depth basedOn materialization cache =====
-
-    /** Unlimited-depth, hierarchy-aware cache. */
-    private final Map<MoxResolver.EffectiveKey, Model.Moxture> materializedCache = new LinkedHashMap<>();
-
-
-
-    // Cached global variables accessor
+    // Caches and Resolvers
+    private final Map<MoxtureResolver.EffectiveKey, Model.Moxture> materializedCache = new LinkedHashMap<>();
     private final MoxVars globalScopeVars = new MoxVars(this, null);
-
-    private final MoxResolver moxResolver = new MoxResolver(this);
+    private final MoxtureResolver moxResolver = new MoxtureResolver(this);
 
 
     // =====================================================================
@@ -208,8 +202,8 @@ public final class Moxter
     /** 
      * The factory method to spawn a transient caller
      */
-    public MoxCaller caller() {
-        return new MoxCaller(this);
+    public MoxtureCaller caller() {
+        return new MoxtureCaller(this);
     }
 
 
@@ -260,42 +254,26 @@ public final class Moxter
     //   Builder / construction
     // =====================================================================
 
-    private Moxter(Class<?> testClass,
+    private Moxter(IMoxtureLoader loader,
                    MockMvc mockMvc,
-                   java.util.function.Supplier<org.springframework.security.core.Authentication> authSupplier)
+                   java.util.function.Supplier<org.springframework.security.core.Authentication> authSupplier,
+                   ObjectMapper yamlMapper,
+                   ObjectMapper jsonMapper)
     {
-        this.testClass = Objects.requireNonNull(testClass, "testClass");
+        this.loader = Objects.requireNonNull(loader, "loader");
         Objects.requireNonNull(mockMvc, "mockMvc");
         this.builderAuthSupplier = authSupplier;
-
-        // Build minimal config internally
-        MoxtureLoader.MoxtureLoadingConfig cfg = new MoxtureLoader.MoxtureLoadingConfig(
-                DEFAULT_MOXTURES_ROOT_PATH,
-                DEFAULT_USE_PER_TESTCLASS_DIRECTORY,
-                DEFAULT_MOXTURES_BASENAME
-        );
-        this.cfg = cfg;
-
-        // YAML for reading moxtures/includes; JSON for HTTP I/O
-        ObjectMapper yamlMapper = defaultYamlMapper();
-        ObjectMapper jsonMapper = defaultJsonMapper();
         this.yamlMapper = yamlMapper;
         this.jsonMapper = jsonMapper;
 
-        // Load closest moxtures file (read with YAML)
-        MoxtureLoader.ClasspathMoxtureRepository repo = new MoxtureLoader.ClasspathMoxtureRepository(yamlMapper);
-        MoxtureLoader.MoxtureRepository.LoadedSuite loaded = repo.loadFor(testClass, cfg);
+        // 1. Initial Load via Strategy
+        IMoxtureLoader.LoadedSuite loaded = loader.loadInitial();
+        this.suite = loaded.suite();
+        this.moxturesBaseDir = loaded.baseDir();
 
-        // IMPORTANT: keep RAW suite (no pre-materialization at load time)
-        this.suite = loaded.suite;
-        this.moxturesBaseDir = loaded.baseDir;
-        this.repo = repo;
-
-        // === NEW: Load hierarchical vars =======================================
-        // Lower (closer) level completely overrides higher-level vars.
-        Map<String,Object> initialVars = loadHierarchicalVars(testClass, cfg, yamlMapper);
-        if (!initialVars.isEmpty()) {
-            // Seed the engine vars without logging/strictness noise (initial boot).
+        // 2. Load vars via Strategy
+        Map<String,Object> initialVars = loader.resolveInitialVars();
+        if (initialVars != null && !initialVars.isEmpty()) {
             for (Map.Entry<String,Object> e : initialVars.entrySet()) {
                 String k = e.getKey();
                 if (k != null && !k.isBlank()) {
@@ -306,34 +284,28 @@ public final class Moxter
                 log.debug("[Moxter] initial vars loaded: {}", Utils.Logging.previewVars(vars));
             }
         }
-        // === END NEW ============================================================
 
-        // Index moxtures by name (fail fast on duplicates) and validate structure
+        // 3. Index local moxtures
         Map<String, Model.Moxture> index = new LinkedHashMap<>();
         List<Model.Moxture> calls = (suite.moxtures() == null) ? Collections.emptyList() : suite.moxtures();
         for (Model.Moxture f : calls) {
             if (f.getName() == null || f.getName().isBlank()) {
                 throw new IllegalStateException("Moxture with missing/blank 'name' in " + moxturesBaseDir + "/" + DEFAULT_MOXTURES_BASENAME);
             }
-            MoxResolver.validateMoxture(f);
+            MoxtureResolver.validateMoxture(f);
             if (index.put(f.getName(), f) != null) {
-                // Fail on name collision
                 throw new IllegalStateException("Duplicate moxture name: " + f.getName());
             }
         }
         this.byName = Collections.unmodifiableMap(index);
 
-        // Runtime helpers & wiring
+        // 4. Runtime helpers & wiring
         Runtime.StatusMatcher matcher = new Runtime.StatusMatcher();
         Runtime.Templating templating = new Runtime.SimpleTemplating();
         Runtime.PayloadResolver payloadResolver = new Runtime.PayloadResolver(yamlMapper);
 
-        // Use JSON mapper for request/response bodies
         this.executor = new Runtime.HttpExecutor(mockMvc, jsonMapper, templating, payloadResolver, matcher, builderAuthSupplier);
     }
-
-
-
 
     // =====================================================================
     //   Private helpers
@@ -355,57 +327,6 @@ public final class Moxter
 
 
 
-
-    // =====================================================================
-    // Initial vars loader
-    // =====================================================================
-
-    /**
-     * Load a top-level {@code vars:} map from the hierarchical moxture files:
-     * root → package ancestors → (optional) per-test-class directory.
-     * <p>
-     * The closest file to the test class completely overrides any higher-level vars
-     * (no merging). If no file defines {@code vars}, returns an empty map.
-     */
-    @SuppressWarnings("unchecked")
-    private Map<String,Object> loadHierarchicalVars(Class<?> testClass, MoxtureLoader.MoxtureLoadingConfig cfg, ObjectMapper yamlMapper) {
-        List<String> candidates = repo.candidateAncestorPaths(testClass, cfg);
-        Map<String,Object> last = null;
-
-        ClassLoader tccl     = Thread.currentThread().getContextClassLoader();
-        ClassLoader testCl   = testClass.getClassLoader();
-        ClassLoader fallback = Moxter.class.getClassLoader();
-
-        for (String cp : candidates) {
-            URL url = (tccl != null ? tccl.getResource(cp) : null);
-            if (url == null && testCl != null) url = testCl.getResource(cp);
-            if (url == null && fallback != null) url = fallback.getResource(cp);
-            if (url == null) continue;
-
-            try (InputStream in = url.openStream()) {
-
-                // OLD
-                //Model.MoxtureFile suite = yamlMapper.readValue(in, Model.MoxtureFile.class);
-
-                // --- NEW DX WRAPPER HERE ---
-                // We add "classpath:/" to make the file path super clear in the error output
-                Model.MoxtureFile suite = Utils.Yaml.parseFile(yamlMapper, in, "classpath:/" + cp);
-
-
-                Map<String,Object> varsFromFile = suite.vars();
-                if (varsFromFile != null && !varsFromFile.isEmpty()) {
-                    // Completely replace (closest wins)
-                    last = new LinkedHashMap<>(varsFromFile);
-                }
-            } catch (IOException e) {
-                throw new RuntimeException("Failed reading vars from " + cp, e);
-            }
-        }
-        return (last == null) ? Collections.emptyMap() : last;
-    }
-
-
-
     // ############################################################################
     // ############################################################################
     // ############################################################################
@@ -416,12 +337,442 @@ public final class Moxter
     // ############################################################################
     // ############################################################################
 
-    public static final class MoxResolver
+
+
+
+
+
+    /**
+     * A fluent builder for configuring and instantiating the {@link Moxter} engine.
+     * 
+     * <p>This builder is the entry point for setting up Moxter in your test classes. 
+     * It requires the test class (to anchor the classpath search for YAML files) and 
+     * a Spring {@link MockMvc} instance to execute the actual HTTP requests.
+     * 
+     * <p><b>Example Usage:</b>
+     * <pre>{@code
+     *   Moxter mx = Moxter.forTestClass(MyControllerTest.class)
+     *                     .mockMvc(this.mockMvc)
+     *                     .build();
+     * }</pre>
+     */
+    public static final class MoxBuilder
+    {
+        private final Class<?> testClass;
+        private MockMvc mockMvc;
+        private java.util.function.Supplier<org.springframework.security.core.Authentication> authSupplier;
+
+        private MoxBuilder(Class<?> testClass) { 
+            this.testClass = testClass; 
+        }
+
+        /**
+         * Provides the Spring {@link MockMvc} instance that Moxter will use to execute 
+         * all HTTP requests defined in the YAML moxtures.
+         * 
+         * @param mvc The configured MockMvc instance (mandatory).
+         * @return this {@link MoxBuilder} for chaining.
+         */
+        public MoxBuilder mockMvc(MockMvc mvc) { 
+            this.mockMvc = mvc; 
+            return this; 
+        }
+
+        /**
+         * Provides a fixed Spring Security {@link org.springframework.security.core.Authentication} 
+         * object to automatically attach to every HTTP request executed by this engine instance.
+         *
+         * <p>Use this if your entire test suite runs under a single simulated user.
+         * 
+         * @param auth The Authentication object to inject.
+         * @return this {@link MoxBuilder} for chaining.
+         */
+        public MoxBuilder authentication(org.springframework.security.core.Authentication auth) {
+            this.authSupplier = () -> auth;
+            return this;
+        }
+
+        /** 
+         * Provides a dynamic supplier for Spring Security {@link org.springframework.security.core.Authentication}.
+         * 
+         * <p>The supplier is evaluated <i>per-request</i>. Use this if your test context 
+         * changes the active user dynamically during execution.
+         * 
+         * @param s The Authentication supplier.
+         * @return this {@link MoxBuilder} for chaining.
+         */
+        public MoxBuilder authenticationSupplier(java.util.function.Supplier<org.springframework.security.core.Authentication> s) {
+            this.authSupplier = s;
+            return this;
+        }
+
+        /**
+         * Validates the configuration and constructs the final {@link Moxter} engine instance.
+         * 
+         * <p>During this phase, Moxter will scan the classpath relative to the provided 
+         * test class, locate the {@code moxtures.yaml} file, and parse all moxture definitions.
+         * 
+         * @return A fully initialized, thread-safe Moxter engine.
+         * @throws IllegalStateException if the moxtures file cannot be found or contains invalid YAML.
+         * @throws NullPointerException if mandatory dependencies (like MockMvc) are missing.
+         */
+        public Moxter build() 
+        {
+            ObjectMapper yamlMapper = defaultYamlMapper();
+            ObjectMapper jsonMapper = defaultJsonMapper();
+            
+            // Wire up the legacy JUnit hierarchical config
+            HierarchicalMoxtureLoader.MoxtureLoadingConfig cfg = new HierarchicalMoxtureLoader.MoxtureLoadingConfig(
+                    DEFAULT_MOXTURES_ROOT_PATH,
+                    DEFAULT_USE_PER_TESTCLASS_DIRECTORY,
+                    DEFAULT_MOXTURES_BASENAME
+            );
+            
+            IMoxtureLoader loader = new HierarchicalMoxtureLoader(testClass, cfg, yamlMapper);
+            
+            return new Moxter(loader, mockMvc, authSupplier, yamlMapper, jsonMapper);
+        }
+    }
+
+    // ############################################################################
+
+
+    /**
+     * Strategy interface for discovering and loading Moxture definitions.
+     * 
+     * <p>By abstracting the discovery logic, Moxter can support different loading 
+     * paradigms—such as JUnit-style hierarchical classpath scanning or standalone 
+     * explicit file imports—without modifying the core execution engine.
+     */
+    public interface IMoxtureLoader {
+
+        /**
+         * Performs the initial load of the primary moxture file (the entry point).
+         * 
+         * <p>For a hierarchical strategy, this is the file closest to the test class. 
+         * For an explicit strategy, this is the file specifically requested by the user.</p>
+         * 
+         * @return A {@link LoadedSuite} containing the parsed entry-point file and its anchor directory.
+         * @throws RuntimeException if the entry-point file cannot be found or parsed.
+         */
+        LoadedSuite loadInitial();
+
+        /**
+         * Resolves the initial variables map used to seed the engine's global context.
+         * * <p>Implementations determine how these variables are gathered. A hierarchical 
+         * loader might walk up the package tree to merge variables, while an explicit 
+         * loader might only read the current file and its explicit includes.</p>
+         * * @return A map of variables discovered through the loading strategy, or an empty map if none exist.
+         */
+        Map<String, Object> resolveInitialVars();
+
+        /**
+         * Resolves a moxture definition by name on-demand.
+         * * <p>This method implements the "Anti-Zombie" logic: it only searches paths 
+         * relevant to the current strategy (e.g., package ancestors or explicit includes). 
+         * If a faulty file exists elsewhere in the project, it is ignored unless 
+         * strictly required by the resolution path.</p>
+         * * @param name           The name of the moxture to find (e.g., for a 'basedOn' or 'call' resolution).
+         * @param currentBaseDir The directory of the file currently being processed, used as a starting point for relative lookups.
+         * @return A {@link RawMoxture} containing the unmaterialized definition, or {@code null} if not found.
+         */
+        RawMoxture findByName(String name, String currentBaseDir);
+        // =========================================================================
+        // Data Carriers
+        // =========================================================================
+        /**
+         * Container for a fully parsed Moxture entry-point file and its location.
+         * * @param suite   The parsed object graph of the YAML file.
+         * @param baseDir The directory where this file resides (used to resolve relative paths like 'classpath:req.json').
+         */
+        record LoadedSuite(Model.MoxtureFile suite, String baseDir) {}
+
+        /**
+         * Container for a raw, unmaterialized moxture discovered during on-demand resolution.
+         * * @param moxt        The raw moxture definition exactly as it appears in the YAML file.
+         * @param baseDir     The directory where this specific moxture's file resides.
+         * @param displayPath A human-readable path (e.g., "classpath:/my/pkg/moxtures.yaml") used for DX-friendly error reporting.
+         */
+        record RawMoxture(Model.Moxture moxt, String baseDir, String displayPath) {}
+    }
+
+
+    // ############################################################################
+
+    /**
+     * A MoxtureLoader that follows the Java package hierarchy to discover moxtures.
+     * 
+     * <p>This strategy mirrors the test class structure. It starts searching from 
+     * the test's specific package and walks up the tree to the root. This allows 
+     * for localized overrides and global defaults within a shared classpath.</p>
+     * 
+     * Resolve parent by searching upwards (closest → parents → root)
+     */
+    @Slf4j
+    public static class HierarchicalMoxtureLoader implements IMoxtureLoader {
+
+        private final Class<?> testClass;
+        private final MoxtureLoadingConfig cfg;
+        private final ObjectMapper yamlMapper;
+        private final ClasspathMoxtureRepository repo;
+
+        public HierarchicalMoxtureLoader(Class<?> testClass, MoxtureLoadingConfig cfg, ObjectMapper yamlMapper) {
+            this.testClass = Objects.requireNonNull(testClass, "testClass");
+            this.cfg = Objects.requireNonNull(cfg, "cfg");
+            this.yamlMapper = Objects.requireNonNull(yamlMapper, "yamlMapper");
+            this.repo = new ClasspathMoxtureRepository(yamlMapper);
+        }
+
+        @Override
+        public LoadedSuite loadInitial() {
+            ClasspathMoxtureRepository.RepoLoadedSuite res = repo.loadFor(testClass, cfg);
+            return new LoadedSuite(res.suite(), res.baseDir());
+        }
+
+        @Override
+        public RawMoxture findByName(String name, String currentBaseDir) {
+            ClasspathMoxtureRepository.RepoRawMoxture res = repo.findFirstByNameFromBaseDir(testClass, cfg, currentBaseDir, name, yamlMapper);
+            return res == null ? null : new RawMoxture(res.call(), res.baseDir(), res.displayPath());
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public Map<String, Object> resolveInitialVars() 
+        {
+            // 1. Get the list of potential files from the test class up to the root
+            List<String> candidates = repo.candidateAncestorPaths(testClass, cfg);
+            Map<String, Object> last = null;
+
+            for (String cp : candidates) {
+                // 2. REPLACED: Tiered classloader logic is now encapsulated here
+                URL url = Utils.IO.findResource(cp, testClass);
+                if (url == null) continue;
+
+                try (InputStream in = url.openStream()) {
+                    // 3. REPLACED: Manual mapper.readValue is now Utils.Yaml.parseFile
+                    // This provides the "Big Red Box" error if a parent YAML is broken
+                    Model.MoxtureFile suite = Utils.Yaml.parseFile(yamlMapper, in, "classpath:/" + cp);
+                    
+                    Map<String, Object> varsFromFile = suite.vars();
+                    if (varsFromFile != null && !varsFromFile.isEmpty()) {
+                        // Completely replace (closest wins)
+                        last = new LinkedHashMap<>(varsFromFile);
+                    }
+                } catch (IOException e) {
+                    throw new RuntimeException("Failed reading vars from " + cp, e);
+                }
+            }
+            return (last == null) ? Collections.emptyMap() : last;
+        }
+
+        // =========================================================================
+        // Configuration
+        // =========================================================================
+
+        /** 
+         * Immutable configuration used for locating moxtures on classpath. 
+         */
+        public static final class MoxtureLoadingConfig {
+            final String rootPath;                // e.g., "integrationtests2/moxtures"
+            final boolean perTestClassDirectory;  // true => add "/{TestClassName}"
+            final String fileName;                // "moxtures.yaml" (includes extension)
+
+            public MoxtureLoadingConfig(String rootPath, boolean perTestClassDirectory, String fileName) {
+                this.rootPath = trim(rootPath);
+                this.perTestClassDirectory = perTestClassDirectory;
+                this.fileName = trim(fileName);
+            }
+            private static String trim(String s) {
+                if (s == null) return "";
+                String out = s.trim();
+                while (out.startsWith("/")) out = out.substring(1);
+                while (out.endsWith("/")) out = out.substring(0, out.length() - 1);
+                return out;
+            }
+        }
+
+        // =========================================================================
+        // Internal Repository Logic
+        // =========================================================================
+
+        /**
+         * Classpath repository:
+         * - Build exact closest path: rootPath + "/" + {package as folders} + ["/{TestClassName}"] + "/" + fileName
+         * - Try TCCL, fall back to test class CL, then this class CL.
+         * - If not found, throw with a clear message.
+         * - Provides hierarchical name lookup helpers.
+         */
+        static final class ClasspathMoxtureRepository {
+            private final ObjectMapper mapper;
+
+            ClasspathMoxtureRepository(ObjectMapper mapper) { this.mapper = mapper; }
+
+            record RepoLoadedSuite(Model.MoxtureFile suite, String baseDir) {}
+            record RepoRawMoxture(Model.Moxture call, String baseDir, String displayPath) {}
+
+            public RepoLoadedSuite loadFor(Class<?> testClass, MoxtureLoadingConfig cfg) {
+                final String classpath = buildClosestClasspath(testClass, cfg);
+                final String displayPath = "classpath:/" + classpath;
+
+                URL url = Utils.IO.findResource(classpath, testClass);
+
+                if (url == null) {
+                    throw new IllegalStateException(
+                        "[Moxter] No moxtures file found for " + testClass.getName() + "\n" +
+                        "Expected at: " + displayPath + "\n" +
+                        "Hint: place the file under src/test/resources/" + classpath
+                    );
+                }
+
+                log.debug("[Moxter] Loading {} -> {}", displayPath, url);
+
+                try (InputStream in = url.openStream()) {
+                    Model.MoxtureFile suite = Utils.Yaml.parseFile(mapper, in, displayPath);
+                    String baseDir = Utils.IO.parentDirOf(classpath);
+                    return new RepoLoadedSuite(suite, baseDir);
+                } catch (IOException e) {
+                    throw new RuntimeException("Failed loading moxtures: " + displayPath, e);
+                }
+            }
+
+           /* ===== Hierarchical lookup (helpers) ===== */
+
+            /** Returns candidate ancestor classpaths from closest → root (inclusive). */
+            List<String> candidateAncestorPaths(Class<?> testClass, MoxtureLoadingConfig cfg) {
+                List<String> out = new ArrayList<>();
+                String pkg = (testClass.getPackageName() == null ? "" : testClass.getPackageName().replace('.', '/'));
+
+                // 1) If per-class dir is enabled, add the closest file first
+                if (cfg.perTestClassDirectory) {
+                    out.add(cfg.rootPath + (pkg.isEmpty() ? "" : "/" + pkg) + "/" + testClass.getSimpleName() + "/" + cfg.fileName);
+                }
+
+                // 2) Then each package ancestor level: root/pkg/.../moxtures.yaml → ... → root/moxtures.yaml
+                if (!pkg.isEmpty()) {
+                    String[] parts = pkg.split("/");
+                    for (int i = parts.length; i >= 1; i--) {
+                        String prefix = String.join("/", java.util.Arrays.copyOf(parts, i));
+                        out.add(cfg.rootPath + "/" + prefix + "/" + cfg.fileName);
+                    }
+                }
+
+                // 3) Finally, the absolute root under cfg.rootPath
+                out.add(cfg.rootPath + "/" + cfg.fileName);
+                return out;
+            }
+
+            /** Returns candidate ancestor classpaths starting at an arbitrary baseDir (closest → root). */
+            List<String> candidateAncestorPathsFromBaseDir(String baseDir, MoxtureLoadingConfig cfg) {
+                List<String> out = new ArrayList<>();
+                String cur = (baseDir == null) ? "" : baseDir;
+                while (cur.endsWith("/")) cur = cur.substring(0, cur.length() - 1);
+
+                if (!cur.isEmpty()) out.add(cur + "/" + cfg.fileName);
+
+                while (!cur.equals(cfg.rootPath)) {
+                    int i = cur.lastIndexOf('/');
+                    if (i <= 0) break;
+                    cur = cur.substring(0, i);
+                    out.add(cur + "/" + cfg.fileName);
+                }
+
+                String root = cfg.rootPath + "/" + cfg.fileName;
+                if (!out.contains(root)) out.add(root);
+                return out;
+            }
+
+
+            /** 
+             * Finds the first (closest) occurrence of a moxture by name, starting from an arbitrary baseDir. 
+             */
+            RepoRawMoxture findFirstByNameFromBaseDir(Class<?> testClass, MoxtureLoadingConfig cfg,
+                                                    String startBaseDir, String name, ObjectMapper yamlMapper) {
+                
+                // 1. Generate the candidate ancestor paths using the new Utility (if moved) 
+                // or keep the local helper: candidateAncestorPathsFromBaseDir(startBaseDir, cfg)
+                List<String> candidates = candidateAncestorPathsFromBaseDir(startBaseDir, cfg);
+
+                for (String cp : candidates) {
+                    // We pass testClass to provide the secondary ClassLoader context
+                    URL url = Utils.IO.findResource(cp, testClass); 
+                    
+                    if (url == null) continue;
+
+                    try (InputStream in = url.openStream()) {
+                        Model.MoxtureFile raw = Utils.Yaml.parseFile(yamlMapper, in, "classpath:/" + cp);
+
+                        if (raw.moxtures() == null || raw.moxtures().isEmpty()) continue;
+
+                        for (Model.Moxture f : raw.moxtures()) {
+                            if (name.equals(f.getName())) {
+                                String baseDir = Utils.IO.parentDirOf(cp);
+                                return new RepoRawMoxture(f, baseDir, "classpath:/" + cp);
+                            }
+                        }
+                    } catch (IOException e) {
+                        throw new RuntimeException("Failed reading " + cp, e);
+                    }
+                }
+                return null;
+            }
+
+
+            private static String buildClosestClasspath(Class<?> testClass, MoxtureLoadingConfig cfg) {
+                String pkg = (testClass.getPackageName() == null ? "" : testClass.getPackageName().replace('.', '/'));
+                String classDir = cfg.perTestClassDirectory ? ("/" + testClass.getSimpleName()) : "";
+                String base = (pkg.isEmpty() ? cfg.rootPath : (cfg.rootPath + "/" + pkg)) + classDir + "/";
+                String full = base + cfg.fileName;
+                log.debug("[Moxter] Expecting moxtures at: classpath:/{} for {}", full, testClass.getName());
+                return full;
+            }
+        }
+    }
+
+
+
+
+
+
+    /**
+     * Internal engine component responsible for the discovery, inheritance, and flattening 
+     * of moxture definitions.
+     * 
+     * <p>The {@code MoxResolver} handles the "Materialization" phase of the moxture lifecycle. 
+     * Its primary responsibility is to transform a declarative YAML definition—which may 
+     * use hierarchical inheritance via {@code basedOn}—into a fully resolved, executable 
+     * {@code EffectiveMoxture}.
+     * 
+     * <p><b>Key Responsibilities:</b>
+     * <ul>
+     *   <li><b>Lookup:</b> Performs a "closest-first" search for moxtures by name, 
+     *        starting from the test class directory and walking up through parent packages 
+     *        to the root moxtures directory.</li>
+     *   <li><b>Deep Materialization:</b> Recursively resolves inheritance chains (via {@code basedOn} 
+     *        or {@code extends}). It merges parents and children using specific precedence rules:
+     *     <ul>
+     *       <li>Scalars (method, endpoint) are overridden by the child.</li>
+     *       <li>Maps (headers, query, vars) are shallow-merged (child wins).</li>
+     *       <li>Lists (save, moxtures) are replaced entirely by the child.</li>
+     *     </ul>
+     *    </li>
+     *    <li><b>Cycle Detection:</b> Prevents infinite recursion in inheritance chains by 
+     *        maintaining a visiting stack and throwing an {@link IllegalStateException} 
+     *        if a cycle is detected.</li>
+     *    <li><b>Payload Stacking:</b> Instead of merging JSON bodies during resolution, 
+     *        it builds a {@code bodyStack} to preserve the hierarchy. This allows the 
+     *        {@code PayloadResolver} to handle variable interpolation and deep-merging 
+     *        correctly at runtime.</li>
+     * </ul>
+     * 
+     * <p><b>Caching:</b> Resolved moxtures are cached in the {@code materializedCache} 
+     * to ensure performance and consistency throughout the test suite execution.
+     */
+    public static final class MoxtureResolver
     {
         // Reference to the root encompassing engine
         private final Moxter moxter;
 
-        protected MoxResolver(Moxter moxter) {
+        protected MoxtureResolver(Moxter moxter) {
             this.moxter = moxter;
         }
 
@@ -479,8 +830,6 @@ public final class Moxter
         }
 
 
-
-
         /** 
          * Resolve a name to a concrete, fully materialized moxture (closest → parents), with its baseDir. 
          */
@@ -489,23 +838,21 @@ public final class Moxter
             // 1) Try closest file first
             Model.Moxture local = moxter.byName.get(name);
             if (local != null) {
-                // Materialize deeply (same-file and cross-file, unlimited depth) from the local file's baseDir
                 Model.Moxture mat = materializeDeep(local, moxter.moxturesBaseDir, new ArrayDeque<>(), new HashSet<>());
                 return new EffectiveMoxture(mat, moxter.moxturesBaseDir);
             }
 
-            // 2) Hierarchical lookup upwards (closest → ... → root) starting from the test class location
-            MoxtureLoader.ClasspathMoxtureRepository.RawMoxture found = moxter.repo.findFirstByName(moxter.testClass, moxter.cfg, name, moxter.yamlMapper);
+            // 2) Delegate discovery to the Strategy Loader
+            IMoxtureLoader.RawMoxture found = moxter.loader.findByName(name, moxter.moxturesBaseDir);
             if (found == null) {
-                List<String> attempted = moxter.repo.candidateAncestorPaths(moxter.testClass, moxter.cfg);
-                throw new IllegalArgumentException("Moxture/Group not found by name: " + name
-                        + ". Looked under: " + attempted);
+                throw new IllegalArgumentException("Moxture/Group not found by name: " + name);
             }
 
             // Ensure deep materialization from the found scope
-            Model.Moxture mat = materializeDeep(found.call, found.baseDir, new ArrayDeque<>(), new HashSet<>());
-            return new EffectiveMoxture(mat, found.baseDir);
+            Model.Moxture mat = materializeDeep(found.moxt(), found.baseDir(), new ArrayDeque<>(), new HashSet<>());
+            return new EffectiveMoxture(mat, found.baseDir());
         }
+
 
 
         /**
@@ -549,21 +896,19 @@ public final class Moxter
             }
             stack.addLast(key);
 
-            // Resolve parent by searching from THIS node’s file directory upwards (closest → parents → root)
-            MoxtureLoader.ClasspathMoxtureRepository.RawMoxture parentResolved =
-                    moxter.repo.findFirstByNameFromBaseDir(moxter.testClass, moxter.cfg, nodeBaseDir, parentName, moxter.yamlMapper);
+            
+            // Resolve parent by searching via the Strategy Loader
+            IMoxtureLoader.RawMoxture parentResolved = moxter.loader.findByName(parentName, nodeBaseDir);
 
             if (parentResolved == null) {
-                String attempted = moxter.repo.candidateAncestorPathsFromBaseDir(nodeBaseDir, moxter.cfg).toString();
                 throw new IllegalArgumentException(
-                    "basedOn refers to unknown moxture '" + parentName + "'. Looked under (from " + nodeBaseDir + "): " + attempted
+                    "basedOn refers to unknown moxture '" + parentName + "' (searched from " + nodeBaseDir + ")"
                 );
             }
 
             // Recurse
             Model.Moxture materializedParent =
-                    materializeDeep(parentResolved.call, parentResolved.baseDir, stack, visiting);
-
+                    materializeDeep(parentResolved.moxt(), parentResolved.baseDir(), stack, visiting);
             // Merge parent → child (child overrides)
             Model.Moxture merged = new Model.Moxture();
             merged.setName(node.getName());
@@ -742,87 +1087,6 @@ public final class Moxter
 
 
 
-    /**
-     * A fluent builder for configuring and instantiating the {@link Moxter} engine.
-     * 
-     * <p>This builder is the entry point for setting up Moxter in your test classes. 
-     * It requires the test class (to anchor the classpath search for YAML files) and 
-     * a Spring {@link MockMvc} instance to execute the actual HTTP requests.
-     * 
-     * <p><b>Example Usage:</b>
-     * <pre>{@code
-     *   Moxter mx = Moxter.forTestClass(MyControllerTest.class)
-     *                     .mockMvc(this.mockMvc)
-     *                     .build();
-     * }</pre>
-     */
-    public static final class MoxBuilder
-    {
-        private final Class<?> testClass;
-        private MockMvc mockMvc;
-        private java.util.function.Supplier<org.springframework.security.core.Authentication> authSupplier;
-
-        private MoxBuilder(Class<?> testClass) { 
-            this.testClass = testClass; 
-        }
-
-        /**
-         * Provides the Spring {@link MockMvc} instance that Moxter will use to execute 
-         * all HTTP requests defined in the YAML moxtures.
-         * 
-         * @param mvc The configured MockMvc instance (mandatory).
-         * @return this {@link MoxBuilder} for chaining.
-         */
-        public MoxBuilder mockMvc(MockMvc mvc) { 
-            this.mockMvc = mvc; 
-            return this; 
-        }
-
-        /**
-         * Provides a fixed Spring Security {@link org.springframework.security.core.Authentication} 
-         * object to automatically attach to every HTTP request executed by this engine instance.
-         *
-         * <p>Use this if your entire test suite runs under a single simulated user.
-         * 
-         * @param auth The Authentication object to inject.
-         * @return this {@link MoxBuilder} for chaining.
-         */
-        public MoxBuilder authentication(org.springframework.security.core.Authentication auth) {
-            this.authSupplier = () -> auth;
-            return this;
-        }
-
-        /** 
-         * Provides a dynamic supplier for Spring Security {@link org.springframework.security.core.Authentication}.
-         * 
-         * <p>The supplier is evaluated <i>per-request</i>. Use this if your test context 
-         * changes the active user dynamically during execution.
-         * 
-         * @param s The Authentication supplier.
-         * @return this {@link MoxBuilder} for chaining.
-         */
-        public MoxBuilder authenticationSupplier(java.util.function.Supplier<org.springframework.security.core.Authentication> s) {
-            this.authSupplier = s;
-            return this;
-        }
-
-        /**
-         * Validates the configuration and constructs the final {@link Moxter} engine instance.
-         * 
-         * <p>During this phase, Moxter will scan the classpath relative to the provided 
-         * test class, locate the {@code moxtures.yaml} file, and parse all moxture definitions.
-         * 
-         * @return A fully initialized, thread-safe Moxter engine.
-         * @throws IllegalStateException if the moxtures file cannot be found or contains invalid YAML.
-         * @throws NullPointerException if mandatory dependencies (like MockMvc) are missing.
-         */
-        public Moxter build() {
-            return new Moxter(testClass, mockMvc, authSupplier);
-        }
-    }
-
-
-
     // ############################################################################
 
     /**
@@ -842,7 +1106,7 @@ public final class Moxter
      *   .assertVar("petId", id -> id.isNotNull());
      * }</pre>
      */
-    public static class MoxCaller 
+    public static class MoxtureCaller 
     {
         // Reference to the root encompassing engine
         private final Moxter moxter;
@@ -856,7 +1120,7 @@ public final class Moxter
          * 
          * @param moxter      The encompassing Engine.
          */
-        protected MoxCaller(Moxter moxter) {
+        protected MoxtureCaller(Moxter moxter) {
             this.moxter = moxter;
         }
 
@@ -867,9 +1131,9 @@ public final class Moxter
          * allowing you to perform assertions on error responses (e.g., 404 or 400).
          * 
          * @param lax true to suppress automatic exception throwing on API errors.
-         * @return this {@link MoxCaller} for chaining.
+         * @return this {@link MoxtureCaller} for chaining.
          */
-        public MoxCaller lax(boolean lax) {
+        public MoxtureCaller lax(boolean lax) {
             this.lax = lax;
             return this;
         }
@@ -880,9 +1144,9 @@ public final class Moxter
          * If true, failed JsonPath extractions will return null rather than throwing an exception.
          * 
          * @param val true to enable lax JsonPath evaluation.
-         * @return this {@link MoxCaller} for chaining.
+         * @return this {@link MoxtureCaller} for chaining.
          */
-        public MoxCaller withJsonPathLax(boolean val) {
+        public MoxtureCaller withJsonPathLax(boolean val) {
             this.jsonPathLax = val;
             return this;
         }
@@ -891,9 +1155,9 @@ public final class Moxter
          * Enables automatic pretty-printing of the response body to standard output.
          * Useful for debugging complex JSON structures during test development.
          * * @param val true to print the result after execution.
-         * @return this {@link MoxCaller} for chaining.
+         * @return this {@link MoxtureCaller} for chaining.
          */
-        public MoxCaller withPrintReturn(boolean val) {
+        public MoxtureCaller withPrintReturn(boolean val) {
             this.printReturn = val;
             return this;
         }
@@ -909,9 +1173,9 @@ public final class Moxter
          * 
          * 
          * @param overrides A map of keys and values placeholders.
-         * @return this {@link MoxCaller} for chaining.
+         * @return this {@link MoxtureCaller} for chaining.
          */
-        public MoxCaller with(Map<String, Object> overrides) {
+        public MoxtureCaller with(Map<String, Object> overrides) {
             if (overrides != null) this.overrides.putAll(overrides);
             return this;
         }
@@ -921,9 +1185,9 @@ public final class Moxter
          * 
          * @param key   The variable name (used as ${key} in YAML).
          * @param value The value to inject.
-         * @return this {@link MoxCaller} for chaining.
+         * @return this {@link MoxtureCaller} for chaining.
          */
-        public MoxCaller with(String key, Object value) {
+        public MoxtureCaller with(String key, Object value) {
             this.overrides.put(key, value);
             return this;
         }
@@ -1005,7 +1269,7 @@ public final class Moxter
         private Runtime.ResponseEnvelope callInternal(String moxtureName, Map<String, Object> overrides) 
         {
             Objects.requireNonNull(moxtureName, "name");
-            MoxResolver.EffectiveMoxture r = this.moxter.moxResolver.resolveByName(moxtureName);
+            MoxtureResolver.EffectiveMoxture r = this.moxter.moxResolver.resolveByName(moxtureName);
 
             // 1. Build this moxture's local overrides.
             // The moxture's own YAML vars yield to the passed-in overrides.
@@ -1037,7 +1301,7 @@ public final class Moxter
             }
 
             // 2. Call
-            MoxResolver.validateMoxture(r.moxt);
+            MoxtureResolver.validateMoxture(r.moxt);
 
             // 2.1. If group Moxture
             if (isGroupMoxture(r.moxt)) 
@@ -1156,7 +1420,7 @@ public final class Moxter
 
             // Local Scope
             try {
-                MoxResolver.EffectiveMoxture resolved = this.moxter.moxResolver.resolveByName(moxtureName);
+                MoxtureResolver.EffectiveMoxture resolved = this.moxter.moxResolver.resolveByName(moxtureName);
                 Map<String, Object> localVars = resolved.moxt.getVars();
                 return (localVars != null) ? localVars : Collections.emptyMap();
             } catch (Exception e) {
@@ -1742,260 +2006,6 @@ public final class Moxter
 
     // ############################################################################
 
-    /** 
-     * For loading moxtures from classpath. 
-     * 
-     * <p>A specialized loader responsible for resolving and parsing Moxture files from the classpath.
-     * 
-     * <p>This class acts as the entry point for the test suite's data layer. It handles:
-     * <ul>
-     *   <li>Classpath resource discovery via {@link ClassLoader}.</li>
-     *   <li>Automatic translation of YAML source text into the {@link Model.File} object graph.</li>
-     *   <li>Path normalization (handling of relative vs. absolute resource paths).</li>
-     * </ul>
-     * 
-     * <p>It utilizes a YAML-configured {@link ObjectMapper} to ensure that Moxture features 
-     * like {@code !include} or custom tags are respected during the initial load phase.
-     */
-    static final class MoxtureLoader 
-    {
-        /** 
-         * Immutable configuration used for locating moxtures on classpath. 
-         */
-        static final class MoxtureLoadingConfig {
-            final String rootPath;                // e.g., "integrationtests2/moxtures"
-            final boolean perTestClassDirectory;  // true => add "/{TestClassName}"
-            final String fileName;                // "moxtures.yaml" (includes extension)
-
-            MoxtureLoadingConfig(String rootPath, boolean perTestClassDirectory, String fileName) {
-                this.rootPath = trim(rootPath);
-                this.perTestClassDirectory = perTestClassDirectory;
-                this.fileName = trim(fileName);
-            }
-            private static String trim(String s) {
-                if (s == null) return "";
-                String out = s.trim();
-                while (out.startsWith("/")) out = out.substring(1);
-                while (out.endsWith("/")) out = out.substring(0, out.length()-1);
-                return out;
-            }
-        }
-
-
-        interface MoxtureRepository {
-            final class LoadedSuite {
-                public final Model.MoxtureFile suite;
-                public final String baseDir; // classpath folder where the moxtures file lives
-                public LoadedSuite(Model.MoxtureFile suite, String baseDir) { this.suite = suite; this.baseDir = baseDir; }
-            }
-            LoadedSuite loadFor(Class<?> testClass, MoxtureLoader.MoxtureLoadingConfig cfg);
-        }
-
-        /**
-         * Classpath repository:
-         * - Build exact closest path: rootPath + "/" + {package as folders} + ["/{TestClassName}"] + "/" + fileName
-         * - Try TCCL, fall back to test class CL, then this class CL.
-         * - If not found, throw with a clear message.
-         * - Provides hierarchical name lookup helpers.
-         */
-        static final class ClasspathMoxtureRepository implements MoxtureRepository {
-            private final ObjectMapper mapper;
-
-            ClasspathMoxtureRepository(ObjectMapper mapper) { this.mapper = mapper; }
-
-            public LoadedSuite loadFor(Class<?> testClass, MoxtureLoader.MoxtureLoadingConfig cfg) {
-                final String classpath = buildClosestClasspath(testClass, cfg);
-                final String displayPath = "classpath:/" + classpath;
-
-                URL url = firstNonNullUrl(
-                        Thread.currentThread().getContextClassLoader(),
-                        testClass.getClassLoader(),
-                        Moxter.class.getClassLoader(),
-                        classpath
-                );
-
-                if (url == null) {
-                    throw new IllegalStateException(
-                        "[Moxter] No moxtures file found for " + testClass.getName() + "\n" +
-                        "Expected at: " + displayPath + "\n" +
-                        "Hint: place the file under src/test/resources/" + classpath
-                    );
-                }
-
-                log.debug("[Moxter] Loading {} -> {}", displayPath, url);
-
-                try (InputStream in = url.openStream()) {
-                    // OLD
-                    // Model.MoxtureFile suite = mapper.readValue(in, Model.MoxtureFile.class); // YAML mapper parses JSON too
-                    // NEW
-                    Model.MoxtureFile suite = Utils.Yaml.parseFile(mapper, in, displayPath);
-                    String baseDir = Utils.IO.parentDirOf(classpath);
-                    return new LoadedSuite(suite, baseDir);
-                } catch (IOException e) {
-                    throw new RuntimeException("Failed loading moxtures: " + displayPath, e);
-                }
-            }
-
-            /* ===== Hierarchical lookup (helpers) ===== */
-
-            /** Returns candidate ancestor classpaths from closest → root (inclusive). */
-            List<String> candidateAncestorPaths(Class<?> testClass, MoxtureLoader.MoxtureLoadingConfig cfg) {
-                List<String> out = new ArrayList<>();
-                String pkg = (testClass.getPackageName() == null ? "" : testClass.getPackageName().replace('.', '/'));
-
-                // 1) If per-class dir is enabled, add the closest file first
-                if (cfg.perTestClassDirectory) {
-                    out.add(cfg.rootPath + (pkg.isEmpty() ? "" : "/" + pkg) + "/" + testClass.getSimpleName() + "/" + cfg.fileName);
-                }
-
-                // 2) Then each package ancestor level: root/pkg/.../moxtures.yaml → ... → root/moxtures.yaml
-                if (!pkg.isEmpty()) {
-                    String[] parts = pkg.split("/");
-                    for (int i = parts.length; i >= 1; i--) {
-                        String prefix = String.join("/", java.util.Arrays.copyOf(parts, i));
-                        out.add(cfg.rootPath + "/" + prefix + "/" + cfg.fileName);
-                    }
-                }
-
-                // 3) Finally, the absolute root under cfg.rootPath
-                out.add(cfg.rootPath + "/" + cfg.fileName);
-
-                return out;
-            }
-
-            /** Finds the first (closest) occurrence of a moxture by name across ancestor files (starting from test package). */
-            RawMoxture findFirstByName(Class<?> testClass, MoxtureLoader.MoxtureLoadingConfig cfg, String name, ObjectMapper yamlMapper) {
-                List<String> candidates = candidateAncestorPaths(testClass, cfg);
-                ClassLoader tccl = Thread.currentThread().getContextClassLoader();
-                ClassLoader fallback = Moxter.class.getClassLoader();
-                for (String cp : candidates) {
-                    URL url = firstNonNullUrl(tccl, testClass.getClassLoader(), fallback, cp);
-                    if (url == null) continue;
-                    try (InputStream in = url.openStream()) {
-                        // OLD
-                        // Model.MoxtureFile raw = yamlMapper.readValue(in, Model.MoxtureFile.class);
-                        // NEW
-                        Model.MoxtureFile raw = Utils.Yaml.parseFile(yamlMapper, in, "classpath:/" + cp);
-                        if (raw.moxtures() == null || raw.moxtures().isEmpty()) continue;
-
-                        // NOTE: do NOT materialize here; scan raw and return the raw hit.
-                        for (Model.Moxture f : raw.moxtures()) {
-                            if (name.equals(f.getName())) {
-                                String baseDir = Utils.IO.parentDirOf(cp);
-                                return new RawMoxture(f, baseDir, "classpath:/" + cp);
-                            }
-                        }
-                    } catch (IOException e) {
-                        throw new RuntimeException("Failed reading " + cp, e);
-                    }
-                }
-                return null;
-            }
-
-            /** Returns candidate ancestor classpaths starting at an arbitrary baseDir (closest → root). */
-            List<String> candidateAncestorPathsFromBaseDir(String baseDir, MoxtureLoader.MoxtureLoadingConfig cfg) {
-                List<String> out = new ArrayList<>();
-                String cur = (baseDir == null) ? "" : baseDir;
-                while (cur.endsWith("/")) cur = cur.substring(0, cur.length() - 1);
-
-                if (!cur.isEmpty()) out.add(cur + "/" + cfg.fileName);
-
-                // Walk up until we reach cfg.rootPath
-                while (!cur.equals(cfg.rootPath)) {
-                    int i = cur.lastIndexOf('/');
-                    if (i <= 0) break;
-                    cur = cur.substring(0, i);
-                    out.add(cur + "/" + cfg.fileName);
-                }
-
-                String root = cfg.rootPath + "/" + cfg.fileName;
-                if (!out.contains(root)) out.add(root);
-                return out;
-            }
-
-            /** Finds the first (closest) occurrence of a moxture by name, starting from an arbitrary baseDir. */
-            RawMoxture findFirstByNameFromBaseDir(Class<?> testClass, MoxtureLoader.MoxtureLoadingConfig cfg,
-                                                String startBaseDir, String name, ObjectMapper yamlMapper) {
-                List<String> candidates = candidateAncestorPathsFromBaseDir(startBaseDir, cfg);
-                ClassLoader tccl = Thread.currentThread().getContextClassLoader();
-                ClassLoader fallback = Moxter.class.getClassLoader();
-                for (String cp : candidates) {
-                    URL url = firstNonNullUrl(tccl, testClass.getClassLoader(), fallback, cp);
-                    if (url == null) continue;
-                    try (InputStream in = url.openStream()) {
-                        // OLD
-                        // Model.MoxtureFile raw = yamlMapper.readValue(in, Model.MoxtureFile.class);
-                        // NEW
-                        Model.MoxtureFile raw = Utils.Yaml.parseFile(yamlMapper, in, "classpath:/" + cp);
-
-                        if (raw.moxtures() == null || raw.moxtures().isEmpty()) continue;
-
-                        for (Model.Moxture f : raw.moxtures()) {
-                            if (name.equals(f.getName())) {
-                                String baseDir = Utils.IO.parentDirOf(cp);
-                                return new RawMoxture(f, baseDir, "classpath:/" + cp);
-                            }
-                        }
-                    } catch (IOException e) {
-                        throw new RuntimeException("Failed reading " + cp, e);
-                    }
-                }
-                return null;
-            }
-
-            /**
-             * An internal container representing a raw moxture found during a classpath search.
-             *
-             * <p>Unlike a {@code MaterializedMoxture}, a {@code RawMoxture} is 
-             * <b>unmaterialized</b>. It contains the exact, raw definition parsed directly 
-             * from the YAML file before any {@code basedOn} inheritance or hierarchical 
-             * merging has been applied.
-             * 
-             * <p>This object simply pairs the raw parsed YAML with its physical location 
-             * metadata, which is necessary to eventually perform that deep materialization.
-             */
-            static final class RawMoxture 
-            {
-                /** The raw moxture definition exactly as it appears in the YAML file. */
-                final Model.Moxture call;
-                
-                /** The classpath directory where the file was found (used to resolve parents and payloads). */
-                final String baseDir;
-                
-                /** A human-readable path (e.g., "classpath:/my/pkg/moxtures.yaml") for logging and errors. */
-                final String displayPath;
-                
-                RawMoxture(Model.Moxture call, String baseDir, String displayPath) {
-                    this.call = call; 
-                    this.baseDir = baseDir; 
-                    this.displayPath = displayPath;
-                }
-            }
-
-            /* ===== internals ===== */
-
-            private static URL firstNonNullUrl(ClassLoader tccl, ClassLoader testCl, ClassLoader fallback, String path) {
-                URL u = (tccl != null ? tccl.getResource(path) : null);
-                if (u != null) return u;
-                u = (testCl != null ? testCl.getResource(path) : null);
-                if (u != null) return u;
-                return (fallback != null ? fallback.getResource(path) : null);
-            }
-
-            private static String buildClosestClasspath(Class<?> testClass, MoxtureLoader.MoxtureLoadingConfig cfg) {
-                String pkg = (testClass.getPackageName() == null ? "" : testClass.getPackageName().replace('.', '/'));
-                String classDir = cfg.perTestClassDirectory ? ("/" + testClass.getSimpleName()) : "";
-                String base = (pkg.isEmpty() ? cfg.rootPath : (cfg.rootPath + "/" + pkg)) + classDir + "/";
-                String full = base + cfg.fileName; // EXACT file name (e.g., "moxtures.yaml")
-                log.debug("[Moxter] Expecting moxtures at: classpath:/{} for {}", full, testClass.getName());
-                return full;
-            }
-
-        }
-    }
-
-
-    // ############################################################################
 
     /**
      * Internal namespace for components that handle the <b>execution phase</b> of a moxture.
@@ -2114,7 +2124,7 @@ public final class Moxter
                     
                     // 2. Deep merge it into the accumulated result.
                     // If 'effective' is null (first layer), deepMerge returns 'resolvedLayer'.
-                    effective = MoxResolver.deepMergePayload(mapper, effective, resolvedLayer);
+                    effective = MoxtureResolver.deepMergePayload(mapper, effective, resolvedLayer);
                 }
                 return effective;
             }
@@ -2753,8 +2763,42 @@ public final class Moxter
                 return sb.toString();
             }
         }
+
+
+
+
         public static class IO 
         {
+            /**
+             * Locates resources using a primary loader (TCCL) and an optional 
+             * secondary classloader.
+             * 
+             * Locates a resource on the classpath using a tiered search strategy.
+             * 1. Thread Context ClassLoader (TCCL) - Good for Spring/JUnit environments.
+             * 2. Anchor ClassLoader (Test Class) - Finds resources local to the test.
+             * 3. Utility ClassLoader (Fallback) - Finds global resources in the engine.
+             * 
+             * @param path The resource path.
+             * @param anchor If provided, use this class's loader as a secondary search point.
+             * @return The URL of the resource, or null if not found.
+             */
+            public static URL findResource(String path, Class<?> anchor) {
+                // 1. Try the current thread's context classloader (standard for web/Spring apps)
+                ClassLoader tccl = Thread.currentThread().getContextClassLoader();
+                URL url = (tccl != null) ? tccl.getResource(path) : null;
+                if (url != null) return url;
+
+                // 2. Fallback to the anchor class provided (usually the test class)
+                if (anchor != null) {
+                    url = anchor.getClassLoader().getResource(path);
+                    if (url != null) return url;
+                }
+
+                // 3. Last resort: use the classloader that loaded this Utility class itself
+                return IO.class.getClassLoader().getResource(path);
+            }
+
+
             private static String parentDirOf(String path) {
                 int i = path.lastIndexOf('/');
                 return (i > 0) ? path.substring(0, i) : "";
