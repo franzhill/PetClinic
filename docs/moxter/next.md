@@ -1,13 +1,3 @@
----
-### no fixture file found should generate warningn, not error
-
-[INFO]
-[ERROR] Errors:
-[ERROR]   MyMoxterTest>ParentMoxterTest.bootBase:84 ▒ IllegalState [FixtureEngine] No fixtures file found for com.fhi.pet_clinic.moxter_tests.MyMoxterTest
-Expected at: classpath:/fixtures/com/fhi/pet_clinic/moxter_tests/MyMoxterTest/fixtures.yaml
-Hint: place the file under src/test/resources/fixtures/com/fhi/pet_clinic/moxter_tests/MyMoxterTest/fixtures.yaml
-[INFO]
-[ERROR] Tests run: 1, Failures: 0, Errors: 1, Skipped: 0
 
 
 
@@ -35,31 +25,49 @@ Plaintext
 [Moxter] >>> Executing moxture:  [create_pet, POST, /pets]
 In a real-world enterprise suite with 500+ integration tests, this will generate tens of thousands of lines of useless ASCII art, completely ruining the readability of CI/CD build logs (like Jenkins or GitHub Actions).
 
-The Fix: Build frameworks should be completely silent when tests pass, and only scream when they fail. Downgrade those ASCII banners to log.debug(), or add a .silent(true) toggle to MoxBuilder so enterprise users can shut the engine up.
+The Fix: Build frameworks should be completely silent when tests pass, and only scream when they fail. Downgrade those ASCII banners to log. debug(), or add a .silent(true) toggle to MoxBuilder so enterprise users can shut the engine up.
 
-5. ObjectMapper Churn
+
+
+
+1. The "Must-Fix" Architecture (Priority: Critical)    # TODO
+If you don't do these, your engine is a toy, not a tool.
+
+The Payload Trap (.deepCopy()): This is a Level 1 Bug. In a multi-threaded test environment (like parallel JUnit execution), shared mutable JsonNode objects will cause non-deterministic failures that are impossible to debug. Fix this today.
+
+ObjectMapper Churn: Instantiating a YAMLFactory per build is amateur hour. These should be private static final constants. Period.
+
+5. ObjectMapper Churn  # TODO
 The Brutal Truth: Every time MoxBuilder.build() is called, you instantiate brand new Jackson ObjectMapper and YAMLFactory instances. Jackson mappers are notoriously heavy to instantiate and are explicitly designed to be static, thread-safe singletons.
 
 The Fix: Move defaultYamlMapper() and defaultJsonMapper() to private static final constants in your IO class. Initialize them exactly once per JVM.
 
 
 
+The ASCII "Banner" Pollution: Big ASCII art in logs is the "Comic Sans" of the DevOps world. It looks "cool" for the first 5 tests; it's a war crime after 500. Jenkins logs will become gigabytes of garbage. Downgrade to DEBUG level immediately.
 
 
----
-# Allow concurrent
 
 
-    // Concurrent allows tests to be run in parallel
-    //#private final ConcurrentMap<String, Object> vars = new ConcurrentHashMap<>();
-    private final Map<String,Object> vars = new LinkedHashMap<>();
+
 
 
 
 
 ---
-### define variables within moxture.yaml files:
+### Moxture DX Features #TODO
+
+
 ```yaml
+
+#TODO
+include:
+  - "common_moxtures.yaml"
+  - "common_vars.yaml"
+  - "creation_moxtures.yaml"
+
+
+# Define these global variables # TODO
 vars:
   USER1_ID   : "12345"
   USER2_ID   : "12"
@@ -67,27 +75,24 @@ vars:
   USER4_ID   : "1234"
   LOCALE     : "EN"
 
+
 moxtures:
-...
-```
 
+  # --------------------------------------------------------
+  # A 'single' moxture
+  # --------------------------------------------------------
 
-
----
-### New syntax and check returned payload
-
-
-```yaml
   - name: create_pet_for_owner
     method: POST
-    endpoint: "/api/pets/{{petId}}"
+    endpoint: "/api/pets/{{petId}}"  # allow interpolation with vars from the global context
     lax: true         # DEPRECATED, moved to the expected section
                       # Does not raise exception if status != 20x
                       # Useful in case this moxture is only "best effort" and we don't
                       # want to fail the whole test if this one fails.
-    vars:
-      in_petName: "Snowy"
-    body: |
+    vars:             # Default variables, can be overriden by call scope.
+      in.petName: "Snowy"
+      in.petSex : {{sex}}    # allow interpolation...
+    body: |                  # allow interpolation...
       {
         "name": "{{in_petName}}",
         "sex": "MALE",
@@ -100,16 +105,17 @@ moxtures:
         }
       }
     save:
-      failOnError:  true|false   # Toggles 'Lax' mode for JsonPath extractions.
+      failOnError:  true|false  # TODO. Toggles 'Lax' mode for JsonPath extractions.
                                 # If false, failed JsonPath extractions will 
                                 # return null 
                                 # If true, execption is raised (and test will
                                 # likely fail)
-      vars:
+      vars:                     # Store vars in the global context
         petId: "$.id"
         petName: "$.name"
         petOwnerId: "$.owner.id"
     expect:  # expect the return to be...
+      # TODO: test, vs lax
       failOnError: true|false   # Replaces lax. Optional. Default is true.
                                 # If false do not raise exception in case expectations
                                 # fail. (Just a warning maybe)
@@ -128,33 +134,38 @@ moxtures:
           # They silently overwrite the first key with the second key
           # So we can't really define 2 asserts on one same jsonpath (the last one 
           # would always 'win')
-          "$.item.type" : "new"   
-          "$.item.value": 100
-          "$.offers[*].length()": 3
-          "$.offers[?(@.cost >= 1000 && @.cost <= 2000)].length()": 3
-          "$.message": "Pet {{in_petName}} was created OK"  # strict equality check
+          # TODO: tell Jackson to deserialize assert as a List<Map<String, Object>> 
+          # instead of a flat Map. (this means placing a "-" in front of the following
+          # elements). 
+          # This allows you to assert against the same JSON path multiple times sequentially.
+          - "$.item.type" : "new"   
+          - "$.item.value": 100
+          - "$.offers[*].length()": 3
+          - "$.offers[?(@.cost >= 1000 && @.cost <= 2000)].length()": 3
+          - "$.message": "Pet {{in_petName}} was created OK"  # strict equality check
+
 
           # Advanced Matches
-          "$.message":                    # See note above.
+          - "$.message":                    # See note above.
             contains: "created OK"
-          "$.uuid":
+          - "$.uuid":
             matches: "^[a-f0-9\\-]{36}$"  # Regex for UUID
-          "$.creationDate":
+          - "$.creationDate":
             exists: true                  # Just verify the node is there
 
         # OPTION B: Tree Matching (JSONAssert)
         match:
-          mode: full|partial    # used in conjunction with 'content'
+          mode: full|partial    # used in conjunction with 'content' # TODO full
             # if full: match with json provided in value must be exact
             # if partial: provided json should be a subset of actual returned json
-          ignorePaths: ["$.id"]    # ignore these 'volatile' field
+          ignorePaths: ["$.id"]    # TODO ignore these 'volatile' field
           content: |  # the inline json expected
             {
               "type": "new",
               "value": "100"
             }
 
-        # OPTION C: Contract Validation (JSON Schema)
+        # OPTION C: Contract Validation (JSON Schema) # TODO
         # Validates types and required fields without hardcoding volatile data.
         schema: "classpath:schemas/pet.json"  
           # schema checks the structure and data types of the response.
@@ -162,54 +173,141 @@ moxtures:
           # (think ids and dates that are highly variable), the schema checking
           # asserts the type of the response whic is supposed to be rigid.
 
-        # Assert exception should be thrown:
-        exception:
-          type: "MatingException"           # Unwraps the cause chain to find this class
-          messageContains: "is sterile"     # Convenience check for the message
-          assert:                           # Surgical JSONPath asserts on the Exception object!
-            "$.causeEnum": "STERILE_PARENT"
+
+
+  # --------------------------------------------------------
+  # A 'group' moxture
+  # --------------------------------------------------------
+  # TODO 
+  - name: group_create_owner_and_pet
+    steps:   # The attributes under here must echo the commands available to mx.caller()
+      - call: create_owner                   # Simple moxture call by name. Saves {{ownerId}} globally
+      - vars:                                # Interaction with global scope:
+          owner: "{{ownerId}}"               #   Swap/Rename/Pipe (for the next moxtures)
+          debug_label: "Created_at_{{now}}"  #   Or create new global context
+      - call: create_pet_for_owner
+      - sleep: 500ms                         # For asynchronous testing
+      - call: create_other                   # Call a moxture with added context.
+        with:                                # => add variables to the call scope
+          in.name: "Rex"                     #   Override default
+          in_owner_id: "{{owner}}"           #   Or use from global context
+    finally:                                 # To prevent the scenario from cluttering the environment
+      - call ...                             # these calls are exectued by Moxter whatever the
+      - call ...                             # outcome of the scenario (i.e. event if it fails at step 2)
+
+# TODO
+# If called directly this file will run these moxtures in the following order:
+# E.g. doing:
+#   mvn moxter:run -Dfile=tests_pet_crud.yaml
+# or programatically:
+#   mx.build().load("tests_pet_crud.yaml").play()
+# will automatically look for this section and execute the moxtures in the order 
+# they appear.
+# Any complex orchestration logic can be stowed away in the moxture (single or group)
+#
+# We could also provide this: 
+#   mvn moxter:run -Dfile=tests.yaml -Dmoxture=smoke_test_checkout
+# => runs the target moxture
+#
+# IF devs/QAS want to have different test_suites they can just create a seperate file
+# for each and include the necessary moxtures.
+#
+play:
+  - moxture_1
+  - moxture_2
+  - moxture_3
+
+
+```
+
+Not doing : 
+
+```yaml
+
+  - name: create_pet_for_owner
+    expect:  # expect the return to be...
+      body:
+        assert:
+        # Assert exception should be thrown: # TODO does this make sense? A REST call does 
+                                             # not return an execption and we can assert
+                                             # return status and check the message
+          exception:
+            type: "MatingException"           # Unwraps the cause chain to find this class
+            messageContains: "is sterile"     # Convenience check for the message
+            assert:                           # Surgical JSONPath asserts on the Exception object!
+              "$.causeEnum": "STERILE_PARENT"
 ```
 
 ---
-### New syntax for group
+### Different ways to orchestrate the tests   #TODO
 
-NOT AS GOOD:
+@Test
+void myTest
+{ mx = Moxter.build().caller();
+  mx.call("moxture_1");
+  mx.call("moxture_2");
+  mx.call("moxture_3");
+}  
 
-```yaml
-- name: group_create_owner_and_pet
-  moxtures:
-    - create_owner                         # Simple moxture call by name. Saves {{ownerId}} globally
-    - vars:                                # Interaction with global scope:
-        owner: "{{ownerId}}"               #   Swap/Rename/Pipe (for the next moxtures)
-        debug_label: "Created_at_{{now}}"  #   Or create new global context
-    - create_pet_for_owner
-    - name: create_other                   # Call a moxture with added context.
-      with:                                # With call scope
-        in.name: "Rex"                     #   Override default
-        in_owner_id: "{{owner}}"           #   Or use from global context
-```
 
-BETTER:
+@Test
+void myTest
+{ mx = Moxter.build().caller();
+  mx.call("moxture_1");
+  mx.call("group_moxture_1");
+  mx.call("moxture_3");
+}  
 
-```yaml
-- name: group_create_owner_and_pet
-  steps:
-    - call: create_owner                    # Simple moxture call by name. Saves {{ownerId}} globally
-    - vars:                                # Interaction with global scope:
-        owner: "{{ownerId}}"               #   Swap/Rename/Pipe (for the next moxtures)
-        debug_label: "Created_at_{{now}}"  #   Or create new global context
-    - call: create_pet_for_owner
-    - call: create_other                   # Call a moxture with added context.
-      with:                                # With call scope
-        in.name: "Rex"                     #   Override default
-        in_owner_id: "{{owner}}"           #   Or use from global context
-```
+
+@Test
+void myTest
+{ mx = Moxter.build()
+             .load("file_with_moxtures.yaml");  // with includes
+  mx.call("moxture_1");
+  mx.call("group_moxture_1");
+  mx.call("moxture_3");
+}  
+
+
+@Test
+void myTest
+{ mx = Moxter.build()
+             .load("file_with_moxtures.yaml");  // with includes
+             .run();       // Execute what's in the run section
+}  
+
+
+---
+### Distinguishing between single and group moxture   #TODO
+
+
+Polymorphic Moxture Routing: Duck Typing vs. Explicit Types
+To seamlessly differentiate between single (HTTP) and group moxtures within the same YAML array without requiring boilerplate type attributes, there are 2 possibilities : 
+- Duck Typing (Jackson Deduction: if there is a step attribute then it's a group) 
+   COns:  yields cryptic, unhelpful errors when users make typos (e.g., enpoint). 
+   Mitigated if we have YAML Schema Validator
+- Strict (force providing a "type: single/group" attribute. Could be by default single so we dont
+  have to specify for single moxtures)
+
+Since we're not sure what way to go we can use a hybrid approach in the code. The  logic is abstracted into a custom MoxtureRoutingDeserializer. This mechanism checks for an explicit type override first, but gracefully falls back to inspecting the object's shape (e.g., routing to a Group if steps are present).
+ 
+
+
+---
+### formal YAML/JSON Schema validation   #TODO
+
+
+1. The "Whitespace and Typo" Tax
+When a developer writes REST Assured, their IDE gives them auto-complete, and the Java compiler catches typos immediately.
+If a developer writes "$.offers[*].lenght()": 3 in Moxter, or accidentally indents status: 200 one space too far, the IDE won't warn them. The test will just crash at runtime. You have traded compile-time safety for declarative readability.
+
+The Mitigation: You must write a JSON Schema for your moxtures.yaml format and tell your developers to link it in their IDEs (IntelliJ/VSCode). This will give them autocomplete and red-squiggly lines for YAML typos. Without this, the Developer Experience (DX) will suffer.
 
 
 
 
 ---
-### Override with jsonpath
+### Override with jsonpath  #TODO
 
 mx.caller()
   // Override variable
@@ -232,28 +330,42 @@ mx.caller()
 
 
 
+
+
+==============================================================================================
 ---
-### Assert exceptions
+## ERROR MANAGEMENT / PREVENTION
 
-See above
+---
+### The "Collision Alert" (Safety without Complexity)
+ (this can be a desired effect though, the warning should be just a "heads up") : " variable xyz defined in fixture f is overridden (what would be the right term btw? override/overwrite/shadow/... ?)
 
 
 
 ---
-### Moxtures should not ALL be evaluated at start of Moxter engine
+### no fixture file found should generate warningn, not error
+
+[INFO]
+[ERROR] Errors:
+[ERROR]   MyMoxterTest>ParentMoxterTest.bootBase:84 ▒ IllegalState [FixtureEngine] No fixtures file found for com.fhi.pet_clinic.moxter_tests.MyMoxterTest
+Expected at: classpath:/fixtures/com/fhi/pet_clinic/moxter_tests/MyMoxterTest/fixtures.yaml
+Hint: place the file under src/test/resources/fixtures/com/fhi/pet_clinic/moxter_tests/MyMoxterTest/fixtures.yaml
+[INFO]
+[ERROR] Tests run: 1, Failures: 0, Errors: 1, Skipped: 0
+
+
+
+---
+### Moxtures should not ALL be evaluated at start of Moxter engine  #TODO
 
 If a moxture is faulty then Moxter crashes
 When the faulty moxture might not ever end up being called at all.
 
 
 
+==============================================================================================
 ---
-### Should warn when using unknown/wrong yaml
-
-
-
----
-### Imrpove ERROR/DEBUGGING
+### Improve ERROR/DEBUGGING
 
 We reeally need to improve syntax error support in the moxtures yaml files
 Th error reported needs to clearly indicate the file and the line
@@ -261,9 +373,6 @@ Th error reported needs to clearly indicate the file and the line
 Instead of the following, we should have a clear message indicating
 - which moxture is faulty
 - where exactly
-
-
-
 
 
 12:23:52.229 main INFO  o.s.t.w.s.TestDispatcherServlet initServletBean,554 : Completed initialization in 1 ms
@@ -300,6 +409,11 @@ To fix this, we need to catch Jackson's JsonProcessingException, extract the exa
 RestAssured has a genius feature: log().ifValidationFails().
 
 
+==============================================================================================
+---
+## REPORTING
+
+
 ---
 ### Better report
 
@@ -326,9 +440,6 @@ At the end:
 [INFO] ------------------------------------------------------------------------
 
 
-
-
-
 ---
 ### some kind of "Startup Banner" (that can be toggled on/off)
 
@@ -345,22 +456,63 @@ that prints what moxtures are available for the current class, where they're tak
 --------------------------------------------------------
 ```
 
+
+
+==============================================================================================
 ---
-### The "Collision Alert" (Safety without Complexity)
- (this can be a desired effect though, the warning should be just a "heads up") : " variable xyz defined in fixture f is overridden (what would be the right term btw? override/overwrite/shadow/... ?)
+## ENGINE
+
+---
+# Allow concurrent
 
 
+    // Concurrent allows tests to be run in parallel
+    //#private final ConcurrentMap<String, Object> vars = new ConcurrentHashMap<>();
+    private final Map<String,Object> vars = new LinkedHashMap<>();
 
 
 ---
 ### Improve configuration
 
 Maybe introduce a Configuration object
+Maybe have the config in a yaml file
 
 
 ---
-### Thread.sleep(xxx) in between moxture calls
-when grouping moxtures: would be nice to be able to add Thread.sleep(xxx) in between
+### Abstract HTTP call engine   #TODO
+3. Ecosystem Lock-In (The MockMvc Coupling)
+Right now, your engine HttpExecutor is hardcoded to Spring's MockMvc.
+
+What if the QA team wants to run these exact same Moxter YAML files against a live staging environment on AWS? MockMvc can't do that (it mocks the servlet container).
+
+To make Moxter a true competitor to Karate or Postman, you will eventually need to abstract HttpExecutor so you can swap MockMvc for a real HTTP client (like Spring RestClient or Java 11 HttpClient) using a toggle in MoxBuilder.
+
+<br />
+<br />
+<br />
+<br />
+
+
+
+==============================================================================================
+---
+## BRINGING MOXTER INTO ANOTHER DIMENSION
+
+---
+### Maven plugin
+
+
+
+
+
+
+
+
+
+==============================================================================================
+---
+## OTHER
+
 
 
 ---
@@ -456,29 +608,11 @@ It is highly plausible if you focus on the Enterprise "Pain Points" (Maintenance
 The most logical first step: Create a "Consulting" landing page for Moxter. Don't wait for the tool to be perfect. If someone says "I'll pay you $2k to set this up for us," you've officially moved from "Dev" to "Founder."
 
 
----
-### YAML schema
-
-1. The "Whitespace and Typo" Tax
-When a developer writes REST Assured, their IDE gives them auto-complete, and the Java compiler catches typos immediately.
-If a developer writes "$.offers[*].lenght()": 3 in Moxter, or accidentally indents status: 200 one space too far, the IDE won't warn them. The test will just crash at runtime. You have traded compile-time safety for declarative readability.
-
-The Mitigation: You must write a JSON Schema for your moxtures.yaml format and tell your developers to link it in their IDEs (IntelliJ/VSCode). This will give them autocomplete and red-squiggly lines for YAML typos. Without this, the Developer Experience (DX) will suffer.
 
 
----
-### Abstract HTTP call engine
-3. Ecosystem Lock-In (The MockMvc Coupling)
-Right now, your engine HttpExecutor is hardcoded to Spring's MockMvc.
 
-What if the QA team wants to run these exact same Moxter YAML files against a live staging environment on AWS? MockMvc can't do that (it mocks the servlet container).
 
-To make Moxter a true competitor to Karate or Postman, you will eventually need to abstract HttpExecutor so you can swap MockMvc for a real HTTP client (like Spring RestClient or Java 11 HttpClient) using a toggle in MoxBuilder.
 
-<br />
-<br />
-<br />
-<br />
 
 ---
 ###  Priorities
