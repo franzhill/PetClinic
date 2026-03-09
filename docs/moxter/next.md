@@ -48,174 +48,40 @@ The ASCII "Banner" Pollution: Big ASCII art in logs is the "Comic Sans" of the D
 
 
 
+  - name: create_pet_for_owner
+    description: this moxture creates a pet for a given owner # TODO
+    debug:
+    lax:
+    vars:
+    request:
+      method: POST
+      endpoint: "/api/pets/{{petId}}"  # allow interpolation with vars from the global context
+      body:
+    save:
+    expect:
 
 
+---
+### Loading rules
 
+- Decision 1: Variable Overrides (The Scope Hierarchy)  => closest to caller/included last wins. Makes sense ?
 
+-Decision 2: Moxture Name Collisions => 
+"My Recommendation: Fatal Startup Error. Do not allow silent overwriting of moxtures. It causes debugging nightmares where a QA engineer thinks they are running one test, but the engine is running a completely different payload." 
+=> OK
+
+- Decision 3: Circular Includes
+If File A includes File B, and File B includes File A, the loader will infinite-loop and crash.
+"My Recommendation: The MoxterFileLoader must maintain a Set<String> visitedFiles. If it sees a file it has already loaded in the current chain, it silently ignores the include to break the loop." 
+=> MOst definitely
 
 
 ---
 ### Moxture DX Features #TODO
 
-
+See blueprint file.
 ```yaml
 
-#TODO
-include:
-  - "common_moxtures.yaml"
-  - "common_vars.yaml"
-  - "creation_moxtures.yaml"
-
-
-# Define these global variables # TODO
-vars:
-  USER1_ID   : "12345"
-  USER2_ID   : "12"
-  USER3_ID   : "123"
-  USER4_ID   : "1234"
-  LOCALE     : "EN"
-
-
-moxtures:
-
-  # --------------------------------------------------------
-  # A 'single' moxture
-  # --------------------------------------------------------
-
-  - name: create_pet_for_owner
-    method: POST
-    endpoint: "/api/pets/{{petId}}"  # allow interpolation with vars from the global context
-    lax: true         # DEPRECATED, moved to the expected section
-                      # Does not raise exception if status != 20x
-                      # Useful in case this moxture is only "best effort" and we don't
-                      # want to fail the whole test if this one fails.
-    vars:             # Default variables, can be overriden by call scope.
-      in.petName: "Snowy"
-      in.petSex : {{sex}}    # allow interpolation...
-    body: |                  # allow interpolation...
-      {
-        "name": "{{in_petName}}",
-        "sex": "MALE",
-        "birthDate": "2020-01-01",
-        "species": {
-          "name": "Dog"
-        },
-        "owner": {
-          "id": "{{ownerId}}"
-        }
-      }
-    save:
-      failOnError:  true|false  # TODO. Toggles 'Lax' mode for JsonPath extractions.
-                                # If false, failed JsonPath extractions will 
-                                # return null 
-                                # If true, execption is raised (and test will
-                                # likely fail)
-      vars:                     # Store vars in the global context
-        petId: "$.id"
-        petName: "$.name"
-        petOwnerId: "$.owner.id"
-    expect:  # expect the return to be...
-      # TODO: test, vs lax
-      failOnError: true|false   # Replaces lax. Optional. Default is true.
-                                # If false do not raise exception in case expectations
-                                # fail. (Just a warning maybe)
-                                # Useful in case this moxture is only "best effort" and we don't
-                                # want to fail the whole test if this one fails.
-      status: 201     # possible values: null | int | "2xx"/"3xx"/"4xx"/"5xx" | "201" 
-      body:
-
-        # OPTION A: Surgical Assertions (Strict Equality)
-        # Evaluates the JsonPath on the left and asserts it equals the value on the right.
-        # Uses Jayway's built-in functions like .length() to avoid custom YAML operators.
-        assert:
-          # only use YAML asserts here for equality
-          # For other more complicated types of asserts, do that on the Java side
-          # Note: YAML parsers do not throw an error when they see duplicate keys.
-          # They silently overwrite the first key with the second key
-          # So we can't really define 2 asserts on one same jsonpath (the last one 
-          # would always 'win')
-          # TODO: tell Jackson to deserialize assert as a List<Map<String, Object>> 
-          # instead of a flat Map. (this means placing a "-" in front of the following
-          # elements). 
-          # This allows you to assert against the same JSON path multiple times sequentially.
-          - "$.item.type" : "new"   
-          - "$.item.value": 100
-          - "$.offers[*].length()": 3
-          - "$.offers[?(@.cost >= 1000 && @.cost <= 2000)].length()": 3
-          - "$.message": "Pet {{in_petName}} was created OK"  # strict equality check
-
-
-          # Advanced Matches
-          - "$.message":                    # See note above.
-            contains: "created OK"
-          - "$.uuid":
-            matches: "^[a-f0-9\\-]{36}$"  # Regex for UUID
-          - "$.creationDate":
-            exists: true                  # Just verify the node is there
-
-        # OPTION B: Tree Matching (JSONAssert)
-        match:
-          mode: full|partial    # used in conjunction with 'content' # TODO full
-            # if full: match with json provided in value must be exact
-            # if partial: provided json should be a subset of actual returned json
-          ignorePaths: ["$.id"]    # TODO ignore these 'volatile' field
-          content: |  # the inline json expected
-            {
-              "type": "new",
-              "value": "100"
-            }
-
-        # OPTION C: Contract Validation (JSON Schema) # TODO
-        # Validates types and required fields without hardcoding volatile data.
-        schema: "classpath:schemas/pet.json"  
-          # schema checks the structure and data types of the response.
-          # While the content (value) full/partial matching can be brittle
-          # (think ids and dates that are highly variable), the schema checking
-          # asserts the type of the response whic is supposed to be rigid.
-
-
-
-  # --------------------------------------------------------
-  # A 'group' moxture
-  # --------------------------------------------------------
-  # TODO 
-  - name: group_create_owner_and_pet
-    steps:   # The attributes under here must echo the commands available to mx.caller()
-      - call: create_owner                   # Simple moxture call by name. Saves {{ownerId}} globally
-      - vars:                                # Interaction with global scope:
-          owner: "{{ownerId}}"               #   Swap/Rename/Pipe (for the next moxtures)
-          debug_label: "Created_at_{{now}}"  #   Or create new global context
-      - call: create_pet_for_owner
-      - sleep: 500ms                         # For asynchronous testing
-      - call: create_other                   # Call a moxture with added context.
-        with:                                # => add variables to the call scope
-          in.name: "Rex"                     #   Override default
-          in_owner_id: "{{owner}}"           #   Or use from global context
-    finally:                                 # To prevent the scenario from cluttering the environment
-      - call ...                             # these calls are exectued by Moxter whatever the
-      - call ...                             # outcome of the scenario (i.e. event if it fails at step 2)
-
-# TODO
-# If called directly this file will run these moxtures in the following order:
-# E.g. doing:
-#   mvn moxter:run -Dfile=tests_pet_crud.yaml
-# or programatically:
-#   mx.build().load("tests_pet_crud.yaml").play()
-# will automatically look for this section and execute the moxtures in the order 
-# they appear.
-# Any complex orchestration logic can be stowed away in the moxture (single or group)
-#
-# We could also provide this: 
-#   mvn moxter:run -Dfile=tests.yaml -Dmoxture=smoke_test_checkout
-# => runs the target moxture
-#
-# IF devs/QAS want to have different test_suites they can just create a seperate file
-# for each and include the necessary moxtures.
-#
-play:
-  - moxture_1
-  - moxture_2
-  - moxture_3
 
 
 ```

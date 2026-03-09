@@ -1,0 +1,273 @@
+#TODO
+include:
+  - "common_moxtures.yaml"
+  - "common_vars.yaml"
+  - "creation_moxtures.yaml"
+
+
+# Define these global variables # TODO
+vars:
+  USER1_ID   : "12345"
+  USER2_ID   : "12"
+  USER3_ID   : "123"
+  USER4_ID   : "1234"
+  LOCALE     : "EN"
+
+
+moxtures:
+
+  # --------------------------------------------------------
+  # A 'single' moxture
+  # --------------------------------------------------------
+
+  - name: create_pet_for_owner
+    description: this moxture creates a pet for a given owner # TODO
+    extends: parent_moxture   # or 'basedOn'
+
+    # ENGINE CONFIGURATION
+    options:
+      lax: true         # DEPRECATED, moved to the expected section
+                        # Does not raise exception if status != 20x
+                        # Useful in case this moxture is only "best effort" and we don't
+                        # want to fail the whole test if this one fails.
+      # TODO: test, vs lax
+      allowFailure: true|false   # Replaces lax. Optional. Default is true.
+                        # Failing means at least one of the assertions wasn't met.
+                        # Useful in case this moxture is only "best effort" and we don't
+                        # want to fail the whole test if this one fails.
+
+      verbose: true     # TODO 
+                        # Bypasses global logger thresholds (e.g., logging at
+                        # INFO level) to provide surgical inspection of this 
+                        # specific moxture without flooding the logs.
+                        # Optional. Default is false.
+
+                              
+    # THE INTERFACE ("Arrange")
+
+    actor:
+      principal: "{{userBPrincipal}}"   # TODO 
+                                        # Specifies the test identity (Security Context).
+                                        # While 'pure HTTP' auth (Headers/Cookies) is supported
+                                        # in the request block, this field allows direct injection 
+                                        # of a Java Principal into MockMvc to simulate an 
+                                        # authenticated state without a real login handshake.
+
+    vars:             # Default variables, can be overriden by call scope.
+      in.petName: "Snowy"
+      in.petSex : "{{sex}}"    # allow interpolation... Quoted => Safe from the YAML scanner.
+
+    # THE REQUEST ("Act")
+    request: # TODO: add this extra level
+      method: POST
+      endpoint: "/api/pets/{{petId}}"  # allow interpolation with vars from the global context
+      headers:                                    # TODO 
+        Authorization: "Bearer {{global_token}}"
+        Accept: "application/json"
+      queryParams:                                # TODO
+        status: "available"
+        page: "{{pageNumber}}"
+      cookies:                                    # TODO
+        JSESSIONID: "{{session_id}}"
+
+      # form, multipart and body are mutually exclusive
+      form:
+        grant_type: "client_credentials"
+        client_id: "{{clientId}}"
+        client_secret: "{{clientSecret}}"
+
+      multipart:
+        # 1. The command part
+        - name: cmd
+          type: json
+          body: >
+            { "title": "pet_certificate.pdf",
+              "origin": ...
+            }
+        # 2. The Binary File Part ("file") (Optional)
+        - name: file
+          type: file
+          filename: pet_certificate.pdf
+          body: classpath:/moxtures/com/fhi/pet_certificate.pdf
+
+      body: |                  # allow interpolation...
+        {
+          "name": "{{in_petName}}",
+          "sex": "MALE",
+          "birthDate": "2020-01-01",
+          "species": {
+            "name": "Dog"
+          },
+          "owner": {
+            "id": "{{ownerId}}"
+          }
+        }
+
+    # THE STATE/PERSISTANCE ("Extract")
+    extract:  # Store vars in the global context
+      options:
+        strict:  true|false  # TODO. Toggles 'Lax' mode for JsonPath extractions.
+                                  # from the body.
+                                  # If false, failed JsonPath extractions will 
+                                  # return null 
+                                  # If true, exception is raised (and test will
+                                  # likely fail)
+      cookies:                  # TODO
+        session_id: "JSESSIONID" # Extracts the cookie from the response 
+      body:  # from response body
+        petId: "$.id"
+        petName: "$.name"
+        petOwnerId: "$.owner.id"
+      headers:                # Engine reads HTTP Response Headers
+        locationUrl: "Location"
+        csrfToken: "x-csrf-token"
+
+    # THE VALIDATION  ("Assert")
+    expect:  # expect the return to be...
+      status: 201     # possible values: null | int | "2xx"/"3xx"/"4xx"/"5xx" | "201" 
+      time: "< 500ms"          # Checks response time  # TODO
+      headers:                 # Header assertions # TODO
+        Content-Type: "application/json"
+      body:
+
+        # OPTION A: Surgical Assertions (Strict Equality)
+        # Evaluates the JsonPath on the left and asserts it equals the value on the right.
+        # Uses Jayway's built-in functions like .length() to avoid custom YAML operators.
+        assert:
+          # only use YAML asserts here for equality
+          # For other more complicated types of asserts, do that on the Java side
+          # Note: YAML parsers do not throw an error when they see duplicate keys.
+          # They silently overwrite the first key with the second key
+          # So we can't really define 2 asserts on one same jsonpath (the last one 
+          # would always 'win')
+          # TODO: tell Jackson to deserialize assert as a List<Map<String, Object>> 
+          # instead of a flat Map. (this means placing a "-" in front of the following
+          # elements). 
+          # This allows you to assert against the same JSON path multiple times sequentially.
+          - "$.item.type" : "new"   
+          - "$.item.value": 100
+          - "$.offers[*].length()": 3
+          - "$.offers[?(@.cost >= 1000 && @.cost <= 2000)].length()": 3
+          - "$.message": "Pet {{in_petName}} was created OK"  # strict equality check
+
+
+          # TODO:
+          # For more complicated assertions:
+          # Use JEXL/SpEL, along with the current variables context. 
+          # Has pros and cons.
+          # Math works natively because the saved vars are cast the Java 'equivalent's of the JSON types (so a json Number would be saved as an Integer var inside the vars Map)
+          - eval: "afterStep == beforeStep + 1"
+          
+          # Date comparison is more tricky because JSON hasn't got a date type so 
+          # vars are stored as Strings inside the global vars map.
+          # We could use built-in Moxter JEXL helper function 'date()':
+          - eval: "date(afterDate).isAfter(date(beforeDate))"
+
+          # Same here: explicit casting helpers if the JSON returned a number as a string 
+          # (e.g., "5")
+          - eval: "long(afterStepString) == 5"
+
+          # Allowing peeking in the response body via jsonpath() function:
+          - eval: "jsonpath('$.bcs.step') == beforeStep + 1"
+
+          
+          # Advanced Matches  # TODO
+          # Would require developing some Moxer "assertions language"
+          # Use instead of JEXL/SPEL, or as well as?
+          - "$.message":                    # See note above.
+              contains: "created OK"
+          - "$.uuid":
+              matches: "^[a-f0-9\\-]{36}$"  # Regex for UUID
+          - "$.creationDate":
+              exists: true                  # Just verify the node is there
+
+          # Java Bridge  # TODO
+          # For assertions that are too difficult to express through the means above
+          # we rely on calling java code directly.
+          # The java function called can perform the complicated assertions
+          # (and/or anything else, really)
+          # @deprecated Removed from here.
+          #             If really needed use a group moxture.
+
+          #- call: "java:com.mycompany.qa.TrackingAsserts#verifyTimeWar"
+          #  with:
+          #    before_step: "{{beforeStep}}"
+          #    after_step: "{{afterStep}}"
+          #    before_date: "{{beforeDate}}"
+          #    after_date: "{{afterDate}}"
+
+
+        # OPTION B: Tree Matching (JSONAssert)
+        match:
+          mode: full|partial    # used in conjunction with 'content' # TODO full
+            # if full: match with json provided in value must be exact
+            # if partial: provided json should be a subset of actual returned json
+          ignorePaths: ["$.id"]    # TODO ignore these 'volatile' field
+          content: |  # the inline json expected
+            {
+              "type": "new",
+              "value": "100"
+            }
+
+        # OPTION C: Contract Validation (JSON Schema) # TODO
+        # Validates types and required fields without hardcoding volatile data.
+        schema: "classpath:schemas/pet.json"  
+          # schema checks the structure and data types of the response.
+          # While the content (value) full/partial matching can be brittle
+          # (think ids and dates that are highly variable), the schema checking
+          # asserts the type of the response whic is supposed to be rigid.
+
+
+  # --------------------------------------------------------
+  # A 'group' moxture
+  # --------------------------------------------------------
+  # TODO 
+  - name: group_create_owner_and_pet
+    description: this is a group moxture that creates a pet and its owner
+    steps:   # The attributes under here must echo the commands available to mx.caller()
+      - call: create_owner                   # Simple moxture call by name. Saves {{ownerId}} globally
+      - vars:                                # Interaction with global scope:
+          owner: "{{ownerId}}"               #   Swap/Rename/Pipe (for the next moxtures)
+          debug_label: "Created_at_{{now}}"  #   Or create new global context
+      - call: create_pet_for_owner
+      - sleep: 500ms                         # For asynchronous testing
+      # Java Bridge
+      # We're offering the possibility to bridge to the Java world here too
+      # (see assertions), thus providing infinite extensibility.
+      # We could use this functionality for anything: seed a database before a test,
+      # clear a Kafka topic, generate cryptographic signatures for headers...
+      - call: "java:com.mycompany.qa.TrackingAsserts#verifyTimeWar"
+        with:
+          before_step: "{{beforeStep}}"
+          after_step: "{{afterStep}}"
+          before_date: "{{beforeDate}}"
+          after_date: "{{afterDate}}"
+      - call: create_other                   # Call a moxture with added context.
+        with:                                # => add variables to the call scope
+          in.name: "Rex"                     #   Override default
+          in_owner_id: "{{owner}}"           #   Or use from global context
+    finally:                                 # To prevent the scenario from cluttering the environment
+      - call ...                             # these calls are exectued by Moxter whatever the
+      - call ...                             # outcome of the scenario (i.e. event if it fails at step 2)
+
+# TODO
+# If called directly this file will run these moxtures in the given order.
+# E.g. doing:
+#   mvn moxter:run -Dfile=tests_pet_crud.yaml
+# or programatically:
+#   mx.build().load("tests_pet_crud.yaml").play()
+# will automatically look for this section and execute the moxtures in the order 
+# they appear.
+# Any complex orchestration logic can be stowed away in the moxture (single or group)
+#
+# We could also provide this: 
+#   mvn moxter:run -Dfile=tests.yaml -Dmoxture=smoke_test_checkout
+# => runs the target moxture
+#
+# IF devs/QAS want to have different test_suites they can just create a seperate file
+# for each and include the necessary moxtures.
+#
+play:
+  - moxture_1
+  - moxture_2
+  - moxture_3

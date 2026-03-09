@@ -77,6 +77,22 @@ moxtures:
       failOnError: false
 
 
+  - name: create_species_dragon_with_error
+    extends: create_species
+    options:
+      allowFailure: true   # => the error should not fail the test
+    body: |
+      { "name": "Dragon",
+        "expectedLifespan": 1000,   # this is too high, should be rejected by the service
+        "avgLitterSize": 7,
+        "fertilityAgeWindow": {
+          "from": 18,
+          "to": 100
+        }
+      }
+
+
+
 
   - name: create_pet_for_owner_with_expect_body_match
     extends: create_pet_for_owner     # alias for 'basedOn'

@@ -906,6 +906,7 @@ public final class Moxter
             merged.setMethod(Utils.Misc.firstNonBlank(node.getMethod(), materializedParent.getMethod()));
             merged.setEndpoint(Utils.Misc.firstNonBlank(node.getEndpoint(), materializedParent.getEndpoint()));
             merged.setExpect(node.getExpect() != null ? node.getExpect() : materializedParent.getExpect());
+            merged.setOptions(node.getOptions() != null ? node.getOptions() : materializedParent.getOptions());
             merged.setHeaders(Utils.Misc.mergeMap(materializedParent.getHeaders(), node.getHeaders()));
             merged.setVars(Utils.Misc.mergeMap(materializedParent.getVars(), node.getVars()));
             merged.setQuery(Utils.Misc.mergeMap(materializedParent.getQuery(), node.getQuery()));
@@ -961,8 +962,32 @@ public final class Moxter
         }
 
 
-        /** 
-         * Shallow clone of a call, with basedOn/basedOn cleared. 
+        /**
+         * Creates a safe, shallow clone of a moxture definition, completely detaching 
+         * it from its inheritance chain while preserving 
+         * the deeply-merged bodies (=> 'bodyStack')
+         * 
+         * "Detaching" means we resolve the inheritance once, copy the data, and destroy
+         * the pointer to the parent so the execution engine operates blazingly fast on 
+         * a flat object. 
+         * 
+         * "Preserving the stack" means we deliberately delay merging the JSON bodies
+         * until the exact millisecond the HTTP request fires.
+         * 
+         * When and why this is used:
+         * 1. The Caching Phase (Static):  Inside materializeDeep, when 
+         *     a moxture has no parent (or we reach the top of an inheritance chain), 
+         *     we clone it before placing it in the materializedCache. This 
+         *     protects the raw, parsed YAML definitions from accidental mutation.
+         * 2. The Execution Phase (Runtime): Inside MoxtureCaller.blendRuntimeOptions, 
+         *    before a moxture is actually executed, we fetch the static version from 
+         *    the cache and clone it. This provides a disposable "Effective Spec" where 
+         *    runtime Java API overrides (like .allowFailure(true) or .verbose(true)) 
+         *    can be safely applied without permanently poisoning the engine's shared cache 
+         *    for subsequent tests.
+         * 
+         * @param src The source moxture to clone.
+         * @return A disposable, standalone clone safe for runtime mutation.
          */
         private static Model.Moxture cloneWithoutBasedOn(Model.Moxture src) {
             Model.Moxture c = new Model.Moxture();
@@ -972,18 +997,26 @@ public final class Moxter
             c.setHeaders(src.getHeaders()==null?null:new LinkedHashMap<>(src.getHeaders()));
             c.setVars(src.getVars() == null ? null : new LinkedHashMap<>(src.getVars()));
             c.setQuery(src.getQuery()==null?null:new LinkedHashMap<>(src.getQuery()));
-            c.setBody(src.getBody()); // JSON nodes are fine to share for our usage
             c.setSave(src.getSave()==null?null:new LinkedHashMap<>(src.getSave()));
             c.setExpect(src.getExpect());
+            if (src.getOptions() != null) {
+                Model.RootOptionsDef opt = new Model.RootOptionsDef();
+                opt.setAllowFailure(src.getOptions().isAllowFailure());
+                opt.setVerbose(src.getOptions().isVerbose());
+                c.setOptions(opt);
+            }
             c.setMoxtures(src.getMoxtures()==null?null:new ArrayList<>(src.getMoxtures()));
             c.setMultipart(src.getMultipart() == null ? null : new ArrayList<>(src.getMultipart()));
             c.setBasedOn(null);
-            c.setBasedOn(null);
-            // Ensure the stack is initialized with the single body
-            if (src.getBody() != null) {
+            c.setBody(src.getBody()); // JSON nodes are fine to share for our usage
+
+            // ---> THE FIX: Preserve the body stack if it was already built! <---
+            if (src.getBodyStack() != null && !src.getBodyStack().isEmpty()) {
+                c.setBodyStack(new ArrayList<>(src.getBodyStack()));
+            } else if (src.getBody() != null) {
                 c.getBodyStack().add(src.getBody());
             }
-            c.setBody(src.getBody());
+
             return c;
         }
 
@@ -1101,10 +1134,37 @@ public final class Moxter
     {
         // Reference to the root encompassing engine
         private final Moxter moxter;
-        private boolean lax = false;
-        private boolean jsonPathLax = false;
-        private boolean printReturn = false;
+
+
         private Map<String, Object> overrides = new LinkedHashMap<>();
+
+        private boolean allowFailure = false;
+        private boolean verbose = false; // replacing printReturn
+        private boolean jsonPathLax = false;
+
+
+        /**
+         * Toggles 'allowFailure' mode for this specific call.
+         *
+         * When enabled, exceptions and assertion errors are caught and logged
+         * as warnings yet will not fail the moxture.
+         * 
+         * Lets us have "best effort" moxtures the good completion of which are not
+         * strictly mandatory.
+         */
+        public MoxtureCaller allowFailure(boolean allowFailure) {
+            this.allowFailure = allowFailure;
+            return this;
+        }
+
+        /**
+         * Increases the console feedback (disregarding logger threshold)
+         */
+        public MoxtureCaller verbose(boolean verbose) {
+            this.verbose = verbose;
+            return this;
+        }
+
 
         /**
          * For end-users: use Moxter.caller() instead
@@ -1115,19 +1175,6 @@ public final class Moxter
             this.moxter = moxter;
         }
 
-        /**
-         * Toggles 'Lax' mode for this specific call.
-         * 
-         * When enabled, a non-2xx HTTP status code will not immediately throw an exception,
-         * allowing you to perform assertions on error responses (e.g., 404 or 400).
-         * 
-         * @param lax true to suppress automatic exception throwing on API errors.
-         * @return this {@link MoxtureCaller} for chaining.
-         */
-        public MoxtureCaller lax(boolean lax) {
-            this.lax = lax;
-            return this;
-        }
 
         /**
          * Toggles 'Lax' mode for JsonPath extractions.
@@ -1139,17 +1186,6 @@ public final class Moxter
          */
         public MoxtureCaller withJsonPathLax(boolean val) {
             this.jsonPathLax = val;
-            return this;
-        }
-
-        /**
-         * Enables automatic pretty-printing of the response body to standard output.
-         * Useful for debugging complex JSON structures during test development.
-         * * @param val true to print the result after execution.
-         * @return this {@link MoxtureCaller} for chaining.
-         */
-        public MoxtureCaller withPrintReturn(boolean val) {
-            this.printReturn = val;
             return this;
         }
 
@@ -1244,9 +1280,6 @@ public final class Moxter
         {
             Runtime.ResponseEnvelope env = callInternal(moxtureName, overrides);
 
-            if (printReturn && env != null && env.body() != null) {
-                System.out.println("[Moxter] Result for " + moxtureName + ":\n" + env.body().toPrettyString());
-            }
             return new MoxtureResult(env, moxter, moxtureName);
         }
 
@@ -1262,6 +1295,10 @@ public final class Moxter
             Objects.requireNonNull(moxtureName, "name");
             MoxtureResolver.EffectiveMoxture r = this.moxter.moxResolver.resolveByName(moxtureName);
 
+            // ---> THE BLENDER <---
+            // Merge the YAML spec with the runtime Java overrides
+            Model.Moxture finalSpec = blendRuntimeOptions(r.moxt);
+
             // 1. Build this moxture's local overrides.
             // The moxture's own YAML vars yield to the passed-in overrides.
             // (If this is a child in a group, callScopedOverrides contains the group's vars)
@@ -1274,8 +1311,8 @@ public final class Moxter
             }
             
             // Local vars provided by the moxture (or the group of moxtures):
-            if (r.moxt.getVars() != null) {
-                r.moxt.getVars().forEach((k, v) -> {
+            if (finalSpec.getVars() != null) {
+                finalSpec.getVars().forEach((k, v) -> {
                     if (v instanceof String s && s.contains("{{")) {
                         // Resolve aliases like "{{ownerId}}" to their actual values
                         localOverrides.put(k, Utils.Interpolation.interpolate(s, runningContext));
@@ -1292,22 +1329,23 @@ public final class Moxter
             }
 
             // 2. Call
-            MoxtureResolver.validateMoxture(r.moxt);
+            MoxtureResolver.validateMoxture(finalSpec);
+            boolean isAllowFailure = finalSpec.getOptions().isAllowFailure();
 
             // 2.1. If group Moxture
-            if (isGroupMoxture(r.moxt)) 
-            {   final String label = "group '" + moxtureName + "'" + (lax ? " (lax)" : "");
+            if (isGroupMoxture(finalSpec)) 
+            {   final String label = "group '" + moxtureName + "'" + (isAllowFailure ? " (allowFailure)" : "");
                 
                 // We pass THIS group's successfully merged localScope down to its children.
                 // To the children, these act as their "callScopedOverrides".
-                for (String childMoxtureName : r.moxt.getMoxtures()) 
+                for (String childMoxtureName : finalSpec.getMoxtures()) 
                 {   try 
                     {   // Recurse
                         callInternal(childMoxtureName, localOverrides);
                     } 
                     catch (Throwable t) 
-                    {   if (lax) {
-                            log.warn("[Moxter] (lax) {} → child '{}' failed — skipping. Cause: {}", label, childMoxtureName, t.toString());
+                    {   if (isAllowFailure) {
+                            log.warn("[Moxter] (allowFailure) {} → child '{}' failed — skipping. Cause: {}", label, childMoxtureName, t.toString());
                         } else {
                             if (t instanceof RuntimeException) throw (RuntimeException) t;
                             throw new RuntimeException("Error executing moxture '" + childMoxtureName + "' in " + label, t);
@@ -1321,11 +1359,15 @@ public final class Moxter
             {   // Create the Layered View (Local -> Global) using the fluent facade for writes
                 Map<String, Object> mergedVars = new MoxVars.CallScopedVars(localOverrides, this.moxter.vars, moxter.vars()::put);
                 try 
-                {   return this.moxter.executor.execute(r.moxt, r.baseDir, mergedVars, lax, jsonPathLax);
+                {   
+                    // ---> THE PRISTINE CALL <---
+                    // The flags have been removed from the signature. 
+                    // The executor pulls its behavior directly from finalSpec.getOptions()
+                    return this.moxter.executor.execute(finalSpec, r.baseDir, mergedVars, jsonPathLax);
                 } 
                 catch (Throwable t) 
-                {   if (lax) {
-                        log.warn("[Moxter] (lax) single moxture '{}' failed — skipping. Cause: {}", moxtureName, t.toString());
+                {   if (isAllowFailure) {
+                        log.warn("[Moxter] (allowFailure) single moxture '{}' failed — skipping. Cause: {}", moxtureName, t.toString());
                         return null;
                     }
                     if (t instanceof RuntimeException) throw (RuntimeException) t;
@@ -1340,6 +1382,24 @@ public final class Moxter
             return f != null && f.getMoxtures() != null;
         }
 
+
+        /**
+         * Blends the static YAML moxture options with the runtime Java API overrides.
+         * Creates a shallow clone to avoid mutating the engine's cached definitions.
+         */
+        private Model.Moxture blendRuntimeOptions(Model.Moxture staticMoxt) {
+            Model.Moxture finalSpec = MoxtureResolver.cloneWithoutBasedOn(staticMoxt);
+            
+            Model.RootOptionsDef staticOpts = finalSpec.getOptions();
+            Model.RootOptionsDef mergedOpts = new Model.RootOptionsDef();
+            
+            // Logical OR: If either the YAML or the Java API says true, the final spec is true.
+            mergedOpts.setAllowFailure(this.allowFailure || (staticOpts != null && staticOpts.isAllowFailure()));
+            mergedOpts.setVerbose     (this.verbose      || (staticOpts != null && staticOpts.isVerbose()));
+
+            finalSpec.setOptions(mergedOpts);
+            return finalSpec;
+        }
     }
 
 
@@ -2245,12 +2305,6 @@ public final class Moxter
                 this.authSupplier = authSupplier;
             }
 
-            /**
-             * Strict convenience.
-             */
-            Runtime.ResponseEnvelope execute(Model.Moxture spec, String baseDir, Map<String,Object> vars) {
-                return execute(spec, baseDir, vars, false, false);
-            }
 
             /**
              * Execute a single moxture call.
@@ -2260,15 +2314,23 @@ public final class Moxter
              * @param spec
              * @param baseDir
              * @param vars
-             * @param lax do not fail on expected-status mismatches (still throws for infra errors)
-             * @param jsonPathLax see callMoxture(...)
+             * @param jsonPathLax if true, the library that reads JSON paths in the "save" in the yaml moxtures
+             * will have a lax (aka lenient) configuration.
              */
-            Runtime.ResponseEnvelope execute(Model.Moxture spec, String baseDir, 
-                                           Map<String,Object> vars, boolean lax, boolean jsonPathLax) 
+            Runtime.ResponseEnvelope execute(Model.Moxture spec, 
+                                             String baseDir, 
+                                             Map<String,Object> vars,
+                                             boolean jsonPathLax) 
             {
                 final long t0 = System.nanoTime();
                 final String name   = (spec.getName() == null || spec.getName().isBlank()) ? "<unnamed>" : spec.getName();
                 final String method = Utils.Http.safeMethod(spec.getMethod());
+                
+                // Read allowFailure policy directly from the effective spec
+                final boolean allowFailure = spec.getOptions() != null && spec.getOptions().isAllowFailure();
+                final boolean verbose      = spec.getOptions() != null && spec.getOptions().isVerbose();
+
+                // Resolve JsonPath Configuration from the parameter
                 final Configuration jsonPathConfig = jsonPathLax ? JSONPATH_CONF_LAX : JSONPATH_CONF_STRICT;
 
                 try {
@@ -2282,7 +2344,7 @@ public final class Moxter
                     final URI uri = URI.create(Utils.Http.appendQuery(endpoint, query));
                     final JsonNode payloadNode = payloads.resolve(spec, baseDir, vars, tpl);
 
-                    logExecutionStart(name, method, uri, headers0, query, vars, payloadNode);
+                    logExecutionStart(verbose, name, method, uri, headers0, query, vars, payloadNode);
 
                     // 2. Build the Spring MockMvc Request
                     MockHttpServletRequestBuilder req = buildRequest(spec, baseDir, vars, method, uri, headers0, payloadNode);
@@ -2291,13 +2353,23 @@ public final class Moxter
                     MockHttpServletResponse mvcResp = mockMvc.perform(req).andDo(print()).andReturn().getResponse();
                     Runtime.ResponseEnvelope env = parseResponse(mvcResp);
 
-                    logResponsePreview(env);
+                    logResponsePreview(verbose, env);
 
-                    // 4. Verify Expectations (Status, Match, Assert)
-                    verifyExpectations(spec, env, baseDir, vars, name, method, uri, lax, jsonPathConfig);
-
-                    // 5. Save Variables for future moxtures
+                    // 4. Save Variables for future moxtures FIRST
+                    // (So if a moxture is 'allowFailure: true', it still extracts what it can before any potential assertion failures)
                     processSaves(spec, env, vars, name, jsonPathConfig);
+
+                    // 5. Verify Expectations
+                    try {
+                        verifyExpectations(spec, env, baseDir, vars, name, method, uri, jsonPathConfig);
+                    } catch (AssertionError e) {
+                        // The single source of truth for the allowFailure policy
+                        if (allowFailure) {
+                            log.info("[Moxter] (allowFailure mode allowed failure): {}", e.getMessage());
+                        } else {
+                            throw e; 
+                        }
+                    }
 
                     logExecutionEnd(name, method, uri, env.status(), t0);
                     return env;
@@ -2430,7 +2502,7 @@ public final class Moxter
             // =========================================================================
 
             private void verifyExpectations(Model.Moxture spec, Runtime.ResponseEnvelope env, String baseDir, Map<String,Object> vars, 
-                                            String name, String method, URI uri, boolean lax, Configuration jsonPathConfig) throws Exception 
+                                            String name, String method, URI uri, Configuration jsonPathConfig) throws Exception 
             {
                 if (spec.getExpect() == null) return;
 
@@ -2440,29 +2512,30 @@ public final class Moxter
                         String bodyPreview = (env.raw() == null || env.raw().isBlank()) ? "<empty>" : Utils.Logging.truncate(env.raw(), 500);
                         String msg = String.format(Locale.ROOT, "Unexpected HTTP %d for '%s' %s %s, expected=%s. Body=%s",
                                 env.status(), name, method, uri, expectedStatusPreview(spec.getExpect().getStatus()), bodyPreview);
-                        if (lax) log.info("[Moxter] (lax mode allowed failure): {}", msg);
-                        else throw new AssertionError(msg);
+                        
+                        // Natively throw it. The execute() method catches it and handles the allowFailure policy.
+                        throw new AssertionError(msg);
                     }
                 }
 
                 // 2. Check Body Assertions
                 Model.ExpectBodyDef bodyDef = spec.getExpect().getBody();
                 if (bodyDef == null) return;
-                boolean failOnError = spec.getExpect().isFailOnError();
 
                 // 2a. Match
                 if (bodyDef.getMatch() != null) {
-                    verifyMatch(bodyDef.getMatch(), env, baseDir, vars, name, failOnError, jsonPathConfig);
+                    verifyMatch(bodyDef.getMatch(), env, baseDir, vars, name, jsonPathConfig);
                 }
 
                 // 2b. Assert
                 if (bodyDef.getAssertDef() != null && !bodyDef.getAssertDef().isEmpty()) {
-                    verifySurgicalAsserts(bodyDef.getAssertDef(), env, baseDir, vars, jsonPathConfig);
+                    // We pass the 'spec' down so it can read the allowFailure flag for the Hybrid Short-Circuit
+                    verifySurgicalAsserts(spec, bodyDef.getAssertDef(), env, baseDir, vars, jsonPathConfig);
                 }
             }
 
             private void verifyMatch(Model.ExpectBodyMatchDef matchDef, Runtime.ResponseEnvelope env, String baseDir, 
-                                     Map<String,Object> vars, String name, boolean failOnError, Configuration jsonPathConfig) throws Exception 
+                                     Map<String,Object> vars, String name, Configuration jsonPathConfig) throws Exception 
             {
                 try {
                     if (env.raw() == null || env.raw().isBlank()) throw new AssertionError("Response body is empty.");
@@ -2485,17 +2558,26 @@ public final class Moxter
                     boolean strictMode = "full".equalsIgnoreCase(matchDef.getMode());
                     JSONAssert.assertEquals(expectedJsonStr, actualJsonStr, strictMode);
                 } catch (AssertionError e) {
-                    String msg = String.format("Moxture '%s' JSON match failed: %s", name, e.getMessage());
-                    if (failOnError) throw new AssertionError(msg, e);
-                    else log.warn("[Moxter] (failOnError=false) {}", msg);
+                    // Wrap the error with context, but ALWAYS throw. Top-level execute() decides whether to swallow it.
+                    throw new AssertionError(String.format("Moxture '%s' JSON match failed: %s", name, e.getMessage()), e);
                 }
             }
 
-            private void verifySurgicalAsserts(Model.ExpectBodyAssertDef assertDef, Runtime.ResponseEnvelope env, 
+            private void verifySurgicalAsserts(Model.Moxture spec, Model.ExpectBodyAssertDef assertDef, Runtime.ResponseEnvelope env, 
                                                String baseDir, Map<String,Object> vars, Configuration jsonPathConfig) throws Exception 
             {
+                // Read policy from the spec for the short-circuit logic
+                final boolean allowFailure = spec.getOptions() != null && spec.getOptions().isAllowFailure();
+
+                
                 DocumentContext actCtx = com.jayway.jsonpath.JsonPath.using(jsonPathConfig).parse(env.raw());
-                assertDef.getPaths().forEach((path, rawExpectedNode) -> {
+                List<String> collectedErrors = new ArrayList<>();
+                
+                // Using a standard for-loop to cleanly handle exceptions and control flow
+                for (Map.Entry<String, JsonNode> entry : assertDef.getPaths().entrySet()) {
+                    String path = entry.getKey();
+                    JsonNode rawExpectedNode = entry.getValue();
+                    
                     try {
                         com.fasterxml.jackson.databind.JsonNode expectedNode = payloads.resolveSingleNode(rawExpectedNode, baseDir, vars, tpl);
                         Object actualValue = actCtx.read(path);
@@ -2516,14 +2598,27 @@ public final class Moxter
                             org.assertj.core.api.Assertions.assertThat(String.valueOf(actualValue))
                                     .as("Path '%s'", path).isEqualTo(expectedNode.asText());
                         }
+                        
                     } catch (com.jayway.jsonpath.PathNotFoundException e) {
-                        throw new AssertionError("Surgical assert failed: Path '" + path + "' was not found in the response.");
+                        collectedErrors.add(String.format("Path '%s' was not found in the response.", path));
                     } catch (AssertionError e) {
-                        throw e; 
+                        collectedErrors.add(e.getMessage());
                     } catch (Exception e) {
+                        // Infra/Parsing errors still throw immediately, as the JSON/YAML itself is broken
                         throw new RuntimeException("Failed to evaluate assert for path: " + path, e);
                     }
-                });
+
+                    // ---> THE HYBRID SHORT-CIRCUIT <---
+                    // If best-effort (allowFailure = true), fail-fast to avoid noisy logs and wasted cycles.
+                    if (allowFailure && !collectedErrors.isEmpty()) {
+                        throw new AssertionError(collectedErrors.get(0));
+                    }
+                }
+
+                // If strict mode, we throw the beautifully compiled list of ALL errors.
+                if (!collectedErrors.isEmpty()) {
+                    throw new AssertionError("Multiple surgical assertions failed:\n- " + String.join("\n- ", collectedErrors));
+                }
             }
 
             // =========================================================================
@@ -2542,25 +2637,35 @@ public final class Moxter
                 }
             }
 
-            private void logExecutionStart(String name, String method, URI uri, Map<String,String> headers, Map<String,String> query, Map<String,Object> vars, JsonNode payload) {
+            private void logExecutionStart(boolean verbose, String name, String method, URI uri, Map<String,String> headers, Map<String,String> query, Map<String,Object> vars, JsonNode payload) {
                 log.info("[Moxter] >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
                 log.info("[Moxter] >>> Executing moxture:  [{}, {}, {}]", name, method, uri);
-                if (log.isDebugEnabled()) {
-                    log.debug("[Moxter] more info: headers={} query={} vars={} payload={}",
+                
+                if (verbose || log.isDebugEnabled()) {
+                    String msg = "[Moxter] more info: headers={} query={} vars={} payload={}";
+                    Object[] args = {
                             Utils.Logging.previewHeaders(headers),
                             (query == null || query.isEmpty() ? "{}" : query.toString()),
                             Utils.Logging.previewVars(vars),
-                            Utils.Logging.previewNode(payload));
+                            Utils.Logging.previewNode(payload)
+                    };
+                    // The bypass: if verbose is requested, force it out at INFO level
+                    if (verbose) log.info(msg, args); else log.debug(msg, args);
                 }
             }
 
-            private void logResponsePreview(Runtime.ResponseEnvelope env) {
-                if (log.isDebugEnabled()) {
-                    log.debug("[Moxter] response preview: status={} headers={} body={}",
-                            env.status(), Utils.Logging.previewRespHeaders(env.headers()), Utils.Logging.previewNode(env.body()));
+            private void logResponsePreview(boolean verbose, Runtime.ResponseEnvelope env) {
+                if (verbose || log.isDebugEnabled()) {
+                    String msg = "[Moxter] response preview: status={} headers={} body={}";
+                    Object[] args = { env.status(), Utils.Logging.previewRespHeaders(env.headers()), Utils.Logging.previewNode(env.body()) };
+                    
+                    if (verbose) log.info(msg, args); else log.debug(msg, args);
                 }
-                if (log.isTraceEnabled()) {
-                    log.trace("[Moxter] Raw body (len={}): {}", env.raw() == null ? 0 : env.raw().length(), Utils.Logging.truncate(env.raw(), 4000));
+                if (verbose || log.isTraceEnabled()) {
+                    String msg = "[Moxter] Raw body (len={}): {}";
+                    Object[] args = { env.raw() == null ? 0 : env.raw().length(), Utils.Logging.truncate(env.raw(), 4000) };
+                    
+                    if (verbose) log.info(msg, args); else log.trace(msg, args);
                 }
             }
 
@@ -3323,6 +3428,7 @@ public final class Moxter
         static final class Moxture
         {
             private String name;
+            private RootOptionsDef options;
             private String method;
             private String endpoint;
             private Map<String,String> headers;
@@ -3348,11 +3454,16 @@ public final class Moxter
             private List<JsonNode> bodyStack = new ArrayList<>();
         }
 
+        @Getter @Setter
+        public static final class RootOptionsDef {
+            
+            private boolean allowFailure = false;
+            private boolean verbose = false;
+        }
 
         @Getter @Setter
         public static class ExpectDef 
         {
-            private boolean failOnError = true; // Default
             private JsonNode status;            // int | "2xx"/"3xx"/"4xx"/"5xx" | "201" | [ ... any of those ... ]
             private ExpectBodyDef body;
         }

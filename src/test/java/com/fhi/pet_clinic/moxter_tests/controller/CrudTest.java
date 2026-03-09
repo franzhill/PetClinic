@@ -227,6 +227,12 @@ class CrudTest extends ParentMoxterTest
     }
 
 
+    @Test
+    @DisplayName("Moxture with error but allowFailure = true; should not be reported as failed")
+    //@SuppressWarnings("")
+    void test_30()
+    {   mx.caller().call("create_species_dragon_with_error");
+    }
 
 
 
