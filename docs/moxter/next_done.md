@@ -1,5 +1,21 @@
 
 
+---
+### TO Fix
+
+3. Shared Mutable State (The Payload Trap)
+The Brutal Truth: Inside cloneWithoutBasedOn, you wrote this comment:
+
+Java
+c.setPayload(src.getPayload()); // JSON nodes are fine to share for our usage
+They are absolutely not. Jackson's ObjectNode and ArrayNode are highly mutable. Because you cache materialized moxtures, if a developer retrieves the payload in their test and accidentally modifies it (e.g., ((ObjectNode) result.getBody()).put("hacked", true);), they have just permanently mutated the cached payload for every subsequent test that uses that moxture.
+
+The Fix: Jackson provides a built-in deep copy. Use it to protect your cache:
+
+Java
+c.setPayload(src.getPayload() == null ? null : src.getPayload().deepCopy());
+
+
 
 ---
 ### Move towards a "fluent API": 

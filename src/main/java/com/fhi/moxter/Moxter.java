@@ -1,7 +1,6 @@
 package com.fhi.moxter;
 
 import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.print;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -38,6 +37,8 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.request.MockMultipartHttpServletRequestBuilder;
@@ -150,10 +151,26 @@ public final class Moxter
     private final Runtime.HttpExecutor executor;
     private final String moxturesBaseDir;
 
-
+/* OLD
     private final ObjectMapper yamlMapper;
     // Keep JSON mapper for HTTP
     private final ObjectMapper jsonMapper; // NOSONAR yes it's used!
+
+    REPLACED with static Singletons for Performance:
+*/
+    private final ObjectMapper yamlMapper;
+    // Keep JSON mapper for HTTP
+    private final ObjectMapper jsonMapper; // NOSONAR yes it's used!
+
+
+
+    public static final ObjectMapper YAML_MAPPER = new ObjectMapper(new YAMLFactory())
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+            .configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
+
+    public static final ObjectMapper JSON_MAPPER = new ObjectMapper()
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+            .configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
 
 
     // Auth supplier (fixed or lazy) from builder
@@ -307,21 +324,7 @@ public final class Moxter
         this.executor = new Runtime.HttpExecutor(mockMvc, jsonMapper, templating, payloadResolver, matcher, builderAuthSupplier);
     }
 
-    // =====================================================================
-    //   Private helpers
-    // =====================================================================
 
-    private static ObjectMapper defaultYamlMapper() {
-        return new ObjectMapper(new YAMLFactory())
-                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
-                .configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
-    }
-
-    private static ObjectMapper defaultJsonMapper() {
-        return new ObjectMapper()
-                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
-                .configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
-    }
 
 
 
@@ -336,11 +339,6 @@ public final class Moxter
     // ############################################################################
     // ############################################################################
     // ############################################################################
-
-
-
-
-
 
     /**
      * A fluent builder for configuring and instantiating the {@link Moxter} engine.
@@ -418,9 +416,6 @@ public final class Moxter
          */
         public Moxter build() 
         {
-            ObjectMapper yamlMapper = defaultYamlMapper();
-            ObjectMapper jsonMapper = defaultJsonMapper();
-            
             // Wire up the legacy JUnit hierarchical config
             HierarchicalMoxtureLoader.MoxtureLoadingConfig cfg = new HierarchicalMoxtureLoader.MoxtureLoadingConfig(
                     DEFAULT_MOXTURES_ROOT_PATH,
@@ -428,9 +423,23 @@ public final class Moxter
                     DEFAULT_MOXTURES_BASENAME
             );
             
-            IMoxtureLoader loader = new HierarchicalMoxtureLoader(testClass, cfg, yamlMapper);
-            
-            return new Moxter(loader, mockMvc, authSupplier, yamlMapper, jsonMapper);
+            // Use the static constants here!
+            IMoxtureLoader loader = new HierarchicalMoxtureLoader(testClass, cfg, YAML_MAPPER);
+
+            return new Moxter(loader, mockMvc, authSupplier, defaultYamlMapper(), defaultJsonMapper());
+        }
+
+
+        // =====================================================================
+        //   Private helpers
+        // =====================================================================
+
+        private static ObjectMapper defaultYamlMapper() {
+            return YAML_MAPPER;
+        }
+
+        private static ObjectMapper defaultJsonMapper() {
+            return JSON_MAPPER;
         }
     }
 
@@ -1008,9 +1017,12 @@ public final class Moxter
             c.setMoxtures(src.getMoxtures()==null?null:new ArrayList<>(src.getMoxtures()));
             c.setMultipart(src.getMultipart() == null ? null : new ArrayList<>(src.getMultipart()));
             c.setBasedOn(null);
-            c.setBody(src.getBody()); // JSON nodes are fine to share for our usage
+            //# OLD c.setBody(src.getBody()); // JSON nodes are fine to share for our usage
+            // ---> THE FIX: Prevent Shared Mutable State <---
+            // Use Jackson's deepCopy() so runtime payload modifications don't poison the cache:
+            c.setBody(src.getBody() == null ? null : src.getBody().deepCopy());
 
-            // ---> THE FIX: Preserve the body stack if it was already built! <---
+            // Preserve the body stack if it was already built!
             if (src.getBodyStack() != null && !src.getBodyStack().isEmpty()) {
                 c.setBodyStack(new ArrayList<>(src.getBodyStack()));
             } else if (src.getBody() != null) {
@@ -1135,13 +1147,57 @@ public final class Moxter
         // Reference to the root encompassing engine
         private final Moxter moxter;
 
-
-        private Map<String, Object> overrides = new LinkedHashMap<>();
+        private Map<String, Object> varOverrides = new LinkedHashMap<>();
+        private Object expectedStatusOverride = null;
 
         private boolean allowFailure = false;
         private boolean verbose = false; // replacing printReturn
         private boolean jsonPathLax = false;
 
+        /**
+         * The specific Spring Security Authentication bound to this individual moxture caller.
+         * 
+         * <p>When set (via {@link #withAuthentication(org.springframework.security.core.Authentication)}), 
+         * this identity overrides both the engine (Moxter) 's default authentication supplier and the global 
+         * {@code SecurityContextHolder}.
+         * 
+         * <p>This security context persists for the lifetime of this specific {@code MoxtureCaller} 
+         * instance. Because it is strictly bound to the caller rather than the root engine (Moxter), it allows 
+         * you to safely execute one or more moxtures as a specific user without polluting the global 
+         * test state.
+         */
+        private Authentication callAuth = null;
+
+
+        /**
+         * Nested builder for overriding moxture expectations fluently.
+         */
+        public class ExpectBuilder {
+            
+            /**
+             * Overrides the expected HTTP status code(s) defined in the YAML moxture.
+             * 
+             * @param status Can be an Integer (201), a String ("4xx"), or a List ([200, 204]).
+             * @return The parent {@link MoxtureCaller} to continue chaining.
+             */
+            public MoxtureCaller status(Object status) {
+                MoxtureCaller.this.expectedStatusOverride = status;
+                return MoxtureCaller.this;
+            }
+            
+            // Future expansion: public MoxtureCaller body(...) { ... }
+        }
+
+
+
+        /**
+         * For end-users: use Moxter.caller() instead
+         * 
+         * @param moxter      The encompassing Engine.
+         */
+        protected MoxtureCaller(Moxter moxter) {
+            this.moxter = moxter;
+        }
 
         /**
          * Toggles 'allowFailure' mode for this specific call.
@@ -1165,14 +1221,34 @@ public final class Moxter
             return this;
         }
 
-
         /**
-         * For end-users: use Moxter.caller() instead
+         * Injects a specific Spring Security {@link org.springframework.security.core.Authentication} 
+         * to be used strictly for this individual moxture execution.
          * 
-         * @param moxter      The encompassing Engine.
+         * <p>This method enables seamless context-switching within a single test scenario. By providing a 
+         * call-scoped authentication, you can effortlessly simulate different users (e.g., User A locking a 
+         * resource, and User B attempting to bypass it) interacting sequentially without permanently mutating 
+         * the global engine state or the thread's overarching {@code SecurityContext}.
+         * 
+         * <p><b>Security Resolution Precedence:</b>
+         * Authentication provided via this method takes the highest priority for the HTTP request, overriding:
+         * - The engine-level {@code Authentication} (configured via {@code MoxBuilder}).
+         * - The global {@code SecurityContextHolder}.
+         * 
+         * <p><b>Example Usage:</b>
+         * <pre>{@code
+         *    mx.caller()
+         *      .withAuthentication(principalUserB) // Execute this specific call as User B
+         *      .with("p.objectId", 4317)
+         *      .call("com.update_field_locked");
+         * }</pre>
+         * 
+         * @param auth The Spring Security Authentication object representing the identity for this specific call.
+         * @return this {@link MoxtureCaller} instance for fluent method chaining.
          */
-        protected MoxtureCaller(Moxter moxter) {
-            this.moxter = moxter;
+        public MoxtureCaller withAuthentication(Authentication auth) {
+            this.callAuth = auth;
+            return this;
         }
 
 
@@ -1203,7 +1279,7 @@ public final class Moxter
          * @return this {@link MoxtureCaller} for chaining.
          */
         public MoxtureCaller with(Map<String, Object> overrides) {
-            if (overrides != null) this.overrides.putAll(overrides);
+            if (overrides != null) this.varOverrides.putAll(overrides);
             return this;
         }
 
@@ -1215,9 +1291,27 @@ public final class Moxter
          * @return this {@link MoxtureCaller} for chaining.
          */
         public MoxtureCaller with(String key, Object value) {
-            this.overrides.put(key, value);
+            this.varOverrides.put(key, value);
             return this;
         }
+
+        /**
+         * Overrides the expected HTTP status code(s) defined in the YAML moxture.
+         * * @param status Can be an Integer (201), a String ("4xx"), or a List ([200, 204]).
+         */
+        public MoxtureCaller expect(Object status) {
+            this.expectedStatusOverride = status;
+            return this;
+        }
+
+        /**
+         * Enters the expectation override builder.
+         * Allows you to surgically override expectations defined in the YAML file for this specific call.
+         */
+        public ExpectBuilder expect() {
+            return new ExpectBuilder();
+        }
+
 
         /**
          * Executes the moxture call based on the current configuration.
@@ -1273,12 +1367,12 @@ public final class Moxter
          *             will have a lax (aka lenient) configuration.
          *             Meaning: If parent is null, asking for $.parent.child.value simply returns null.
          *             If you make a typo like $.parnet, it returns null (instead of crashing).
-         * @param overrides per-call variable overrides (not mutated; keys shadow globals)
+         * @param varOverrides per-call variable overrides (not mutated; keys shadow globals)
          * @return {@code null} for group moxtures; for single moxtures, the response envelope.
          */
         public MoxtureResult call(String moxtureName) 
         {
-            Runtime.ResponseEnvelope env = callInternal(moxtureName, overrides);
+            Runtime.ResponseEnvelope env = callInternal(moxtureName, varOverrides);
 
             return new MoxtureResult(env, moxter, moxtureName);
         }
@@ -1297,7 +1391,7 @@ public final class Moxter
 
             // ---> THE BLENDER <---
             // Merge the YAML spec with the runtime Java overrides
-            Model.Moxture finalSpec = blendRuntimeOptions(r.moxt);
+            Model.Moxture finalSpec = blendInRuntimeOptions(r.moxt);
 
             // 1. Build this moxture's local overrides.
             // The moxture's own YAML vars yield to the passed-in overrides.
@@ -1363,7 +1457,7 @@ public final class Moxter
                     // ---> THE PRISTINE CALL <---
                     // The flags have been removed from the signature. 
                     // The executor pulls its behavior directly from finalSpec.getOptions()
-                    return this.moxter.executor.execute(finalSpec, r.baseDir, mergedVars, jsonPathLax);
+                    return this.moxter.executor.execute(finalSpec, r.baseDir, mergedVars, jsonPathLax, this.callAuth);
                 } 
                 catch (Throwable t) 
                 {   if (isAllowFailure) {
@@ -1384,10 +1478,11 @@ public final class Moxter
 
 
         /**
-         * Blends the static YAML moxture options with the runtime Java API overrides.
+         * Blends the runtime Java API overrides into the static YAML moxture options.
+         * 
          * Creates a shallow clone to avoid mutating the engine's cached definitions.
          */
-        private Model.Moxture blendRuntimeOptions(Model.Moxture staticMoxt) {
+        private Model.Moxture blendInRuntimeOptions(Model.Moxture staticMoxt) {
             Model.Moxture finalSpec = MoxtureResolver.cloneWithoutBasedOn(staticMoxt);
             
             Model.RootOptionsDef staticOpts = finalSpec.getOptions();
@@ -1396,6 +1491,12 @@ public final class Moxter
             // Logical OR: If either the YAML or the Java API says true, the final spec is true.
             mergedOpts.setAllowFailure(this.allowFailure || (staticOpts != null && staticOpts.isAllowFailure()));
             mergedOpts.setVerbose     (this.verbose      || (staticOpts != null && staticOpts.isVerbose()));
+
+            if (this.expectedStatusOverride != null) {
+                if (finalSpec.getExpect() == null) finalSpec.setExpect(new Model.ExpectDef());
+                // Wrap the override value into a JsonNode for the executor
+                finalSpec.getExpect().setStatus(JSON_MAPPER.valueToTree(this.expectedStatusOverride));
+            }
 
             finalSpec.setOptions(mergedOpts);
             return finalSpec;
@@ -2320,7 +2421,8 @@ public final class Moxter
             Runtime.ResponseEnvelope execute(Model.Moxture spec, 
                                              String baseDir, 
                                              Map<String,Object> vars,
-                                             boolean jsonPathLax) 
+                                             boolean jsonPathLax,
+                                             Authentication callAuth)
             {
                 final long t0 = System.nanoTime();
                 final String name   = (spec.getName() == null || spec.getName().isBlank()) ? "<unnamed>" : spec.getName();
@@ -2347,7 +2449,7 @@ public final class Moxter
                     logExecutionStart(verbose, name, method, uri, headers0, query, vars, payloadNode);
 
                     // 2. Build the Spring MockMvc Request
-                    MockHttpServletRequestBuilder req = buildRequest(spec, baseDir, vars, method, uri, headers0, payloadNode);
+                    MockHttpServletRequestBuilder req = buildRequest(spec, baseDir, vars, method, uri, headers0, payloadNode, callAuth);
 
                     // 3. Execute HTTP Call & Parse Response
                     MockHttpServletResponse mvcResp = mockMvc.perform(req).andDo(print()).andReturn().getResponse();
@@ -2389,7 +2491,8 @@ public final class Moxter
 
             private MockHttpServletRequestBuilder buildRequest(Model.Moxture spec, String baseDir, Map<String,Object> vars, 
                                                                String method, URI uri, Map<String,String> headers0, 
-                                                               JsonNode payloadNode) throws Exception 
+                                                               JsonNode payloadNode,
+                                                               Authentication callAuth) throws Exception 
             {
                 MockHttpServletRequestBuilder req;
                 Map<String,String> headers = (headers0 == null) ? new LinkedHashMap<>() : new LinkedHashMap<>(headers0);
@@ -2407,7 +2510,7 @@ public final class Moxter
                 }
 
                 // Attach Auth & CSRF
-                attachSecurity(req, method);
+                attachSecurity(req, method, callAuth);
 
                 // Attach standard headers
                 for (Map.Entry<String,String> e : headers.entrySet()) {
@@ -2458,20 +2561,30 @@ public final class Moxter
                 return multiReq;
             }
 
-            private void attachSecurity(MockHttpServletRequestBuilder req, String method) {
-                org.springframework.security.core.Authentication auth = null;
-                if (authSupplier != null) {
+            private void attachSecurity(MockHttpServletRequestBuilder req, String method, org.springframework.security.core.Authentication callAuth) {
+                
+                // 1. Highest Priority: The Call-Scoped Override (from mx.caller().withAuthentication(...))
+                Authentication auth = callAuth;
+                
+                // 2. Fallback (The Default): The Engine-Scoped Supplier (from Moxter.forTestClass().authentication(...))
+                if (auth == null && authSupplier != null) {
                     try { auth = authSupplier.get(); } catch (Exception ignore) {}
                 }
+                
+                // 3. Last Resort: The Global Thread Context (Standard Spring Security)
                 if (auth == null) {
-                    auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+                    auth = SecurityContextHolder.getContext().getAuthentication();
                 }
+                
+                // Apply the resolved authentication to the mock request
                 if (auth != null) {
-                    req.with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication(auth));
+                    req.with(SecurityMockMvcRequestPostProcessors.authentication(auth));
                     log.debug("[Moxter] using Authentication principal={}", Utils.Misc.safeName(auth));
                 }
+                
+                // Attach CSRF token for state-changing methods
                 if (Utils.Http.requiresCsrf(method)) {
-                    req.with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf());
+                    req.with(SecurityMockMvcRequestPostProcessors.csrf());
                     log.debug("[Moxter] CSRF token added for {}", method);
                 }
             }

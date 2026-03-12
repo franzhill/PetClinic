@@ -6,17 +6,6 @@
 ---
 # To fix
 
-3. Shared Mutable State (The Payload Trap)
-The Brutal Truth: Inside cloneWithoutBasedOn, you wrote this comment:
-
-Java
-c.setPayload(src.getPayload()); // JSON nodes are fine to share for our usage
-They are absolutely not. Jackson's ObjectNode and ArrayNode are highly mutable. Because you cache materialized moxtures, if a developer retrieves the payload in their test and accidentally modifies it (e.g., ((ObjectNode) result.getBody()).put("hacked", true);), they have just permanently mutated the cached payload for every subsequent test that uses that moxture.
-
-The Fix: Jackson provides a built-in deep copy. Use it to protect your cache:
-
-Java
-c.setPayload(src.getPayload() == null ? null : src.getPayload().deepCopy());
 4. Severe Log Pollution (CI/CD Ruiner)
 The Brutal Truth: Your HttpExecutor blasts log.info with giant ASCII banners for every single HTTP call:
 
@@ -62,11 +51,40 @@ The ASCII "Banner" Pollution: Big ASCII art in logs is the "Comic Sans" of the D
 
 
 ---
+### User Authentication: be able to do it in YAML (config vs java)
+
+We have added 
+
+mx.caller().withAuthentication(UserB)
+
+So this id done Java side by providing an Authentication object 
+Ex: 
+  protected Authentication getAuthenticationFor(String login) 
+   {
+      // Fetch the real entity from H2
+      final RealUser user = userRepository.findByLogin(login); 
+      if (user == null) {
+         throw new IllegalStateException(...);
+      }
+
+      // Explicitly trigger authority loading if your entity uses lazy loading
+      // (Normally .getAuthorities() is enough, but without @Transactional, we must be sure)
+      var authorities = user.getAuthorities();
+
+      return new UsernamePasswordAuthenticationToken(user, null, authorities);
+   }
+
+But what if we wanted to do pure config (YAML) tests how would we
+achieve that?
+
+
+
+---
 ### Loading rules
 
 - Decision 1: Variable Overrides (The Scope Hierarchy)  => closest to caller/included last wins. Makes sense ?
 
--Decision 2: Moxture Name Collisions => 
+- Decision 2: Moxture Name Collisions => 
 "My Recommendation: Fatal Startup Error. Do not allow silent overwriting of moxtures. It causes debugging nightmares where a QA engineer thinks they are running one test, but the engine is running a completely different payload." 
 => OK
 
