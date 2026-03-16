@@ -30,7 +30,7 @@ moxtures:
                         # Does not raise exception if status != 20x
                         # Useful in case this moxture is only "best effort" and we don't
                         # want to fail the whole test if this one fails.
-      # TODO: test, vs lax
+      # DONE
       allowFailure: true|false   # Replaces lax. Optional. Default is true.
                         # Failing means at least one of the assertions wasn't met.
                         # Useful in case this moxture is only "best effort" and we don't
@@ -59,7 +59,8 @@ moxtures:
 
     # THE REQUEST ("Act")
     request: # TODO: add this extra level
-      method: POST
+      protocol: HTTP | STOMP                      # DONE 
+      method: POST | GET       SEND | SUBSCRIBE (For STOMP)
       endpoint: "/api/pets/{{petId}}"  # allow interpolation with vars from the global context
       headers:                                    # TODO 
         Authorization: "Bearer {{global_token}}"
@@ -125,6 +126,7 @@ moxtures:
     # THE VALIDATION  ("Assert")
     expect:  # expect the return to be...
       status: 201     # possible values: null | int | "2xx"/"3xx"/"4xx"/"5xx" | "201" 
+      broadcast:   "/topic/editor/field/{{target}}/published"  # for STOMP. Use MockWebs.verifyBroadcat #TODO
       time: "< 500ms"          # Checks response time  # TODO
       headers:                 # Header assertions # TODO
         Content-Type: "application/json"
@@ -199,10 +201,10 @@ moxtures:
 
         # OPTION B: Tree Matching (JSONAssert)
         match:
-          mode: full|partial    # used in conjunction with 'content' # TODO full
+          mode: full|partial    # used in conjunction with 'content' # DONE
             # if full: match with json provided in value must be exact
             # if partial: provided json should be a subset of actual returned json
-          ignorePaths: ["$.id"]    # TODO ignore these 'volatile' field
+          ignorePaths: ["$.id"]    # ignore these 'volatile' field in case of full match
           content: |  # the inline json expected
             {
               "type": "new",

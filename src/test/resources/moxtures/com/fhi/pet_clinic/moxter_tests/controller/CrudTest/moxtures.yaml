@@ -82,7 +82,7 @@ moxtures:
     options:
       allowFailure: true   # => the error should not fail the test
     body: |
-      { "name": "Dragon",
+      { "name": "Dragon_with_error",
         "expectedLifespan": 1000,   # this is too high, should be rejected by the service
         "avgLitterSize": 7,
         "fertilityAgeWindow": {
@@ -104,14 +104,14 @@ moxtures:
           #ignorePaths: ["$.createdAt"]
           content: |
             {
-              "name": {{in.name}},
-              "sex": {{in.sex}},
-              "birthDate": "{{in.birthDate}}",
+              "name": ${in.name},
+              "sex": ${in.sex},
+              "birthDate": "${in.birthDate}",
               "species": {
-                "name": "{{in.species}}"
+                "name": "${in.species}"
               },
               "owner": {
-                "id": {{ownerId}}
+                "id": ${ownerId}
               }
             }
 
@@ -123,9 +123,9 @@ moxtures:
       body: 
         assert:
           # String assertions (quotes mandatory here)
-          "$.name": "{{in.name}}"
-          "$.sex": "{{in.sex}}"
-          "$.species.name": "{{in.species}}"
+          "$.name"        : "{{in.name}}"    # if using mustache style quotes are mandatory
+          "$.sex"         : ${in.sex}        # spring-style is preferable
+          "$.species.name": ${in.species} 
 
           # Numeric/ID assertions
           "$.owner.id": "{{ownerId}}"

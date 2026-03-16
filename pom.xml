@@ -60,25 +60,41 @@
             It is available everywhere and is permanently bundled into your final production artifact.
             Use for: Core business logic libraries like Spring Web, Jackson, or Apache Commons.
         - test: 
-            This library is strictly for the src/test/java folder. Your production code (src/main/java) is not allowed to see it.
-            It is used during the mvn test phase, but it is completely excluded from your final production build.
-            Use for: JUnit, Mockito, AssertJ, REST Assured... Never let testing libraries leak into production.
+            This library is strictly for the src/test/java folder. Production code (src/main/java)
+            is not allowed to see it.
+            It is used during the mvn test phase, but it is completely excluded from the final 
+            production build.
+            Use for: JUnit, Mockito, AssertJ, REST Assured... Never let testing libraries leak 
+            into production.
         - provided:
-            You need this library to get your code to compile in your IDE, but you expect the environment (like a Tomcat server or AWS Lambda) to already have this library waiting for you at runtime.
+            You need this library to get your code to compile in your IDE, but you expect the 
+            environment (like a Tomcat server or AWS Lambda) to already have this library waiting 
+            for you at runtime.
             It is available during compilation and testing, but it is excluded from your final .jar.
-            Use for: Lombok (only needed to generate code, not at runtime), Servlet APIs, or cloud-native SDKs that the server injects automatically. Including these in compile scope causes horrific classpath collisions.
+            Use for: Lombok (only needed to generate code, not at runtime), Servlet APIs, or 
+            cloud-native SDKs that the server injects automatically. Including these in compile 
+            scope causes horrific classpath collisions.
          - runtime:
-            Your code doesn't actually import any classes from this library, so you don't need it to compile. But when you hit "Run," the underlying framework needs it to function.
-            It is hidden during compilation (to prevent you from accidentally coupling your code to it), but it is bundled into your final production .jar.
-            Use for: Database drivers. You write your code against standard java.sql interfaces (compile), but at runtime, Hibernate needs the mysql-connector-java or postgresql driver to actually talk to the database.
+            Your code doesn't actually import any classes from this library, so you don't need it 
+            to compile. But when you hit "Run," the underlying framework needs it to function.
+            It is hidden during compilation (to prevent you from accidentally coupling your code 
+            to it), but it is bundled into your final production .jar.
+            Use for: Database drivers. You write your code against standard java.sql interfaces 
+            (compile), but at runtime, Hibernate needs the mysql-connector-java or postgresql driver 
+            to actually talk to the database.
          - import: 
-            This only works inside the <dependencyManagement> block. It is used to import a "BOM" (Bill of Materials).
-            It doesn't actually add the library to your project; it just tells Maven, "If I ever ask for a Spring Cloud library later, use the exact versions listed in this BOM."
-            Use for: Managing massive ecosystems like Spring Cloud or AWS SDKs where 20 different libraries all need to be on the exact same version to prevent dependency hell.
+            This only works inside the <dependencyManagement> block. It is used to import a "BOM" 
+            (Bill of Materials). It doesn't actually add the library to your project; it just tells 
+            Maven, "If I ever ask for a Spring Cloud library later, use the exact versions listed in 
+            this BOM."
+            Use for: Managing massive ecosystems like Spring Cloud or AWS SDKs where 20 different 
+            libraries all need to be on the exact same version to prevent dependency hell.
          - system (The Hack)
-            It behaves exactly like provided, but instead of downloading it from the internet, you give Maven a hardcoded physical path on your local C:/ drive or a libs/ folder.
+            It behaves exactly like provided, but instead of downloading it from the internet, you 
+            give Maven a hardcoded physical path on your local C:/ drive or a libs/ folder.
             It compiles, but it makes CI/CD pipelines scream.
-            Do not use this unless you are forced to integrate with a 15-year-old proprietary .jar file from a vendor that refuses to upload it to a modern repository.            
+            Do not use this unless you are forced to integrate with a 15-year-old proprietary 
+            .jar file from a vendor that refuses to upload it to a modern repository.
     -->
 
 
@@ -99,8 +115,8 @@
         - Provides annotations like @WithMockUser, @WithUserDetails, etc.
         - MockMvc integration helpers (SecurityMockMvcRequestPostProcessors)
         - Utilities for testing method security and request authorization
-        NOTE: Scope is 'provided' because FixtureEngine references these from src/main,
-              but you don't want them packaged in the runtime JAR. They are also available to tests.
+        NOTE: Scope is 'provided' because Moxter references these from src/main,
+              but we don't want them packaged in the runtime JAR. They are also available to tests.
     -->
     <dependency>
       <groupId>org.springframework.security</groupId>
@@ -110,8 +126,8 @@
 
     <!-- Spring Test (MockMvc, org.springframework.mock.web.*, etc.)
         Usually comes transitively from spring-boot-starter-test (with scope 'test').
-        Here we use scope 'provided' because fixture frameworks/engines that use it
-        live under src/main/java and must compile, but we don't want it packaged.
+        We need it as 'provided' because code in src/main/Moxter and possibly others references it.
+        We need for the project to compile, but we don't want it packaged.
         'provided' = available at compile/test time, not packaged in the final JAR.
     -->
     <dependency>
@@ -129,7 +145,7 @@
 
     <!-- @AutoConfigureMockMvc and other test auto-config annotations.
         Usually comes from spring-boot-starter-test (transitively) with scope 'test'.
-        We declare it as 'provided' for the same reason as above.
+        We need it as 'provided' because code in src/main/Moxter and possibly others references it.
     -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
@@ -140,7 +156,7 @@
     <!-- JUnit Jupiter API (annotations + extension interfaces like BeforeEachCallback,
         ExtensionContext, Tag, TestInstance, …).
         Usually comes from spring-boot-starter-test with scope 'test'.
-        We need it as 'provided' because code in src/main references these types.
+        We need it as 'provided' because code in src/main/Moxter and possibly others references it.
     -->
     <dependency>
       <groupId>org.junit.jupiter</groupId>
@@ -153,22 +169,21 @@
         strongly-typed API (e.g., assertThat(actual).isEqualTo(expected)).
         Provides vastly superior failure messages and IDE auto-completion 
         compared to standard JUnit assertions.
+        We need it as 'provided' because code in src/main/Moxter and possibly others references it.
     -->
     <dependency>
         <groupId>org.assertj</groupId>
         <artifactId>assertj-core</artifactId>
         <version>3.24.2</version>
+        <scope>provided</scope>
     </dependency>
 
-
-    <!-- Lombok.
-        Boilerplate code reduction.
-        No need to specify version it is managed by the spring boot parent. 
+    <!-- We need it as 'provided' because code in src/main/Moxter and possibly others references it.
     -->
     <dependency>
-      <groupId>org.projectlombok</groupId>
-      <artifactId>lombok</artifactId>
-      <optional>true</optional>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-core</artifactId>
+      <scope>provided</scope>
     </dependency>
 
     <!-- JSONAssert library. The gold standard for comparing JSON trees in Java.
@@ -192,7 +207,7 @@
     </dependency>
 
     <!-- YAML manipulation.
-        Used in: Moxter.
+        We need it as 'provided' because code in src/main/Moxter and possibly others references it.
     -->
     <dependency>
       <groupId>com.fasterxml.jackson.dataformat</groupId>
@@ -205,6 +220,18 @@
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
     </dependency>
+
+    <!-- Lombok.
+        Boilerplate code reduction.
+        No need to specify version it is managed by the spring boot parent. 
+    -->
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <optional>true</optional>
+    </dependency>
+
+
 
     <!--  Adds support for Java 8 Date & Time API types (e.g. LocalDate, LocalDateTime) in Jackson
           Used in Moxter.
@@ -270,7 +297,11 @@
       <version>1.9</version>
     </dependency>
 
-
+    <!-- For Websocket testing -->
+    <dependency>
+      <groupId>org.springframework</groupId>
+      <artifactId>spring-messaging</artifactId>
+    </dependency>
 
   </dependencies>
 

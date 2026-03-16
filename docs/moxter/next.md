@@ -51,6 +51,18 @@ The ASCII "Banner" Pollution: Big ASCII art in logs is the "Comic Sans" of the D
 
 
 ---
+### as(...) support in assertions
+
+     mx.caller().withAuth(getAuthenticationFor(userA))
+                 .withVars(commonVars)
+                 .withVar("p.userLockId", "lock-A")
+                 .call("stomp.ck_lock_field")
+  ---->          .as("the call should be successful")
+                 .assertJsonPath("$.success",    x -> x.isEqualTo(true))
+                 .assertJsonPath("$.userLockId", x -> x.isEqualTo("lock-A"));
+
+
+---
 ### User Authentication: be able to do it in YAML (config vs java)
 
 We have added 

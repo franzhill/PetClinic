@@ -44,7 +44,10 @@ class CrudTest extends ParentMoxterTest
         // 2. Create a Pet for that Owner using the moxture defaults variables
         mx.caller()
           .call("create_pet_for_owner")
-          .assertVar("petName", name -> name.isEqualTo(mx.vars("create_pet_for_owner").get("in.name")));
+          .assertVar("petName")
+            .isEqualTo(mx.vars("create_pet_for_owner")
+                         .get("in.name")
+                       );
     }
 
 
@@ -64,19 +67,18 @@ class CrudTest extends ParentMoxterTest
         // Make sure our vars are different than the moxture default vars 
         // (or we might be hiding failures ^^):
         assertDifferentFromMoxtureDefaultVar(petName, "create_pet_for_owner", "in.name");
-        assertDifferentFromMoxtureDefaultVar(petSex, "create_pet_for_owner", "in.sex");
-        assertDifferentFromMoxtureDefaultVar(petSex, "create_pet_for_owner", "in.species");
-
+        assertDifferentFromMoxtureDefaultVar(petSex , "create_pet_for_owner", "in.sex");
+        assertDifferentFromMoxtureDefaultVar(petSex , "create_pet_for_owner", "in.species");
 
         mx.caller()
-          .with("in.name"   , petName)  // Overrides the default var provided in the moxture
-          .with("in.sex"    , petSex) 
-          .with("in.species", petSpecies) 
+          .withVar("in.name", petName)   // Overrides the default var provided in the moxture
+          .withVar("in.sex", petSex) 
+          .withVar("in.species", petSpecies) 
           .call("create_pet_for_owner")
-          .assertVar("petId"     , x -> x.isNotNull())
-          .assertVar("petOwnerId", x -> x.isEqualTo(mx.vars().get("ownerId")))
-          .assertVar("petName"   , x -> x.isEqualTo(petName))
-          .assertJsonPath("$.species.name", x -> x.isEqualTo(petSpecies));
+          .assertVar("petId").isNotNull().and() // New Pivot Syntax
+          .assertVar("petOwnerId").isEqualTo(mx.vars().get("ownerId")).and()
+          .assertVar("petName").isEqualTo(petName).and()
+          .assertBody("$.species.name").isEqualTo(petSpecies);
     }
 
 
@@ -100,9 +102,9 @@ class CrudTest extends ParentMoxterTest
         assertDifferentFromMoxtureDefaultVar(petName, "create_pet_for_owner", "in.name");
 
         mx.caller()
-          .with("in.name", petName)  // Overrides the default var provided in the moxture
+          .withVar("in.name", petName)  // Overrides the default var provided in the moxture
           .call("group_create_owner_and_pet")
-          .assertVar("petName", x -> x.isEqualTo(petName));
+          .assertVar("petName").isEqualTo(petName);
     }
 
 
@@ -115,7 +117,7 @@ class CrudTest extends ParentMoxterTest
 
         mx.caller()
           .call("group_create_owner_and_pet")
-          .assertVar("petName", x -> x.isEqualTo(moxtureLocalPetName));
+          .assertVar("petName").isEqualTo(moxtureLocalPetName);
     }
 
 
@@ -130,9 +132,9 @@ class CrudTest extends ParentMoxterTest
         assertDifferentFromMoxtureDefaultVar(petName, "group_create_owner_and_pet_with_local_override", "in.name");
 
         mx.caller()
-          .with("in.name", petName)  // Overrides the default var provided in the moxture
+          .withVar("in.name", petName)  // Overrides the default var provided in the moxture
           .call("group_create_owner_and_pet_with_local_override")
-          .assertVar("petName", x -> x.isEqualTo(petName));
+          .assertVar("petName").isEqualTo(petName);
     }
 
 
@@ -149,7 +151,7 @@ class CrudTest extends ParentMoxterTest
 
         mx.caller()
           .call("group_create_owner_and_pet_with_local_override")
-          .assertVar("petName", x -> x.isEqualTo(groupLocalpetName));
+          .assertVar("petName").isEqualTo(groupLocalpetName);
     }
 
 
@@ -175,17 +177,17 @@ class CrudTest extends ParentMoxterTest
 
         mx.caller()
           // Override moxture defaults:
-          .with("in.name"   , "Random_afFik874987")
-          .with("in.sex"    , "MALE" )    // has to be a valid sex
-          .with("in.species", "Dog")      // has to be a valid species
+          .withVar("in.name"   , "Random_afFik874987")
+          .withVar("in.sex"    , "MALE" )    // has to be a valid sex
+          .withVar("in.species", "Dog")      // has to be a valid species
           // The 'expect' section verifies the input variables appear in the response:
           .call(moxtureName);
 
         mx.caller()
           // Override moxture defaults:
-          .with("in.name"   , "Random_a892222euaonf")
-          .with("in.sex"    , "FEMALE" )  // has to be a valid sex
-          .with("in.species", "Cat")      // has to be a valid species
+          .withVar("in.name"   , "Random_a892222euaonf")
+          .withVar("in.sex"    , "FEMALE" )  // has to be a valid sex
+          .withVar("in.species", "Cat")      // has to be a valid species
           // The 'expect' section verifies the input variables appear in the response:
           .call(moxtureName);
     }
@@ -219,11 +221,11 @@ class CrudTest extends ParentMoxterTest
         // We want to verify it didn't lose 'owner.id' from the parent.
         String desiredPetName = "Puff";
         mx.caller()
-          .with("in.name", desiredPetName)
+          .withVar("in.name", desiredPetName)
           .call(moxtureName)
-          .assertVar("petName", x -> x.isEqualTo(desiredPetName))        // From Parent Vars
-          .assertJsonPath("$.species.name", x -> x.isEqualTo("Dragon")) // From Child Body
-          .assertJsonPath("$.owner.id", x -> x.isEqualTo(ownerId));     // From Parent Body (Deep Merged)
+          .assertVar("petName").isEqualTo(desiredPetName).and()  // From Parent Vars
+          .assertBody("$.species.name").asString().isEqualTo("Dragon").and()  // From Child Body
+          .assertBody("$.owner.id").isEqualTo(ownerId);    // From Parent Body (Deep Merged)
     }
 
 

@@ -2,6 +2,8 @@ package com.fhi.pet_clinic.controller;
 
 import com.fhi.pet_clinic.model.Species;
 import com.fhi.pet_clinic.repo.SpeciesRepository;
+
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -17,7 +19,7 @@ public class SpeciesController {
     private final SpeciesRepository speciesRepository;
 
     @PostMapping
-    public ResponseEntity<Species> createSpecies(@RequestBody Species species) {
+    public ResponseEntity<Species> createSpecies(@Valid @RequestBody Species species) {
         // Idempotency check for Moxter: 
         // If "Dog" already exists, just return it so the test can proceed.
         return speciesRepository .findByName(species.getName())
