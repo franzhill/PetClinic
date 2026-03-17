@@ -56,7 +56,11 @@ moxtures:
     vars:             # Default variables, can be overriden by call scope.
       in.petName: "Snowy"
       in.petSex : "{{sex}}"    # allow interpolation... Quoted => Safe from the YAML scanner.
-
+      in.complexCalc : ${mx.externalFunction(${in.petName}, ${in.petSex})}
+                               # TODO call extenral function provided by user as
+                               # a 'plugin' i.e. in external Java file defining the available
+                               # functions and obeying a specific 'plugin' contract
+                               # See Confluence.
     # THE REQUEST ("Act")
     request: # TODO: add this extra level
       protocol: HTTP | STOMP                      # DONE 
@@ -183,13 +187,13 @@ moxtures:
           - "$.creationDate":
               exists: true                  # Just verify the node is there
 
-          # Java Bridge  # TODO
+          # Java Bridge  # ---T O D O---
+          # @deprecated Removed from here. If really needed use a group moxture.
+          #
           # For assertions that are too difficult to express through the means above
           # we rely on calling java code directly.
           # The java function called can perform the complicated assertions
           # (and/or anything else, really)
-          # @deprecated Removed from here.
-          #             If really needed use a group moxture.
 
           #- call: "java:com.mycompany.qa.TrackingAsserts#verifyTimeWar"
           #  with:
@@ -225,7 +229,7 @@ moxtures:
   # --------------------------------------------------------
   # TODO 
   - name: group_create_owner_and_pet
-    description: this is a group moxture that creates a pet and its owner
+    description: group moxture that descibres the following scenario- create a pet and its owner
     steps:   # The attributes under here must echo the commands available to mx.caller()
       - call: create_owner                   # Simple moxture call by name. Saves {{ownerId}} globally
       - vars:                                # Interaction with global scope:

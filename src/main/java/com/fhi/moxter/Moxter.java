@@ -1,9 +1,11 @@
 package com.fhi.moxter;
 
+
 import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.print;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.reflect.Method;
 import java.net.URI;
 import java.net.URL;
 import java.net.URLEncoder;
@@ -18,6 +20,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -26,6 +29,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
@@ -77,6 +81,7 @@ import lombok.extern.slf4j.Slf4j;
  * See readme.md file.
  */
 @Slf4j
+@SuppressWarnings("java:S125") // all commented out code is intentional
 public final class Moxter
 {
     // =====================================================================
@@ -183,7 +188,7 @@ public final class Moxter
 
 
     // Auth supplier (fixed or lazy) from builder
-    private final java.util.function.Supplier<org.springframework.security.core.Authentication> builderAuthSupplier;
+    private final Supplier<Authentication> builderAuthSupplier;
 
     // Caches and Resolvers
     private final Map<MoxResolver.EffectiveKey, Model.Moxture> materializedCache = new LinkedHashMap<>();
@@ -284,7 +289,7 @@ public final class Moxter
                    List<MoxRuntime.IProtocolExecutor> executors,
                    MoxRuntime.VarExtractor extractor,     // Injected
                    MoxRuntime.ExpectVerifier verifier,    // Injected
-                   java.util.function.Supplier<org.springframework.security.core.Authentication> authSupplier,
+                   Supplier<Authentication> authSupplier,
                    ObjectMapper yamlMapper,
                    ObjectMapper jsonMapper)
     {
@@ -361,7 +366,10 @@ public final class Moxter
         private final Class<?> testClass;
         private MockMvc  mockMvc;
         private MockWebs mockWebs;
-        private java.util.function.Supplier<org.springframework.security.core.Authentication> authSupplier;
+
+        // Authentication provider.
+        // Initialized with the default authentication.
+        private Supplier<Authentication> authSupplier = () -> SecurityContextHolder.getContext().getAuthentication();
 
         private MoxBuilder(Class<?> testClass) { 
             this.testClass = testClass; 
@@ -393,7 +401,7 @@ public final class Moxter
 
 
         /**
-         * Provides a fixed Spring Security {@link org.springframework.security.core.Authentication} 
+         * Provides a fixed Spring Security {@link Authentication} 
          * object to automatically attach to every HTTP request executed by this engine instance.
          *
          * <p>Use this if your entire test suite runs under a single simulated user.
@@ -401,13 +409,15 @@ public final class Moxter
          * @param auth The Authentication object to inject.
          * @return this {@link MoxBuilder} for chaining.
          */
-        public MoxBuilder authentication(org.springframework.security.core.Authentication auth) {
+        public MoxBuilder authentication(Authentication auth) {
             this.authSupplier = () -> auth;
+            // The lambda () -> auth will return that exact same object (auth) every single time
+            // it is called for the rest of the engine's life
             return this;
         }
 
         /** 
-         * Provides a dynamic supplier for Spring Security {@link org.springframework.security.core.Authentication}.
+         * Provides a dynamic supplier for Spring Security {@link Authentication}.
          * 
          * <p>The supplier is evaluated <i>per-request</i>. Use this if your test context 
          * changes the active user dynamically during execution.
@@ -415,7 +425,7 @@ public final class Moxter
          * @param s The Authentication supplier.
          * @return this {@link MoxBuilder} for chaining.
          */
-        public MoxBuilder authenticationSupplier(java.util.function.Supplier<org.springframework.security.core.Authentication> s) {
+        public MoxBuilder authenticationSupplier(Supplier<Authentication> s) {
             this.authSupplier = s;
             return this;
         }
@@ -810,26 +820,26 @@ public final class Moxter
      * {@code EffectiveMoxture}.
      * 
      * <p><b>Key Responsibilities:</b>
-     * <ul>
-     *   <li><b>Lookup:</b> Performs a "closest-first" search for moxtures by name, 
+
+     *   - <b>Lookup:</b> Performs a "closest-first" search for moxtures by name, 
      *        starting from the test class directory and walking up through parent packages 
-     *        to the root moxtures directory.</li>
-     *   <li><b>Deep Materialization:</b> Recursively resolves inheritance chains (via {@code basedOn} 
+     *        to the root moxtures directory.
+     *   - <b>Deep Materialization:</b> Recursively resolves inheritance chains (via {@code basedOn} 
      *        or {@code extends}). It merges parents and children using specific precedence rules:
      *     <ul>
-     *       <li>Scalars (method, endpoint) are overridden by the child.</li>
-     *       <li>Maps (headers, query, vars) are shallow-merged (child wins).</li>
-     *       <li>Lists (save, moxtures) are replaced entirely by the child.</li>
+     *       - Scalars (method, endpoint) are overridden by the child.
+     *       - Maps (headers, query, vars) are shallow-merged (child wins).
+     *       - Lists (save, moxtures) are replaced entirely by the child.
      *     </ul>
-     *    </li>
-     *    <li><b>Cycle Detection:</b> Prevents infinite recursion in inheritance chains by 
+     *    
+     *    - <b>Cycle Detection:</b> Prevents infinite recursion in inheritance chains by 
      *        maintaining a visiting stack and throwing an {@link IllegalStateException} 
-     *        if a cycle is detected.</li>
-     *    <li><b>Body Stacking:</b> Instead of merging JSON bodies during resolution, 
+     *        if a cycle is detected.
+     *    - <b>Body Stacking:</b> Instead of merging JSON bodies during resolution, 
      *        it builds a {@code bodyStack} to preserve the hierarchy. This allows the 
      *        {@code BodyResolver} to handle variable interpolation and deep-merging 
-     *        correctly at runtime.</li>
-     * </ul>
+     *        correctly at runtime.
+
      * 
      * <p><b>Caching:</b> Resolved moxtures are cached in the {@code materializedCache} 
      * to ensure performance and consistency throughout the test suite execution.
@@ -1219,16 +1229,16 @@ public final class Moxter
         private boolean jsonPathLax = false;
 
         /**
-         * The specific Spring Security Authentication bound to this individual moxture caller.
+         * The specific Spring Security Authentication bound to this specific moxture caller.
          * 
-         * <p>When set (via {@link #withAuth(org.springframework.security.core.Authentication)}), 
-         * this identity overrides both the engine (Moxter) 's default authentication supplier and the global 
-         * {@code SecurityContextHolder}.
+         * <p>When set (via {@link #withAuth(Authentication)}), 
+         * this identity overrides both the engine (Moxter) 's default authentication supplier and 
+         * the global {@code SecurityContextHolder}.
          * 
          * <p>This security context persists for the lifetime of this specific {@code MoxtureCaller} 
-         * instance. Because it is strictly bound to the caller rather than the root engine (Moxter), it allows 
-         * you to safely execute one or more moxtures as a specific user without polluting the global 
-         * test state.
+         * instance. Because it is strictly bound to the caller rather than the root engine (Moxter),
+         * it allows you to safely execute one or more moxtures as a specific user without polluting
+         * the global test state.
          */
         private Authentication callAuth = null;
 
@@ -1393,16 +1403,16 @@ public final class Moxter
          * 
          * <p>Allows for a set of per-call variable overrides.
          * <p>The call-scoped javaOverrides map is applied only for the duration of this call:
-         * <ul>
-         *   <li><b>Reads:</b> when templating, header/query resolution, or body
+
+         *   - <b>Reads:</b> when templating, header/query resolution, or body
          *       substitution looks up a variable, the engine will check the call-scoped
          *       overrides first. If the key is not present there, it falls back to the
-         *       engine’s global variables.</li>
-         *   <li><b>Writes:</b> when a moxture specifies a "save:" block, the
+         *       engine’s global variables.
+         *   - <b>Writes:</b> when a moxture specifies a "save:" block, the
          *       extracted values are always written into the engine’s global variables,
          *       never into the call-scoped overrides. This ensures saved IDs or tokens
-         *       are available to subsequent moxtures and test code.</li>
-         * </ul>
+         *       are available to subsequent moxtures and test code.
+
          *
          * <p>The overrides are ephemeral: once the call returns, they are discarded.
          * Global variables are never modified unless the moxture itself performs a save
@@ -1700,10 +1710,10 @@ public final class Moxter
         /**
          * Puts a variable into Moxter's variables context.
          *
-         * <ul>
-         * <li><b>Strict mode enabled:</b> throws an exception if the key already exists.</li>
-         * <li><b>Strict mode disabled:</b> overwrites and logs a WARN if there was a previous value.</li>
-         * </ul>
+
+         * - <b>Strict mode enabled:</b> throws an exception if the key already exists.
+         * - <b>Strict mode disabled:</b> overwrites and logs a WARN if there was a previous value.
+
          *
          * <p>Note: If {@code varsOverwriteStrict} is enabled, {@code put()} will throw 
          * an exception if the key exists in <b>either</b> scope (local/global) to prevent naming 
@@ -1855,27 +1865,37 @@ public final class Moxter
                 }
             }
 
-            /** Returns the variable as a String. */
+            /** 
+             * Returns the variable as a String. 
+             */
             public String asString() {
-                if (val instanceof String s) {
-                    return s;
+                Object target = val;
+                // Auto-unboxing for lists of one item
+                if (target instanceof List<?> list && list.size() == 1) {
+                    target = list.get(0);
                 }
-                return val == null ? null : String.valueOf(val);
+                return target == null ? null : String.valueOf(target);
             }
 
-            /** * Returns the variable as a Long, handling Integer/String conversions.
+            /** 
+             * Returns the variable as a Long, handling Integer/String conversions.
              * @throws IllegalStateException if the variable cannot be parsed as a number
              */
             public Long asLong() {
-                if (val == null) return null;
-                if (val instanceof Number) return ((Number) val).longValue();
-                if (val instanceof String) {
-                    try { return Long.parseLong((String) val); } 
+                Object target = val;
+                // Auto-unboxing for lists of one item
+                if (target instanceof List<?> list && list.size() == 1) {
+                    target = list.get(0);
+                }
+                if (target == null) return null;
+                if (target instanceof Number n) return n.longValue();
+                if (target instanceof String s) {
+                    try { return Long.parseLong(s); } 
                     catch (NumberFormatException e) {
-                        throw new IllegalStateException("Var '" + key + "' cannot be parsed as Long: " + val, e);
+                        throw new IllegalStateException("Var '" + key + "' cannot be parsed as Long: " + s, e);
                     }
                 }
-                throw new IllegalStateException("Var '" + key + "' is not a number (actual: " + val.getClass().getSimpleName() + ")");
+                throw new IllegalStateException("Var '" + key + "' is not a number (actual: " + target.getClass().getSimpleName() + ")");
             }
 
             /** Parses the variable into an {@link Instant} (supports ISO-8601). */
@@ -1934,27 +1954,25 @@ public final class Moxter
 
         /**
          * Map wrapper that represents the combination of:
-         * <ul>
-         *   <li><b>Per-call-scoped variable overrides</b> (provided by the caller)</li>
-         *   <li><b>Global engine variables</b> (owned by Moxter)</li>
-         * </ul>
+         *   - <b>Per-call-scoped variable overrides</b> (provided by the caller)
+         *   - <b>Global engine variables</b> (owned by Moxter)
          *
-         * <p>Semantics:
-         * <ul>
-         *   <li><b>Reads (get/containsKey):</b> first consult the scoped overrides;
-         *       if the key is not present there, fall back to the global vars.</li>
-         *   <li><b>Iteration (entrySet/size):</b> presents a merged snapshot view,
-         *       with scoped overrides taking precedence on key collisions.</li>
-         *   <li><b>Writes (put):</b> always delegated to the engine’s global
+         * <p> Semantics:
+         *   - <b>Reads (get/containsKey):</b> first consult the scoped overrides;
+         *       if the key is not present there, fall back to the global vars.
+         *   - <b>Iteration (entrySet/size):</b> presents a merged snapshot view,
+         *       with scoped overrides taking precedence on key collisions.
+         *   - <b>Writes (put):</b> always delegated to the engine’s global
          *       writing mecanism (via the provided writer) thus using a single 
-         *       "source of truth" which exerts overwrite-warning semantics.</li>
-         *   <li><b>Overrides are immutable:</b> the scoped map is copied on construction
-         *       and never mutated by this wrapper.</li>
-         * </ul>
+         *       "source of truth" which exerts overwrite-warning semantics.
+         *   - <b>Overrides are immutable:</b> the scoped map is copied on construction
+         *       and never mutated by this wrapper.
          *
-         * <p>Why not just merge the locally scoped variables to the globals vars into a 
-         * temporary map and use that as the call var-context (e.g., new HashMap(globals).putAll(scoped))?
-         * <p>Unlike a static merged snapshot, this wrapper provides live read-through 
+         * <p> Why not just merge the locally scoped variables to the globals vars into a 
+         * temporary map and use that as the call var-context (e.g., 
+         * new HashMap(globals).putAll(scoped))?
+         * 
+         * <p> Unlike a static merged snapshot, this wrapper provides live read-through 
          * and write-through semantics. By maintaining a reference to the global engine variables
          * rather than a copy, it ensures that any global state changes occurring during a 
          * moxture's execution, such as an ID being saved by a preceding step in a group,
@@ -2019,15 +2037,14 @@ public final class Moxter
     /**
      * Internal namespace for components that handle the <b>execution phase</b> of a moxture.
      * 
-     * <p>Once a moxture definition has been discovered and fully materialized/'effectived' 
+     * <p> Once a moxture definition has been discovered and fully materialized/'effectived' 
      * (flattened), the classes in this namespace take over to perform the actual test execution. 
      * Their responsibilities include:
-     * <ul>
-     *   <li><b>Templating:</b> Interpolating dynamic variables into endpoints, headers, and bodys.</li>
-     *   <li><b>Body Resolution:</b> Parsing and resolving complex or external JSON/YAML request bodies.</li>
-     *   <li><b>HTTP Execution:</b> Translating the moxture into a Spring MockMvc request and firing it.</li>
-     *   <li><b>Response Handling:</b> Capturing the raw network response and packaging it into an internal envelope.</li>
-     * </ul>
+     *   - <b>Templating:</b> Interpolating dynamic variables into endpoints, headers, and bodys.
+     *   - <b>Body Resolution:</b> Parsing and resolving complex or external JSON/YAML request bodies.
+     *   - <b>HTTP Execution:</b> Translating the moxture into a Spring MockMvc request and firing it.
+     *   - <b>Response Handling:</b> Capturing the raw network response and packaging it into an internal envelope.
+
      * 
      * <p><b>Note:</b> Classes within this namespace are strictly internal to the Moxter engine 
      * and should never be accessed or instantiated directly by test code.
@@ -2093,7 +2110,7 @@ public final class Moxter
              *   of the generated request/URI.
              *  - <b>Regex Safety:</b> Employs {@link java.util.regex.Matcher#quoteReplacement(String)} 
              *    to ensure that variable values containing special characters (like '$' or '\') 
-             *    do not interfere with the interpolation process.</li>
+             *    do not interfere with the interpolation process.
              * 
              * 
              * @param template  The raw string containing placeholders (e.g., an endpoint URL or JSON value).
@@ -2110,13 +2127,24 @@ public final class Moxter
                 StringBuilder sb = new StringBuilder();
 
                 while (matcher.find()) {
+                    // Group 1 is {{...}}, Group 2 is ${...}
                     String key = (matcher.group(1) != null ? matcher.group(1) : matcher.group(2)).trim();
 
-                    if (variables != null && variables.containsKey(key)) {
+                    // 1. Try to resolve as a dynamic function (mx.func())
+                    String dynamicValue = resolveDynamic(key);
+                    if (!dynamicValue.equals(key)) {
+                        // Match found in DynamicLibrary: use the generated value
+                        matcher.appendReplacement(sb, Matcher.quoteReplacement(dynamicValue));
+                    }
+
+                    // 2. Fallback to standard variable map
+                    else if (variables != null && variables.containsKey(key)) {
                         Object value = variables.get(key);
                         matcher.appendReplacement(sb, Matcher.quoteReplacement(String.valueOf(value)));
-                    } else {
-                        // Preserves the literal for debugging
+                    } 
+                    
+                    // 3. Keep literal for debugging if nothing matches
+                    else {
                         matcher.appendReplacement(sb, Matcher.quoteReplacement(matcher.group(0)));
                     }
                 }
@@ -2124,6 +2152,42 @@ public final class Moxter
                 return sb.toString();
             }
 
+            /**
+             * Resolves reserved dynamic keywords (prefixed with "mx.") by invoking 
+             * corresponding methods in the {@link DynamicLibrary}.
+             * 
+             * <p>The method uses reflection to find a matching static method name 
+             * in the DynamicLibrary. If no match is found, the original keyword is returned 
+             * to allow standard variable interpolation to continue.</p>
+             * 
+             * @param keyword The raw keyword found in the YAML (e.g., "mx.random()")
+             * @return The string result of the Java function, or the original keyword if not found.
+             */
+            static String resolveDynamic(String keyword) {
+                if (keyword == null || !keyword.startsWith("mx.")) {
+                    return keyword;
+                }
+
+                try {
+                    // Parse "mx.random()" -> "random"
+                    String methodName = keyword
+                            .replace("mx.", "")
+                            .replace("()", "")
+                            .trim();
+
+                    // Locate the method in the library
+                    Method method = DynamicLibrary.class.getMethod(methodName);
+                    
+                    // Invoke the static method (null instance for static calls)
+                    return (String) method.invoke(null);
+
+                } catch (NoSuchMethodException e) {
+                    // Log a warning or simply return the string if it's not a dynamic call
+                    return keyword;
+                } catch (Exception e) {
+                    throw new RuntimeException("Failed to resolve dynamic keyword: " + keyword, e);
+                }
+            }
 
         }
 
@@ -2150,6 +2214,62 @@ public final class Moxter
         }
 
 
+        /**
+         * A library of plain Java functions accessible within Moxture YAML files via special 
+         * keywords.
+         * 
+         * <p> Any public static method added to this class that returns a {@code String} 
+         * can be invoked in a moxture using the "${mx.methodName()}" syntax.
+         */
+        public class DynamicLibrary {
+
+            /**
+             * Generates a short, 8-character random alphanumeric string.
+             * 
+             * Useful for unique identifiers that don't require full UUID complexity.
+             * 
+             * @return a random 8-char string (e.g., "7f3k9a21")
+             */
+            public static String random() {
+                return UUID.randomUUID().toString().substring(0, 8);
+            }
+
+            /**
+             * Generates a full RFC 4122 version 4 UUID.
+             * 
+             * Use this for fields like channelId or threadId that require strict UUID formats.
+             * 
+             * @return a 36-character UUID string.
+             */
+            public static String uuid() {
+                return UUID.randomUUID().toString();
+            }
+
+            /**
+             * Returns the current system time in milliseconds.
+             * 
+             * Useful for timestamping events or ensuring order in high-velocity tests.
+             * 
+             * @return current time as a string.
+             */
+            public static String time() {
+                return String.valueOf(System.currentTimeMillis());
+            }
+
+            /**
+             * Returns the current system time in ISO-8601 UTC format.
+             * 
+             * Example: "2026-03-17T21:13:53Z"
+             * 
+             * @return a standardized UTC timestamp string.
+             */
+            public static String now() {
+                return java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC)
+                        .format(java.time.format.DateTimeFormatter.ISO_INSTANT);
+            }
+        }
+
+
         // #########################################################################################
 
         /**
@@ -2157,12 +2277,12 @@ public final class Moxter
          * interpolation, classpath resource loading, and structural recursion.
          * 
          * <p>The resolver handles two primary formats:
-         * <ul>
-         * <li><b>String/Scalar:</b> Can be a "classpath:..." reference, a raw JSON string, 
-         * or a plain text body. All variables are interpolated before parsing.</li>
-         * <li><b>Structural:</b> A YAML map or array. The resolver recursively walks 
-         * the tree and applies templating to every string leaf node.</li>
-         * </ul>
+
+         * - <b>String/Scalar:</b> Can be a "classpath:..." reference, a raw JSON string, 
+         * or a plain text body. All variables are interpolated before parsing.
+         * - <b>Structural:</b> A YAML map or array. The resolver recursively walks 
+         * the tree and applies templating to every string leaf node.
+
          */
         static final class BodyResolver 
         {
@@ -2373,20 +2493,22 @@ public final class Moxter
             private final ObjectMapper jsonMapper;  // to send the body as JSON
             private final Templating tpl;
             private final BodyResolver bodies;
-            private final java.util.function.Supplier<org.springframework.security.core.Authentication> authSupplier;
+            private final Supplier<Authentication> authSupplier;
 
             // Internal session state used to simulate a persistent browser session across multiple 
             // moxture executions.
             // In standard {@link MockMvc} tests, each request is stateless by default. This field 
             // ensures that server-side state—specifically authentication metadata and session-scoped 
             // beans is preserved between sequential calls made by the same executor instance
-            private final MockHttpSession session = new MockHttpSession();
+            //# OLD private final MockHttpSession session = new MockHttpSession();
+            // The session needs to be segregated by user (authentication):
+            private final Map<String, MockHttpSession> sessionRegistry = new HashMap<>();
 
             HttpExecutor(MockMvc mockMvc, 
                          ObjectMapper jsonMapper, 
                          Templating tpl,
                          BodyResolver bodies,
-                         java.util.function.Supplier<org.springframework.security.core.Authentication> authSupplier) {
+                         Supplier<Authentication> authSupplier) {
                 this.mockMvc = mockMvc;
                 this.jsonMapper = jsonMapper;
                 this.tpl = tpl;
@@ -2418,6 +2540,15 @@ public final class Moxter
                 final boolean verbose = spec.getOptions() != null && Boolean.TRUE.equals(spec.getOptions().getVerbose());
 
                 try {
+                    // 0. Resolve the actual Actor for this call
+                    Authentication auth = resolveAuthentication(callAuth);
+                    String actorKey = (auth != null) ? auth.getName() : "ANONYMOUS";
+
+                    // 0.1 Get or create the session for THIS specific Actor
+                    MockHttpSession actorSession = sessionRegistry.computeIfAbsent(
+                        actorKey, k -> new MockHttpSession()
+                    );
+
                     // 1. Prepare URI, Headers, and Body
                     if (spec.getEndpoint() == null || spec.getEndpoint().isBlank()) {
                         throw new IllegalArgumentException("Moxture '" + name + "' has no 'endpoint'.");
@@ -2432,8 +2563,7 @@ public final class Moxter
 
                     // 2. Build the Spring MockMvc Request
                     MockHttpServletRequestBuilder req = buildRequest(spec, baseDir, vars, method, uri, headers0, bodyNode, callAuth);
-
-                    req.session(this.session); // Forces MockMvc to reuse the same session
+                    req.session(actorSession); // Forces MockMvc to reuse the same session
 
                     // 3. Execute HTTP Call & Parse Response
                     ResultActions actions = mockMvc.perform(req);
@@ -2457,6 +2587,33 @@ public final class Moxter
                     throw new RuntimeException("Error executing moxture '" + name + "'", e);
                 }
             }
+
+            /**
+             * The specific Spring Security Authentication bound to this individual moxture caller.
+             * 
+             * <p><b>Resolution Priority:</b> When the authentication is set 
+             * (via {@link #withAuth(Authentication)}), it takes absolute precedence for the 
+             * duration of this caller's life. It effectively shadows:
+             * - The engine-level {@code authSupplier} (the default identity for this Moxter instance)
+             * - The global {@code SecurityContextHolder} (the standard Spring Security context)
+             * 
+             * <p>This isolation ensures that a specific user (e.g., User B) can attempt actions 
+             * without permanently mutating the thread's global security state or the engine's 
+             * default user.</p>
+             */
+            private Authentication resolveAuthentication(Authentication callAuth) {
+                // 1. Highest Priority: The Call-Scoped Override (from mx.caller().withAuth(...))
+                if (callAuth != null) return callAuth;
+                
+                // 2. Fallback: The Engine-Scoped Supplier (from Moxter.forTestClass().authentication(...))
+                if (authSupplier != null) {
+                    try { return authSupplier.get(); } catch (Exception ignore) {}
+                }
+                
+                // 3. Last Resort: The Global Thread Context
+                return SecurityContextHolder.getContext().getAuthentication();
+            }
+
 
             /**
              * Phase 1: Request Building
@@ -3672,14 +3829,14 @@ public final class Moxter
              * string representation of the value found in the provided map. 
              * 
              * <p>Features:
-             * <ul>
-             * <li><b>Type Safety:</b> Uses {@code String.valueOf(v)} to handle numbers and booleans.</li>
-             * <li><b>Null Safety:</b> Replaces null values with the literal string "null".</li>
-             * <li><b>Regex Safety:</b> Uses {@code Matcher.quoteReplacement} so that values 
-             * containing special characters (like '$' or '\') don't break the interpolation.</li>
-             * <li><b>Graceful Failure:</b> If a variable is missing, the original placeholder 
-             * {@code {{key}}} is preserved in the output to help with debugging.</li>
-             * </ul>
+    
+             * - <b>Type Safety:</b> Uses {@code String.valueOf(v)} to handle numbers and booleans.
+             * - <b>Null Safety:</b> Replaces null values with the literal string "null".
+             * - <b>Regex Safety:</b> Uses {@code Matcher.quoteReplacement} so that values 
+             * containing special characters (like '$' or '\') don't break the interpolation.
+             * - <b>Graceful Failure:</b> If a variable is missing, the original placeholder 
+             * {@code {{key}}} is preserved in the output to help with debugging.
+
              *
              * @param template  The string containing {@code {{key}}} placeholders.
              * @param variables The map of available variable keys and values.

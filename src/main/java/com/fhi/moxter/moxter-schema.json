@@ -1,0 +1,135 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Moxter Moxture File Schema",
+  "description": "Schema for validating Moxter blueprint-compliant YAML files",
+  "type": "object",
+  "properties": {
+    "include": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of other YAML files to merge into this context."
+    },
+    "vars": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Global variables available to all moxtures in this file."
+    },
+    "moxtures": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/moxture" }
+    },
+    "play": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "The sequence of moxtures to execute when running in standalone mode."
+    }
+  },
+  "definitions": {
+    "moxture": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "extends": { "type": "string" },
+        "basedOn": { "type": "string" },
+        "options": {
+          "type": "object",
+          "properties": {
+            "allowFailure": { "type": "boolean" },
+            "verbose": { "type": "boolean" }
+          }
+        },
+        "actor": {
+          "type": "object",
+          "properties": {
+            "principal": { "type": "string" }
+          }
+        },
+        "vars": { "type": "object", "additionalProperties": true },
+        "request": {
+          "type": "object",
+          "properties": {
+            "protocol": { "enum": ["HTTP", "STOMP"] },
+            "method": { "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "SEND", "SUBSCRIBE"] },
+            "endpoint": { "type": "string" },
+            "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+            "queryParams": { "type": "object", "additionalProperties": { "type": "string" } },
+            "cookies": { "type": "object", "additionalProperties": { "type": "string" } },
+            "body": { "type": ["string", "object", "array"] },
+            "multipart": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "type": { "enum": ["json", "file", "text"] },
+                  "filename": { "type": "string" },
+                  "body": { "type": ["string", "object"] }
+                }
+              }
+            }
+          }
+        },
+        "extract": {
+          "type": "object",
+          "properties": {
+            "options": {
+              "type": "object",
+              "properties": { "strict": { "type": "boolean" } }
+            },
+            "body": { "type": "object", "additionalProperties": { "type": "string" } },
+            "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+            "cookies": { "type": "object", "additionalProperties": { "type": "string" } }
+          }
+        },
+        "expect": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "oneOf": [
+                { "type": "integer" },
+                { "type": "string", "pattern": "^[1-5]xx$" },
+                { "type": "array", "items": { "type": ["integer", "string"] } }
+              ]
+            },
+            "broadcast": { "type": "string" },
+            "time": { "type": "string" },
+            "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+            "body": {
+              "type": "object",
+              "properties": {
+                "match": {
+                  "type": "object",
+                  "properties": {
+                    "mode": { "enum": ["full", "partial"] },
+                    "ignorePaths": { "type": "array", "items": { "type": "string" } },
+                    "content": { "type": ["string", "object", "array"] }
+                  }
+                },
+                "assert": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": { "type": ["string", "number", "boolean", "object", "null"] }
+                  }
+                },
+                "schema": { "type": "string" }
+              }
+            }
+          }
+        },
+        "finally": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/finallyStep" }
+        }
+      }
+    },
+    "finallyStep": {
+      "type": "object",
+      "properties": {
+        "call": { "type": "string" }
+      }
+    }
+  }
+}
