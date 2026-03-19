@@ -3,6 +3,7 @@ package com.fhi.moxter;
 
 import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.print;
 
+import org.yaml.snakeyaml.LoaderOptions;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Method;
@@ -172,16 +173,12 @@ public final class Moxter
     //#private final ConcurrentMap<String, Object> vars = new ConcurrentHashMap<>();
     private final Map<String,Object> vars = new LinkedHashMap<>();
 
-    private final ObjectMapper yamlMapper;
 
     // Keep JSON mapper for HTTP
-    private final ObjectMapper jsonMapper; // NOSONAR yes it's used!
+    private final ObjectMapper jsonMapper; 
 
 
-    public static final ObjectMapper YAML_MAPPER = new ObjectMapper(new YAMLFactory())
-            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
-            .configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
-
+    public static final MoxYamlMapper MOX_YAML_MAPPER = MoxYamlMapper.create();
     public static final ObjectMapper JSON_MAPPER = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
             .configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
@@ -290,7 +287,6 @@ public final class Moxter
                    MoxRuntime.VarExtractor extractor,     // Injected
                    MoxRuntime.ExpectVerifier verifier,    // Injected
                    Supplier<Authentication> authSupplier,
-                   ObjectMapper yamlMapper,
                    ObjectMapper jsonMapper)
     {
         this.loader              = Objects.requireNonNull(loader, "loader");
@@ -298,7 +294,6 @@ public final class Moxter
         this.extractor           = Objects.requireNonNull(extractor, "extractor");
         this.verifier            = Objects.requireNonNull(verifier, "verifier");
         this.builderAuthSupplier = authSupplier;
-        this.yamlMapper          = yamlMapper;
         this.jsonMapper          = jsonMapper;
 
         // 1. Initial Load via Strategy
@@ -448,13 +443,15 @@ public final class Moxter
                     DEFAULT_USE_PER_TESTCLASS_DIRECTORY,
                     DEFAULT_MOXTURES_BASENAME
             );
-            
+
+            MoxYamlMapper yamlMapper = defaultYamlMapper();
+
             // Use the static constants here!
-            IMoxLoader loader = new HierarchicalMoxLoader(testClass, cfg, YAML_MAPPER);
+            IMoxLoader loader = new HierarchicalMoxLoader(testClass, cfg, yamlMapper);
 
             // Create SHARED Runtime helpers (Temporary local instances for the builder to use)
             MoxRuntime.Templating   templating   = new MoxRuntime.SimpleTemplating();
-            MoxRuntime.BodyResolver bodyResolver = new MoxRuntime.BodyResolver(YAML_MAPPER);
+            MoxRuntime.BodyResolver bodyResolver = new MoxRuntime.BodyResolver(yamlMapper);
             
             // Create the ORCHESTRATION components
             MoxRuntime.VarExtractor extractor = new MoxRuntime.VarExtractor();
@@ -494,8 +491,7 @@ public final class Moxter
             }
             
             // 4. Return the fully wired engine
-            return new Moxter(loader, executors, extractor, verifier, authSupplier, 
-                              defaultYamlMapper(), defaultJsonMapper());
+            return new Moxter(loader, executors, extractor, verifier, authSupplier, defaultJsonMapper());
         }
 
 
@@ -503,8 +499,8 @@ public final class Moxter
         //   Private helpers
         // =====================================================================
 
-        private static ObjectMapper defaultYamlMapper() {
-            return YAML_MAPPER;
+        private static MoxYamlMapper defaultYamlMapper() {
+            return MOX_YAML_MAPPER;
         }
 
         private static ObjectMapper defaultJsonMapper() {
@@ -514,6 +510,181 @@ public final class Moxter
 
     // #############################################################################################
 
+    /**
+     * A specialized YAML mapper acting as a version-agnostic bridge and structural preprocessor
+     * for the Moxter engine.
+     *
+     * <p> This class solves the "Corporate Dependency Lock" by detecting the underlying SnakeYAML 
+     * version at runtime and applying manual structural patches when native features 
+     * (like YAML 1.1 merge keys) are missing. It also implements a custom "C-style" include 
+     * system via the {@code __template__} directive to allow robust factorization across moxtures.
+     */
+    /**
+     * A specialized YAML mapper acting as a **Structural Preprocessor** and version-agnostic
+     * bridge for the Moxter engine.
+     *
+     * <p> **Requirement: Phase 1 (Preprocessing)**
+     * This class ensures that all template injections occur at the very beginning of the YAML lifecycle. 
+     * By patching the raw Map structure immediately after parsing, it guarantees that all inherited 
+     * variables and body fragments are present before the engine attempts POJO mapping or variable 
+     * interpolation.
+     *
+     * <p> **The __template__ Directive**
+     * It implements a custom "C-style" include system. Unlike standard YAML aliases, this 
+     * preprocessor manually resolves named references against a local '.template' registry, 
+     * making it resilient to library-specific bugs in SnakeYAML 1.x.
+     */
+    @Slf4j
+    public static final class MoxYamlMapper {
+
+
+        // The underlying Jackson ObjectMapper configured with a YAMLFactory.
+        @Getter
+        private final ObjectMapper wrappedMapper;
+
+        // Capability flag determined at initialization via reflection.
+        private final boolean nativeMergeSupported;
+
+
+        private MoxYamlMapper(ObjectMapper mapper, boolean nativeMergeSupported) {
+            this.wrappedMapper = mapper;
+            this.nativeMergeSupported = nativeMergeSupported;
+        }
+
+        /**
+         * Factory method that "sniffs" the classpath environment to configure the YAML engine.
+         * 
+         * - Attempts to enable native merge support via reflection on 
+         *   {@link org.yaml.snakeyaml.LoaderOptions#setProcessMerge(boolean)}.
+         * - Gracefully falls back if SnakeYAML 1.x (v1.33) is detected, marking the mapper for
+         *   manual patching.
+         * - Configures the Jackson pipeline to ignore unknown properties and handle date 
+         *   serialization safely.
+         * @return A capability-aware {@code MoxYamlMapper} instance.
+         */
+        public static MoxYamlMapper create() {
+            org.yaml.snakeyaml.LoaderOptions loaderOptions = new org.yaml.snakeyaml.LoaderOptions();
+            boolean supported = false;
+
+            try {
+                // Attempt to enable native YAML 1.1 merge (SnakeYAML 2.0+)
+                java.lang.reflect.Method setProcessMerge = org.yaml.snakeyaml.LoaderOptions.class
+                        .getMethod("setProcessMerge", boolean.class);
+                setProcessMerge.invoke(loaderOptions, true);
+                supported = true;
+                log.debug("[Moxter] Native YAML 1.1 merge key (<<) support enabled.");
+            } catch (NoSuchMethodException e) {
+                log.debug("[Moxter] SnakeYAML 1.x detected (v1.33): Manual merge patch will be applied.");
+            } catch (Exception e) {
+                log.warn("[Moxter] Error configuring YAML loader: {}", e.getMessage());
+            }
+
+            YAMLFactory factory = YAMLFactory.builder().loaderOptions(loaderOptions).build();
+            ObjectMapper om = new ObjectMapper(factory)
+                    .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+                    .configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
+
+            return new MoxYamlMapper(om, supported);
+        }
+
+        /**
+         * The primary orchestrator for transforming a YAML stream into a fully materialized 
+         * {@link Model.MoxtureFile}.
+         * 
+         * <p> The transformation follows a specific "Extraction-then-Patch" lifecycle: 
+         * - 1. Raw Read: Parses the stream into a generic Map structure to allow structural 
+         *      manipulation.
+         * - 2. Registry Capture: Identifies the {@code .templates} block to act as a lookup table 
+         *      for includes.
+         * - 3. Manual Patching: Recursively resolves {@code __template__} directives and flattens 
+         *      data blocks.
+         * - 4. POJO Mapping: Converts the finalized, flattened Map into the target model objects.
+         * 
+         * @param in The YAML input stream.
+         * @param displayPath Path used for enhanced "Big Red Box" syntax error reporting.
+         * @return A patched MoxtureFile ready for execution.
+         * @throws IOException If the file is unreachable or contains invalid syntax.
+         */
+        public Model.MoxtureFile parseFile(InputStream in, String displayPath) throws IOException {
+            try {
+                    // 1. Read into intermediate Map to allow manual structural modification
+                    Map<String, Object> raw = wrappedMapper.readValue(in, 
+                            new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+
+                    // 2. Extract the Custom Registry (The .templates block)
+                    // This acts as our "Header File" or "C-Directive" store
+                    Map<String, Object> registry = (Map<String, Object>) raw.get(".templates");
+
+                    // 3. Apply the manual patch, passing the registry for lookup
+                    if (!nativeMergeSupported || registry != null) {
+                        preprocess(raw, registry);
+                    }
+
+                    // 4. Map the patched structure to our final Model
+                    return wrappedMapper.convertValue(raw, Model.MoxtureFile.class);
+
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                // Re-use your existing "Big Red Box" error reporting here
+                throw new RuntimeException("YAML Syntax Error in " + displayPath, e);
+            }
+        }
+
+        /**
+         * The recursive engine responsible for resolving custom directives and structural merges.
+         * 
+         * <p> **Implementation Details**: 
+         * - **__template__ Resolution**: If a Map contains the {@code __template__} key as a String,
+         *   it retrieves the corresponding block from the {@code .templates} registry.
+         * - **Priority Merging**: Uses {@code putIfAbsent} semantics to ensure that local variables
+         *    defined in the moxture always win over template defaults: i.e. if a variable is 
+         *    already defined in the moxture where the injection is requested, the template's
+         *    version of the variable will not override the local definition of the variable.
+         * - **How the template is resolved**: If you provide a plain name 
+         *   (e.g. {@code __template__: ckeVars}), we manually fetch that block from the 
+         *   {@code .templates} registry. If you use a YAML alias 
+         *   (e.g. {@code __template__: *ckeVars}), the parser already resolved it into a Map. 
+         *   We skip the lookup and use the data directly.
+         *
+         * - **Recursive Crawl**: Recursively visits every Map and List in the tree, ensuring that 
+         *   includes work inside nested bodies or variable blocks. I.e. will find and resolve
+         *   {@code __template__} directives inside {@code vars}, {@code body}, or nested objects.
+         * 
+         * @param input The current node in the object graph (Map, List, or Scalar).
+         * @param registry The lookup table of reusable templates defined at the file root
+         *                  (by convention '.templates')
+         */
+        @SuppressWarnings("unchecked")
+        private void preprocess(Object input, Map<String, Object> registry) {
+            if (input instanceof Map) {
+                Map<String, Object> map = (Map<String, Object>) input;
+                
+                // 1. DIRECTIVE LOOKUP: Handle '_mox_include' as a String reference
+                Object includeRef = map.remove("__template__");
+                
+                if (includeRef instanceof String templateName && registry != null) {
+                    Object templateData = registry.get(templateName);
+                    if (templateData instanceof Map) {
+                        // Flatten the registry data into this moxture
+                        // (putIfAbsent ensures the moxture's local overrides win)
+                        ((Map<String, Object>) templateData).forEach(map::putIfAbsent);
+                        log.trace("[Moxter] Preprocessor: Injected template '{}'", templateName);
+                    }
+                } 
+                // 2. FALLBACK: Support native aliases/merges if they happen to exist
+                else if (includeRef instanceof Map) {
+                    ((Map<String, Object>) includeRef).forEach(map::putIfAbsent);
+                }
+
+                // 3. RECURSION: Deep crawl
+                new ArrayList<>(map.values()).forEach(child -> preprocess(child, registry));
+            } else if (input instanceof List) {
+                ((List<?>) input).forEach(item -> preprocess(item, registry));
+            }
+        }
+    }
+
+
+    // #############################################################################################
 
     /**
      * Strategy interface for discovering and loading moxture definitions.
@@ -595,10 +766,10 @@ public final class Moxter
 
         private final Class<?> testClass;
         private final MoxLoadingConfig cfg;
-        private final ObjectMapper yamlMapper;
+        private final MoxYamlMapper yamlMapper;
         private final MoxClasspathRepository repo;
 
-        public HierarchicalMoxLoader(Class<?> testClass, MoxLoadingConfig cfg, ObjectMapper yamlMapper) {
+        public HierarchicalMoxLoader(Class<?> testClass, MoxLoadingConfig cfg, MoxYamlMapper yamlMapper) {
             this.testClass = Objects.requireNonNull(testClass, "testClass");
             this.cfg = Objects.requireNonNull(cfg, "cfg");
             this.yamlMapper = Objects.requireNonNull(yamlMapper, "yamlMapper");
@@ -613,7 +784,7 @@ public final class Moxter
 
         @Override
         public RawMoxture findByName(String name, String currentBaseDir) {
-            MoxClasspathRepository.RepoRawMoxture res = repo.findFirstByNameFromBaseDir(testClass, cfg, currentBaseDir, name, yamlMapper);
+            MoxClasspathRepository.RepoRawMoxture res = repo.findFirstByNameFromBaseDir(testClass, cfg, currentBaseDir, name);
             return res == null ? null : new RawMoxture(res.call(), res.baseDir(), res.displayPath());
         }
 
@@ -645,7 +816,7 @@ public final class Moxter
                 try (InputStream in = url.openStream()) {
                     // 3. REPLACED: Manual mapper.readValue is now Utils.Yaml.parseFile
                     // This provides the "Big Red Box" error if a parent YAML is broken
-                    Model.MoxtureFile suite = Utils.Yaml.parseFile(yamlMapper, in, "classpath:/" + cp);
+                    Model.MoxtureFile suite = yamlMapper.parseFile(in, "classpath:/" + cp);
                     
                     Map<String, Object> varsFromFile = suite.vars();
                     if (varsFromFile != null && !varsFromFile.isEmpty()) {
@@ -697,9 +868,9 @@ public final class Moxter
          * - Provides hierarchical name lookup helpers.
          */
         static final class MoxClasspathRepository {
-            private final ObjectMapper mapper;
+            private final MoxYamlMapper yamlMapper;
 
-            MoxClasspathRepository(ObjectMapper mapper) { this.mapper = mapper; }
+            MoxClasspathRepository(MoxYamlMapper mapper) { this.yamlMapper = mapper; }
 
             record RepoLoadedSuite(Model.MoxtureFile suite, String baseDir) {}
             record RepoRawMoxture(Model.Moxture call, String baseDir, String displayPath) {}
@@ -723,7 +894,7 @@ public final class Moxter
                 log.debug("[Moxter] Loading {} -> {}", displayPath, url);
 
                 try (InputStream in = url.openStream()) {
-                    Model.MoxtureFile suite = Utils.Yaml.parseFile(mapper, in, displayPath);
+                    Model.MoxtureFile suite = yamlMapper.parseFile(in, displayPath);
                     String baseDir = Utils.IO.parentDirOf(classpath);
                     return new RepoLoadedSuite(suite, baseDir);
                 } catch (IOException e) {
@@ -762,7 +933,7 @@ public final class Moxter
              * Finds the first (closest) occurrence of a moxture by name, starting from an arbitrary baseDir. 
              */
             RepoRawMoxture findFirstByNameFromBaseDir(Class<?> testClass, MoxLoadingConfig cfg,
-                                                    String startBaseDir, String name, ObjectMapper yamlMapper) {
+                                                    String startBaseDir, String name) {
                 
                 // 1. Generate the candidate ancestor paths 
                 List<String> candidates = Utils.Classpath.walkUp(startBaseDir, cfg.rootPath, cfg.fileName);
@@ -774,7 +945,7 @@ public final class Moxter
                     if (url == null) continue;
 
                     try (InputStream in = url.openStream()) {
-                        Model.MoxtureFile raw = Utils.Yaml.parseFile(yamlMapper, in, "classpath:/" + cp);
+                        Model.MoxtureFile raw = yamlMapper.parseFile(in, "classpath:/" + cp);
 
                         if (raw.moxtures() == null || raw.moxtures().isEmpty()) continue;
 
@@ -806,8 +977,6 @@ public final class Moxter
 
 
     // #############################################################################################
-
-
 
 
     /**
@@ -929,7 +1098,6 @@ public final class Moxter
             Model.Moxture mat = materializeDeep(found.moxt(), found.baseDir(), new ArrayDeque<>(), new HashSet<>());
             return new EffectiveMoxture(mat, found.baseDir());
         }
-
 
 
         /**
@@ -1141,7 +1309,7 @@ public final class Moxter
          * <p>Merges nested ObjectNodes. For arrays and value nodes (strings, numbers), 
          * the child simply replaces the parent.
          */
-        private static JsonNode deepMergeBody(ObjectMapper mapper, JsonNode parent, JsonNode child) {
+        private static JsonNode deepMergeBody(MoxYamlMapper mapper, JsonNode parent, JsonNode child) {
             // 1. Coerce to objects if they are JSON strings (though resolveSingleNode usually handles this)
             parent = Utils.Json.coerceJsonTextToNode(mapper, parent);
             child  = Utils.Json.coerceJsonTextToNode(mapper, child);
@@ -1448,7 +1616,7 @@ public final class Moxter
         {
             MoxRuntime.ResponseEnvelope env = callInternal(moxtureName, varOverrides);
 
-            return new MoxtureResult(env, moxter, moxtureName);
+            return new MoxtureResult(env, moxter, moxtureName, varOverrides);
         }
 
 
@@ -2286,13 +2454,13 @@ public final class Moxter
          */
         static final class BodyResolver 
         {
-            private final ObjectMapper mapper;
+            private final MoxYamlMapper mapper;
 
             /**
              * @param mapper The Jackson mapper (typically a YAML-aware instance) used 
              * to parse strings and manipulate nodes.
              */
-            BodyResolver(ObjectMapper mapper) { this.mapper = mapper; }
+            BodyResolver(MoxYamlMapper mapper) { this.mapper = mapper; }
 
             /**
              * The new entry point that handles the inheritance stack.
@@ -2363,12 +2531,12 @@ public final class Moxter
                     // Heuristic JSON check
                     if (Utils.Json.looksLikeJson(txt)) {
                         try {
-                            return mapper.readTree(txt);
+                            return mapper.getWrappedMapper().readTree(txt);
                         } catch (JsonProcessingException e) {
-                            return mapper.getNodeFactory().textNode(txt);
+                            return mapper.getWrappedMapper().getNodeFactory().textNode(txt);
                         }
                     }
-                    return mapper.getNodeFactory().textNode(txt);
+                    return mapper.getWrappedMapper().getNodeFactory().textNode(txt);
                 }
 
                 return templateNodeStrings(body, vars, tpl);
@@ -2385,7 +2553,7 @@ public final class Moxter
                 if (url == null) throw new IllegalArgumentException("Resource not found on classpath: " + path);
 
                 try (InputStream in = url.openStream()) {
-                    return mapper.readTree(in);
+                    return mapper.getWrappedMapper().readTree(in);
                 }
             }
 
@@ -2398,15 +2566,15 @@ public final class Moxter
                 if (node == null) return null;
                 if (node.isTextual()) {
                     String replaced = tpl.apply(node.asText(), vars);
-                    return mapper.getNodeFactory().textNode(replaced);
+                    return mapper.getWrappedMapper().getNodeFactory().textNode(replaced);
                 }
                 if (node.isArray()) {
-                    ArrayNode arr = mapper.getNodeFactory().arrayNode();
+                    ArrayNode arr = mapper.getWrappedMapper().getNodeFactory().arrayNode();
                     for (JsonNode child : node) arr.add(templateNodeStrings(child, vars, tpl));
                     return arr;
                 }
                 if (node.isObject()) {
-                    ObjectNode out = mapper.createObjectNode();
+                    ObjectNode out = mapper.getWrappedMapper().createObjectNode();
                     Iterator<String> it = node.fieldNames();
                     while (it.hasNext()) {
                         String f = it.next();
@@ -3353,15 +3521,30 @@ public final class Moxter
         // Reference to the encompassing engine
         private final Moxter moxter;
 
+        /** 
+         * An immutable snapshot of the call-specific variables (overrides and moxture-local 
+         * definitions) at the time the request is made.
+         * This is used when using post call methods (like .isEqualToInterpolated(...))
+         * that need to recall waht the call-scope was.
+         */
+        private final Map<String, Object> callVars;
+
         /**
          * @param envelope    The response wrapper containing status, body, and raw content.
          * @param moxtureName The name of the moxture that produced this result (for error context).
          * @param moxter      The encompassing Engine.
          */
-        public MoxtureResult(MoxRuntime.ResponseEnvelope envelope, Moxter moxter, String moxtureName) {
+        public MoxtureResult(MoxRuntime.ResponseEnvelope envelope, 
+                             Moxter moxter, 
+                             String moxtureName,
+                             Map<String, Object> callVars) {
             this.envelope    = envelope;
             this.moxter      = moxter;
             this.moxtureName = moxtureName;
+            // Capture an immutable copy of the variables used for this specific call
+            this.callVars    = (callVars == null) 
+                                    ? Collections.emptyMap() 
+                                    : Collections.unmodifiableMap(new LinkedHashMap<>(callVars));
         }
 
         /**
@@ -3569,14 +3752,16 @@ public final class Moxter
         /**
          * A hybrid assertion "Pivot" that facilitates both general object assertions 
          * and fluent type-switching without encountering Java generic capture issues.
-         * * <p>This class acts as a standalone wrapper around AssertJ's engine. It provides
+         * 
+         * <p> This class acts as a standalone wrapper around AssertJ's engine. It provides
          * direct access to common assertions (like {@code isEqualTo}) while offering 
          * "Bridge" methods (like {@code asString()}) to unlock type-specific 
-         * functionality with a clean, infinite-chaining syntax.</p>
-         * * <p><b>Why a Pivot?</b> By using a standalone pivot instead of extending 
+         * functionality with a clean, infinite-chaining syntax.
+         * 
+         * <p> <b>Why a Pivot?</b> By using a standalone pivot instead of extending 
          * {@link ObjectAssert} directly, we avoid naming collisions 
          * with AssertJ's internal methods and bypass the complex recursive generics 
-         * that typically cause compiler "capture" errors in fluent APIs.</p>
+         * that typically cause compiler "capture" errors in fluent APIs.
          */
         public class AssertionPivot {
             private final Object val;
@@ -3598,6 +3783,27 @@ public final class Moxter
                 internalAssert.isEqualTo(expected); 
                 return this; 
             }
+
+            /**
+             * Asserts that the actual value is equal to the provided template string 
+             * after variable interpolation. 
+             * 
+             * <p> Placeholders (e.g., {{p.id}}) are resolved using the call-specific 
+             * snapshot (overrides) first, falling back to global engine variables.
+             */
+            public AssertionPivot isEqualToInterpolated(String template) {
+                // 1. Prepare the lookup context (Call Snapshot shadows Global Vars)
+                Map<String, Object> lookupContext = new LinkedHashMap<>(moxter.vars().view());
+                lookupContext.putAll(MoxtureResult.this.callVars);
+
+                // 2. Resolve the template
+                MoxRuntime.Templating engine = new MoxRuntime.SimpleTemplating();
+                String resolvedValue = engine.apply(template, lookupContext);
+
+                // 3. Perform the assertion
+                return isEqualTo(resolvedValue);
+            }
+
 
             /**
              * Verifies that the actual value is not {@code null}.
@@ -3730,59 +3936,41 @@ public final class Moxter
      */
     static final class Utils 
     {
-        public static class Yaml 
-        {
-            /**
-             * Parses a YAML file into a {@link Model.MoxtureFile} while providing 
-             * enhanced, developer-friendly error reporting on syntax failures.
-             * 
-             * <p>When Jackson (via SnakeYAML) encounters a parsing error (e.g., an unquoted 
-             * template variable like {@code {{myVar}}} at the start of a YAML value), it typically 
-             * throws a massive stack trace with a generic, hard-to-read message. 
-             * 
-             * <p>This wrapper intercepts that {@link com.fasterxml.jackson.core.JsonProcessingException}, 
-             * extracts the exact line and column number, and throws a cleanly formatted 
-             * 
-             * {@link RuntimeException} that acts as a highly visible "Big Red Box" in the test console.
-             *
-             * @param mapper      The Jackson {@link ObjectMapper} configured with a YAML factory.
-             * @param in          The input stream of the YAML file to parse.
-             * @param displayPath The human-readable path of the file (e.g., "classpath:/moxtures.yaml") 
-             * used to tell the developer exactly which file failed.
-             * @return The fully parsed {@link Model.MoxtureFile} object graph.
-             * @throws IOException If the input stream cannot be read from the file system or classpath.
-             * @throws RuntimeException If a YAML syntax error occurs. The exception message contains 
-             * the formatted, DX-friendly error block.
-             */
-            public static Model.MoxtureFile parseFile(ObjectMapper mapper, InputStream in, String displayPath) throws IOException {
-                try {
-                    return mapper.readValue(in, Model.MoxtureFile.class);
-                } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-                    com.fasterxml.jackson.core.JsonLocation loc = e.getLocation();
-                    int line = loc != null ? loc.getLineNr() : -1;
-                    int col = loc != null ? loc.getColumnNr() : -1;
-                    String cleanMessage = e.getOriginalMessage();
+        
 
-                    String dxError = """
-                        
-                        =======================================================
-                        MOXTER YAML SYNTAX ERROR 
-                        =======================================================
-                        File   : %s
-                        Line   : %d
-                        Column : %d
-                        Details: %s
-                        -------------------------------------------------------
-                        Hint: If this is near a variable like {{var}}, make sure 
-                        it is wrapped in double quotes if it's the first thing on the line!
-                        =======================================================
-                        """.formatted(displayPath, line, col, cleanMessage);
-                    
-                    // Throw as RuntimeException to stop execution immediately and print our custom message
-                    throw new RuntimeException(dxError);
-                }
-            }
-        }
+
+
+
+            /**
+             * Manual implementation of the YAML 1.1 "Merge Key" (<<) specification.
+             * 
+             * <p> <b>Historical Context:</b>
+             * The merge key was a standard feature in YAML 1.1 but was moved to an optional 
+             * extension in YAML 1.2. Consequently, modern YAML parsers like SnakeYAML have 
+             * disabled this feature by default for security and specification compliance.
+             * 
+             * <p> <b>Version Compatibility & Constraints:</b>
+             * - <b>SnakeYAML 2.0+:</b> Introduced {@code LoaderOptions.setProcessMerge(true)} 
+             *   to re-enable this feature natively.
+             * - <b>SnakeYAML 1.x:</b> Does not support native merge key toggling.
+             * 
+             * <p> This project transitively inherits <b>SnakeYAML 1.33</b> (via {@code liquibase-core}), 
+             * which lacks native support and causes the "magic switch" code to fail compilation.
+             * To support factorization in {@code moxtures.yaml} 
+             * without forcing corporate dependency upgrades, this method provides a 
+             * library-agnostic manual patch.
+             * 
+             * <b>Technical Behavior:</b>
+            *  Recursively traverses the object graph (Maps and Lists). When a {@code "<<"} key 
+            *  is encountered in a Map:
+            *  - The value (Map or List of Maps) is extracted.</li>
+            *  - All entries from the extracted map(s) are merged into the current Map.</li>
+            *  - <b>Precedence:</b> Existing keys in the current map are preserved (child wins).</li>
+            *  - The {@code "<<"} key is removed to prevent downstream JSON parsing errors.</li>
+            *
+            * @param input The raw object graph returned by the YAML parser.
+            */
+
 
 
 
@@ -4223,28 +4411,16 @@ public final class Moxter
              * so it can participate in deep-merging operations.
              * Otherwise return as is. 
              */
-            public static JsonNode coerceJsonTextToNode(ObjectMapper mapper, JsonNode n) {
+            public static JsonNode coerceJsonTextToNode(MoxYamlMapper mapper, JsonNode n) {
                 if (n == null || !n.isTextual()) return n;
                 
                 String s = n.asText().trim();
                 // Check if it's a "sniffed" JSON string or a classpath reference
                 if (looksLikeJson(s)) {
-                    try { return mapper.readTree(s); } catch (Exception ignore) { return n; }
+                    try { return mapper.getWrappedMapper().readTree(s); } catch (Exception ignore) { return n; }
                 }
                 return n;
             }
-            private static JsonNode coerceJsonTextToNodeOLD(ObjectMapper mapper, JsonNode n) {
-                if (n == null) return null;
-                if (n.isTextual()) {
-                    String s = n.asText().trim();
-                    boolean looksJson = (s.startsWith("{") && s.endsWith("}")) || (s.startsWith("[") && s.endsWith("]"));
-                    if (looksJson) {
-                        try { return mapper.readTree(s); } catch (Exception ignore) { /* keep textual */ }
-                    }
-                }
-                return n;
-            }
-
         }
 
 

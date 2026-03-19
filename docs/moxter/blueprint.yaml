@@ -134,6 +134,7 @@ moxtures:
       time: "< 500ms"          # Checks response time  # TODO
       headers:                 # Header assertions # TODO
         Content-Type: "application/json"
+      as: "the call should do this..."  # TODO message to display in reports  
       body:
 
         # OPTION A: Surgical Assertions (Strict Equality)
@@ -150,8 +151,9 @@ moxtures:
           # instead of a flat Map. (this means placing a "-" in front of the following
           # elements). 
           # This allows you to assert against the same JSON path multiple times sequentially.
-          - "$.item.type" : "new"   
+          - "$.item.type" : "new"
           - "$.item.value": 100
+            as: "The item value should be ..." # Beware of indentation!
           - "$.offers[*].length()": 3
           - "$.offers[?(@.cost >= 1000 && @.cost <= 2000)].length()": 3
           - "$.message": "Pet {{in_petName}} was created OK"  # strict equality check
