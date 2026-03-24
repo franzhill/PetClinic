@@ -3,7 +3,6 @@ package com.fhi.moxter;
 
 import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.print;
 
-import org.yaml.snakeyaml.LoaderOptions;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Method;
@@ -46,6 +45,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.mock.web.MockHttpSession;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors;
@@ -55,8 +55,17 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import org.springframework.test.web.servlet.request.MockMultipartHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
+import com.fhi.moxter.Moxter.Engine.BodyResolver;
+import com.fhi.moxter.Moxter.Engine.ExpectVerifier;
+import com.fhi.moxter.Moxter.Engine.IMoxTemplator;
+import com.fhi.moxter.Moxter.Engine.MoxResolver;
+import com.fhi.moxter.Moxter.Engine.MoxSimpleTemplator;
+import com.fhi.moxter.Moxter.Engine.VarExtractor;
+import com.fhi.moxter.Moxter.IO.HierarchicalMoxLoader;
+import com.fhi.moxter.Moxter.IO.IMoxLoader;
+import com.fhi.moxter.Moxter.IO.MoxLinker;
+import com.fhi.moxter.Moxter.IO.MoxYamlMapper;
 import com.fhi.mockWebs.MockWebs;
-import com.fhi.moxter.Moxter.MoxRuntime.Templating;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -149,15 +158,20 @@ public final class Moxter
 
     private final IMoxLoader loader; 
 
+    private final IMoxTemplator   templator;
+    private final BodyResolver bodyResolver;
+
+
+
     /** 
      * Registry of available executors (HTTP, STOMP, etc.) used to execute moxtures according
      * to the request protocol.
      * For performance reasons we won't be "new-ing" one for every moxture call.
      */
-    private final List<MoxRuntime.IProtocolExecutor> executors;
+    private final List<Wire.IProtocolExecutor> executors;
 
-    private final MoxRuntime.VarExtractor extractor;
-    private final MoxRuntime.ExpectVerifier verifier;
+    private final VarExtractor extractor;
+    private final ExpectVerifier verifier;
 
 
     // Used if loader = hierarchical package loader
@@ -188,9 +202,9 @@ public final class Moxter
     private final Supplier<Authentication> builderAuthSupplier;
 
     // Caches and Resolvers
-    private final Map<MoxResolver.EffectiveKey, Model.Moxture> materializedCache = new LinkedHashMap<>();
+    private final Map<MoxLinker.LinkedMoxtureKey, Model.Moxture> materializedCache = new LinkedHashMap<>();
     private final MoxVars globalScopeVars = new MoxVars(this, null);
-    private final MoxResolver moxResolver = new MoxResolver(this);
+    private final MoxLinker moxLinker = new MoxLinker(this);
 
 
     // =====================================================================
@@ -283,13 +297,17 @@ public final class Moxter
     // =====================================================================
 
     private Moxter(IMoxLoader loader,
-                   List<MoxRuntime.IProtocolExecutor> executors,
-                   MoxRuntime.VarExtractor extractor,     // Injected
-                   MoxRuntime.ExpectVerifier verifier,    // Injected
+                   IMoxTemplator templator,
+                   BodyResolver bodyResolver,
+                   List<Wire.IProtocolExecutor> executors,
+                   VarExtractor extractor,     // Injected
+                   ExpectVerifier verifier,    // Injected
                    Supplier<Authentication> authSupplier,
                    ObjectMapper jsonMapper)
     {
         this.loader              = Objects.requireNonNull(loader, "loader");
+        this.templator           = Objects.requireNonNull(templator, "templator");
+        this.bodyResolver        = Objects.requireNonNull(bodyResolver, "bodyResolver");
         this.executors           = Objects.requireNonNull(executors, "executors");
         this.extractor           = Objects.requireNonNull(extractor, "extractor");
         this.verifier            = Objects.requireNonNull(verifier, "verifier");
@@ -322,7 +340,7 @@ public final class Moxter
             if (f.getName() == null || f.getName().isBlank()) {
                 throw new IllegalStateException("Moxture with missing/blank 'name' in " + moxturesBaseDir + "/" + DEFAULT_MOXTURES_BASENAME);
             }
-            MoxResolver.validateMoxture(f);
+            Helper.validateMoxture(f);
             if (index.put(f.getName(), f) != null) {
                 throw new IllegalStateException("Duplicate moxture name: " + f.getName());
             }
@@ -364,7 +382,8 @@ public final class Moxter
 
         // Authentication provider.
         // Initialized with the default authentication.
-        private Supplier<Authentication> authSupplier = () -> SecurityContextHolder.getContext().getAuthentication();
+        private Supplier<Authentication> authSupplier = 
+                            () -> SecurityContextHolder.getContext().getAuthentication();
 
         private MoxBuilder(Class<?> testClass) { 
             this.testClass = testClass; 
@@ -450,29 +469,26 @@ public final class Moxter
             IMoxLoader loader = new HierarchicalMoxLoader(testClass, cfg, yamlMapper);
 
             // Create SHARED Runtime helpers (Temporary local instances for the builder to use)
-            MoxRuntime.Templating   templating   = new MoxRuntime.SimpleTemplating();
-            MoxRuntime.BodyResolver bodyResolver = new MoxRuntime.BodyResolver(yamlMapper);
+            IMoxTemplator   templator   = new MoxSimpleTemplator();
+            BodyResolver bodyResolver = new BodyResolver(yamlMapper);
             
             // Create the ORCHESTRATION components
-            MoxRuntime.VarExtractor extractor = new MoxRuntime.VarExtractor();
+            VarExtractor extractor = new VarExtractor();
             
             // The verifier gets the helpers it needs right here:
-            MoxRuntime.ExpectVerifier verifier = new MoxRuntime.ExpectVerifier(
-                bodyResolver, JSON_MAPPER, templating, mockWebs);
+            ExpectVerifier verifier = new ExpectVerifier(
+                bodyResolver, JSON_MAPPER, templator, mockWebs);
             
             // Register Available Protocol Executors
-            List<MoxRuntime.IProtocolExecutor> executors = new ArrayList<>();
+            List<Wire.IProtocolExecutor> executors = new ArrayList<>();
             
             // If MocMvc has been provided, we'll most probably at some point be executing http
             //  moxtures => we'll need the HttpExecutor => instantiate it and place it in the 
             // list of available executors.
             if (mockMvc != null) {
-                executors.add(new MoxRuntime.HttpExecutor(
+                executors.add(new Wire.HttpExecutor(
                     mockMvc, 
-                    defaultJsonMapper(), 
-                    templating, 
-                    bodyResolver, 
-                    authSupplier  // Shared engine-level identity supplier
+                    defaultJsonMapper()
                 ));
             }
 
@@ -481,17 +497,21 @@ public final class Moxter
             // list of available executors.
             if (mockWebs != null) {
                 executors.add(
-                    new MoxRuntime.StompExecutor(
+                    new Wire.StompExecutor(
                         mockWebs, 
-                        defaultJsonMapper(), 
-                        templating,
-                        bodyResolver, 
-                        authSupplier // Shared engine-level identity supplier
+                        defaultJsonMapper()
                 ));
             }
             
             // 4. Return the fully wired engine
-            return new Moxter(loader, executors, extractor, verifier, authSupplier, defaultJsonMapper());
+            return new Moxter(loader,
+                              templator,
+                              bodyResolver,
+                              executors, 
+                              extractor, 
+                              verifier, 
+                              authSupplier, 
+                              defaultJsonMapper());
         }
 
 
@@ -508,864 +528,11 @@ public final class Moxter
         }
     }
 
-    // #############################################################################################
-
-    /**
-     * A specialized YAML mapper acting as a version-agnostic bridge and structural preprocessor
-     * for the Moxter engine.
-     *
-     * <p> This class solves the "Corporate Dependency Lock" by detecting the underlying SnakeYAML 
-     * version at runtime and applying manual structural patches when native features 
-     * (like YAML 1.1 merge keys) are missing. It also implements a custom "C-style" include 
-     * system via the {@code __template__} directive to allow robust factorization across moxtures.
-     */
-    /**
-     * A specialized YAML mapper acting as a **Structural Preprocessor** and version-agnostic
-     * bridge for the Moxter engine.
-     *
-     * <p> **Requirement: Phase 1 (Preprocessing)**
-     * This class ensures that all template injections occur at the very beginning of the YAML lifecycle. 
-     * By patching the raw Map structure immediately after parsing, it guarantees that all inherited 
-     * variables and body fragments are present before the engine attempts POJO mapping or variable 
-     * interpolation.
-     *
-     * <p> **The __template__ Directive**
-     * It implements a custom "C-style" include system. Unlike standard YAML aliases, this 
-     * preprocessor manually resolves named references against a local '.template' registry, 
-     * making it resilient to library-specific bugs in SnakeYAML 1.x.
-     */
-    @Slf4j
-    public static final class MoxYamlMapper {
-
-
-        // The underlying Jackson ObjectMapper configured with a YAMLFactory.
-        @Getter
-        private final ObjectMapper wrappedMapper;
-
-        // Capability flag determined at initialization via reflection.
-        private final boolean nativeMergeSupported;
-
-
-        private MoxYamlMapper(ObjectMapper mapper, boolean nativeMergeSupported) {
-            this.wrappedMapper = mapper;
-            this.nativeMergeSupported = nativeMergeSupported;
-        }
-
-        /**
-         * Factory method that "sniffs" the classpath environment to configure the YAML engine.
-         * 
-         * - Attempts to enable native merge support via reflection on 
-         *   {@link org.yaml.snakeyaml.LoaderOptions#setProcessMerge(boolean)}.
-         * - Gracefully falls back if SnakeYAML 1.x (v1.33) is detected, marking the mapper for
-         *   manual patching.
-         * - Configures the Jackson pipeline to ignore unknown properties and handle date 
-         *   serialization safely.
-         * @return A capability-aware {@code MoxYamlMapper} instance.
-         */
-        public static MoxYamlMapper create() {
-            org.yaml.snakeyaml.LoaderOptions loaderOptions = new org.yaml.snakeyaml.LoaderOptions();
-            boolean supported = false;
-
-            try {
-                // Attempt to enable native YAML 1.1 merge (SnakeYAML 2.0+)
-                java.lang.reflect.Method setProcessMerge = org.yaml.snakeyaml.LoaderOptions.class
-                        .getMethod("setProcessMerge", boolean.class);
-                setProcessMerge.invoke(loaderOptions, true);
-                supported = true;
-                log.debug("[Moxter] Native YAML 1.1 merge key (<<) support enabled.");
-            } catch (NoSuchMethodException e) {
-                log.debug("[Moxter] SnakeYAML 1.x detected (v1.33): Manual merge patch will be applied.");
-            } catch (Exception e) {
-                log.warn("[Moxter] Error configuring YAML loader: {}", e.getMessage());
-            }
-
-            YAMLFactory factory = YAMLFactory.builder().loaderOptions(loaderOptions).build();
-            ObjectMapper om = new ObjectMapper(factory)
-                    .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
-                    .configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
-
-            return new MoxYamlMapper(om, supported);
-        }
-
-        /**
-         * The primary orchestrator for transforming a YAML stream into a fully materialized 
-         * {@link Model.MoxtureFile}.
-         * 
-         * <p> The transformation follows a specific "Extraction-then-Patch" lifecycle: 
-         * - 1. Raw Read: Parses the stream into a generic Map structure to allow structural 
-         *      manipulation.
-         * - 2. Registry Capture: Identifies the {@code .templates} block to act as a lookup table 
-         *      for includes.
-         * - 3. Manual Patching: Recursively resolves {@code __template__} directives and flattens 
-         *      data blocks.
-         * - 4. POJO Mapping: Converts the finalized, flattened Map into the target model objects.
-         * 
-         * @param in The YAML input stream.
-         * @param displayPath Path used for enhanced "Big Red Box" syntax error reporting.
-         * @return A patched MoxtureFile ready for execution.
-         * @throws IOException If the file is unreachable or contains invalid syntax.
-         */
-        public Model.MoxtureFile parseFile(InputStream in, String displayPath) throws IOException {
-            try {
-                    // 1. Read into intermediate Map to allow manual structural modification
-                    Map<String, Object> raw = wrappedMapper.readValue(in, 
-                            new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
-
-                    // 2. Extract the Custom Registry (The .templates block)
-                    // This acts as our "Header File" or "C-Directive" store
-                    Map<String, Object> registry = (Map<String, Object>) raw.get(".templates");
-
-                    // 3. Apply the manual patch, passing the registry for lookup
-                    if (!nativeMergeSupported || registry != null) {
-                        preprocess(raw, registry);
-                    }
-
-                    // 4. Map the patched structure to our final Model
-                    return wrappedMapper.convertValue(raw, Model.MoxtureFile.class);
-
-            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-                // Re-use your existing "Big Red Box" error reporting here
-                throw new RuntimeException("YAML Syntax Error in " + displayPath, e);
-            }
-        }
-
-        /**
-         * The recursive engine responsible for resolving custom directives and structural merges.
-         * 
-         * <p> **Implementation Details**: 
-         * - **__template__ Resolution**: If a Map contains the {@code __template__} key as a String,
-         *   it retrieves the corresponding block from the {@code .templates} registry.
-         * - **Priority Merging**: Uses {@code putIfAbsent} semantics to ensure that local variables
-         *    defined in the moxture always win over template defaults: i.e. if a variable is 
-         *    already defined in the moxture where the injection is requested, the template's
-         *    version of the variable will not override the local definition of the variable.
-         * - **How the template is resolved**: If you provide a plain name 
-         *   (e.g. {@code __template__: ckeVars}), we manually fetch that block from the 
-         *   {@code .templates} registry. If you use a YAML alias 
-         *   (e.g. {@code __template__: *ckeVars}), the parser already resolved it into a Map. 
-         *   We skip the lookup and use the data directly.
-         *
-         * - **Recursive Crawl**: Recursively visits every Map and List in the tree, ensuring that 
-         *   includes work inside nested bodies or variable blocks. I.e. will find and resolve
-         *   {@code __template__} directives inside {@code vars}, {@code body}, or nested objects.
-         * 
-         * @param input The current node in the object graph (Map, List, or Scalar).
-         * @param registry The lookup table of reusable templates defined at the file root
-         *                  (by convention '.templates')
-         */
-        @SuppressWarnings("unchecked")
-        private void preprocess(Object input, Map<String, Object> registry) {
-            if (input instanceof Map) {
-                Map<String, Object> map = (Map<String, Object>) input;
-                
-                // 1. DIRECTIVE LOOKUP: Handle '_mox_include' as a String reference
-                Object includeRef = map.remove("__template__");
-                
-                if (includeRef instanceof String templateName && registry != null) {
-                    Object templateData = registry.get(templateName);
-                    if (templateData instanceof Map) {
-                        // Flatten the registry data into this moxture
-                        // (putIfAbsent ensures the moxture's local overrides win)
-                        ((Map<String, Object>) templateData).forEach(map::putIfAbsent);
-                        log.trace("[Moxter] Preprocessor: Injected template '{}'", templateName);
-                    }
-                } 
-                // 2. FALLBACK: Support native aliases/merges if they happen to exist
-                else if (includeRef instanceof Map) {
-                    ((Map<String, Object>) includeRef).forEach(map::putIfAbsent);
-                }
-
-                // 3. RECURSION: Deep crawl
-                new ArrayList<>(map.values()).forEach(child -> preprocess(child, registry));
-            } else if (input instanceof List) {
-                ((List<?>) input).forEach(item -> preprocess(item, registry));
-            }
-        }
-    }
-
-
-    // #############################################################################################
-
-    /**
-     * Strategy interface for discovering and loading moxture definitions.
-     * 
-     * <p>By abstracting the discovery logic, Moxter can support different loading 
-     * paradigms—such as JUnit-style hierarchical classpath scanning or standalone 
-     * explicit file imports -without modifying the core execution engine.
-     */
-    public interface IMoxLoader {
-
-        /**
-         * Performs the initial load of the primary moxture file (the entry point).
-         * 
-         * <p>For a hierarchical strategy, this is the file closest to the test class. 
-         * For an explicit strategy, this is the file specifically requested by the user.
-         * 
-         * @return A {@link LoadedSuite} containing the parsed entry-point file and its 
-         *         anchor directory.
-         * @throws RuntimeException if the entry-point file cannot be found or parsed.
-         */
-        LoadedSuite loadInitial();
-
-        /**
-         * Resolves the initial variables map used to seed the engine's global context.
-         * 
-         * <p>Implementations determine how these variables are gathered. A hierarchical 
-         * loader might walk up the package tree to merge variables, while an explicit 
-         * loader might only read the current file and its explicit includes.
-         * 
-         * @return A map of variables discovered through the loading strategy, or an empty 
-         *         map if none exist.
-         */
-        Map<String, Object> resolveInitialVars();
-
-        /**
-         * Resolves a moxture definition by name on-demand.
-         * * <p>This method implements the "Anti-Zombie" logic: it only searches paths 
-         * relevant to the current strategy (e.g., package ancestors or explicit includes). 
-         * If a faulty file exists elsewhere in the project, it is ignored unless 
-         * strictly required by the resolution path.</p>
-         * * @param name           The name of the moxture to find (e.g., for a 'basedOn' or 'call' resolution).
-         * @param currentBaseDir The directory of the file currently being processed, used as a starting point for relative lookups.
-         * @return A {@link RawMoxture} containing the unmaterialized definition, or {@code null} if not found.
-         */
-        RawMoxture findByName(String name, String currentBaseDir);
-        // =========================================================================
-        // Data Carriers
-        // =========================================================================
-        /**
-         * Container for a fully parsed Moxture entry-point file and its location.
-         * * @param suite   The parsed object graph of the YAML file.
-         * @param baseDir The directory where this file resides (used to resolve relative paths like 'classpath:req.json').
-         */
-        record LoadedSuite(Model.MoxtureFile suite, String baseDir) {}
-
-        /**
-         * Container for a raw, unmaterialized moxture discovered during on-demand resolution.
-         * * @param moxt        The raw moxture definition exactly as it appears in the YAML file.
-         * @param baseDir     The directory where this specific moxture's file resides.
-         * @param displayPath A human-readable path (e.g., "classpath:/my/pkg/moxtures.yaml") used for DX-friendly error reporting.
-         */
-        record RawMoxture(Model.Moxture moxt, String baseDir, String displayPath) {}
-    }
-
-
-    // #############################################################################################
-
-    /**
-     * A MoxtureLoader that follows the Java package hierarchy to discover moxtures.
-     * 
-     * <p>This strategy mirrors the test class structure. It starts searching from 
-     * the test's specific package and walks up the tree to the root. This allows 
-     * for localized overrides and global defaults within a shared classpath.</p>
-     * 
-     * Resolve parent by searching upwards (closest → parents → root)
-     */
-    @Slf4j
-    public static class HierarchicalMoxLoader implements IMoxLoader {
-
-        private final Class<?> testClass;
-        private final MoxLoadingConfig cfg;
-        private final MoxYamlMapper yamlMapper;
-        private final MoxClasspathRepository repo;
-
-        public HierarchicalMoxLoader(Class<?> testClass, MoxLoadingConfig cfg, MoxYamlMapper yamlMapper) {
-            this.testClass = Objects.requireNonNull(testClass, "testClass");
-            this.cfg = Objects.requireNonNull(cfg, "cfg");
-            this.yamlMapper = Objects.requireNonNull(yamlMapper, "yamlMapper");
-            this.repo = new MoxClasspathRepository(yamlMapper);
-        }
-
-        @Override
-        public LoadedSuite loadInitial() {
-            MoxClasspathRepository.RepoLoadedSuite res = repo.loadFor(testClass, cfg);
-            return new LoadedSuite(res.suite(), res.baseDir());
-        }
-
-        @Override
-        public RawMoxture findByName(String name, String currentBaseDir) {
-            MoxClasspathRepository.RepoRawMoxture res = repo.findFirstByNameFromBaseDir(testClass, cfg, currentBaseDir, name);
-            return res == null ? null : new RawMoxture(res.call(), res.baseDir(), res.displayPath());
-        }
-
-        @Override
-        @SuppressWarnings("unchecked")
-        public Map<String, Object> resolveInitialVars() 
-        {
-            // 1. Convert Class to Resource Path (e.g., "com/fhi/app/MyTest")
-            String pkg = (testClass.getPackageName() == null ? "" : testClass.getPackageName().replace('.', '/'));
-            String startPath = cfg.rootPath + (pkg.isEmpty() ? "" : "/" + pkg);
-            
-            // 2. Add the class sub-directory if configured
-            if (cfg.perTestClassDirectory) {
-                startPath += "/" + testClass.getSimpleName();
-            }
-
-            // 3. Get the list of potential files from the test class up to the root
-            // Logic: Get every moxtures.yaml from my package up to the root to merge variables
-            // Call the generic walkUp with the string path
-            List<String> candidates = Utils.Classpath.walkUp(startPath, cfg.rootPath, cfg.fileName);
-
-            Map<String, Object> last = null;
-
-            for (String cp : candidates) {
-                // 2. REPLACED: Tiered classloader logic is now encapsulated here
-                URL url = Utils.IO.findResource(cp, testClass);
-                if (url == null) continue;
-
-                try (InputStream in = url.openStream()) {
-                    // 3. REPLACED: Manual mapper.readValue is now Utils.Yaml.parseFile
-                    // This provides the "Big Red Box" error if a parent YAML is broken
-                    Model.MoxtureFile suite = yamlMapper.parseFile(in, "classpath:/" + cp);
-                    
-                    Map<String, Object> varsFromFile = suite.vars();
-                    if (varsFromFile != null && !varsFromFile.isEmpty()) {
-                        // Completely replace (closest wins)
-                        last = new LinkedHashMap<>(varsFromFile);
-                    }
-                } catch (IOException e) {
-                    throw new RuntimeException("Failed reading vars from " + cp, e);
-                }
-            }
-            return (last == null) ? Collections.emptyMap() : last;
-        }
-
-        // =========================================================================
-        // Configuration
-        // =========================================================================
-
-        /** 
-         * Immutable configuration used for locating moxtures on classpath. 
-         */
-        public static final class MoxLoadingConfig {
-            final String rootPath;                // e.g., "integrationtests2/moxtures"
-            final boolean perTestClassDirectory;  // true => add "/{TestClassName}"
-            final String fileName;                // "moxtures.yaml" (includes extension)
-
-            public MoxLoadingConfig(String rootPath, boolean perTestClassDirectory, String fileName) {
-                this.rootPath = trim(rootPath);
-                this.perTestClassDirectory = perTestClassDirectory;
-                this.fileName = trim(fileName);
-            }
-            private static String trim(String s) {
-                if (s == null) return "";
-                String out = s.trim();
-                while (out.startsWith("/")) out = out.substring(1);
-                while (out.endsWith("/")) out = out.substring(0, out.length() - 1);
-                return out;
-            }
-        }
-
-        // =========================================================================
-        // Internal Repository Logic
-        // =========================================================================
-
-        /**
-         * Classpath repository:
-         * - Build exact closest path: rootPath + "/" + {package as folders} + ["/{TestClassName}"] + "/" + fileName
-         * - Try TCCL, fall back to test class CL, then this class CL.
-         * - If not found, throw with a clear message.
-         * - Provides hierarchical name lookup helpers.
-         */
-        static final class MoxClasspathRepository {
-            private final MoxYamlMapper yamlMapper;
-
-            MoxClasspathRepository(MoxYamlMapper mapper) { this.yamlMapper = mapper; }
-
-            record RepoLoadedSuite(Model.MoxtureFile suite, String baseDir) {}
-            record RepoRawMoxture(Model.Moxture call, String baseDir, String displayPath) {}
-
-            public RepoLoadedSuite loadFor(Class<?> testClass, MoxLoadingConfig cfg) {
-                final String classpath = buildClosestClasspath(testClass, cfg);
-                final String displayPath = "classpath:/" + classpath;
-
-                URL url = Utils.IO.findResource(classpath, testClass);
-
-                // CHANGE: Instead of throwing IllegalStateException, handle the missing file gracefully
-                if (url == null) {
-                    log.warn("[Moxter] No specific moxtures.yaml found for {}. Searched at: {}. " +
-                            "Moxter will rely on parent/global moxtures if available.", 
-                            testClass.getName(), displayPath);
-                    
-                    // Return an empty suite so the engine doesn't crash during boot
-                    return new RepoLoadedSuite(new Model.MoxtureFile(), Utils.IO.parentDirOf(classpath));
-                }
-
-                log.debug("[Moxter] Loading {} -> {}", displayPath, url);
-
-                try (InputStream in = url.openStream()) {
-                    Model.MoxtureFile suite = yamlMapper.parseFile(in, displayPath);
-                    String baseDir = Utils.IO.parentDirOf(classpath);
-                    return new RepoLoadedSuite(suite, baseDir);
-                } catch (IOException e) {
-                    throw new RuntimeException("Failed loading moxtures: " + displayPath, e);
-                }
-            }
-
-           /* ===== Hierarchical lookup (helpers) ===== */
-
-            /** Returns candidate ancestor classpaths from closest → root (inclusive). */
-            List<String> candidateAncestorPaths(Class<?> testClass, MoxLoadingConfig cfg) {
-                List<String> out = new ArrayList<>();
-                String pkg = (testClass.getPackageName() == null ? "" : testClass.getPackageName().replace('.', '/'));
-
-                // 1) If per-class dir is enabled, add the closest file first
-                if (cfg.perTestClassDirectory) {
-                    out.add(cfg.rootPath + (pkg.isEmpty() ? "" : "/" + pkg) + "/" + testClass.getSimpleName() + "/" + cfg.fileName);
-                }
-
-                // 2) Then each package ancestor level: root/pkg/.../moxtures.yaml → ... → root/moxtures.yaml
-                if (!pkg.isEmpty()) {
-                    String[] parts = pkg.split("/");
-                    for (int i = parts.length; i >= 1; i--) {
-                        String prefix = String.join("/", java.util.Arrays.copyOf(parts, i));
-                        out.add(cfg.rootPath + "/" + prefix + "/" + cfg.fileName);
-                    }
-                }
-
-                // 3) Finally, the absolute root under cfg.rootPath
-                out.add(cfg.rootPath + "/" + cfg.fileName);
-                return out;
-            }
-
-
-            /** 
-             * Finds the first (closest) occurrence of a moxture by name, starting from an arbitrary baseDir. 
-             */
-            RepoRawMoxture findFirstByNameFromBaseDir(Class<?> testClass, MoxLoadingConfig cfg,
-                                                    String startBaseDir, String name) {
-                
-                // 1. Generate the candidate ancestor paths 
-                List<String> candidates = Utils.Classpath.walkUp(startBaseDir, cfg.rootPath, cfg.fileName);
-
-                for (String cp : candidates) {
-                    // We pass testClass to provide the secondary ClassLoader context
-                    URL url = Utils.IO.findResource(cp, testClass); 
-                    
-                    if (url == null) continue;
-
-                    try (InputStream in = url.openStream()) {
-                        Model.MoxtureFile raw = yamlMapper.parseFile(in, "classpath:/" + cp);
-
-                        if (raw.moxtures() == null || raw.moxtures().isEmpty()) continue;
-
-                        for (Model.Moxture f : raw.moxtures()) {
-                            if (name.equals(f.getName())) {
-                                String baseDir = Utils.IO.parentDirOf(cp);
-                                return new RepoRawMoxture(f, baseDir, "classpath:/" + cp);
-                            }
-                        }
-                    } catch (IOException e) {
-                        throw new RuntimeException("Failed reading " + cp, e);
-                    }
-                }
-                return null;
-            }
-
-
-            private static String buildClosestClasspath(Class<?> testClass, MoxLoadingConfig cfg) {
-                String pkg = (testClass.getPackageName() == null ? "" : testClass.getPackageName().replace('.', '/'));
-                String classDir = cfg.perTestClassDirectory ? ("/" + testClass.getSimpleName()) : "";
-                String base = (pkg.isEmpty() ? cfg.rootPath : (cfg.rootPath + "/" + pkg)) + classDir + "/";
-                String full = base + cfg.fileName;
-                log.debug("[Moxter] Expecting moxtures at: classpath:/{} for {}", full, testClass.getName());
-                return full;
-            }
-        }
-    }
 
 
 
     // #############################################################################################
-
-
-    /**
-     * Internal engine component responsible for the discovery, inheritance, and flattening 
-     * of moxture definitions.
-     * 
-     * <p>The {@code MoxResolver} handles the "Materialization" phase of the moxture lifecycle. 
-     * Its primary responsibility is to transform a declarative YAML definition—which may 
-     * use hierarchical inheritance via {@code basedOn}—into a fully resolved, executable 
-     * {@code EffectiveMoxture}.
-     * 
-     * <p><b>Key Responsibilities:</b>
-
-     *   - <b>Lookup:</b> Performs a "closest-first" search for moxtures by name, 
-     *        starting from the test class directory and walking up through parent packages 
-     *        to the root moxtures directory.
-     *   - <b>Deep Materialization:</b> Recursively resolves inheritance chains (via {@code basedOn} 
-     *        or {@code extends}). It merges parents and children using specific precedence rules:
-     *     <ul>
-     *       - Scalars (method, endpoint) are overridden by the child.
-     *       - Maps (headers, query, vars) are shallow-merged (child wins).
-     *       - Lists (save, moxtures) are replaced entirely by the child.
-     *     </ul>
-     *    
-     *    - <b>Cycle Detection:</b> Prevents infinite recursion in inheritance chains by 
-     *        maintaining a visiting stack and throwing an {@link IllegalStateException} 
-     *        if a cycle is detected.
-     *    - <b>Body Stacking:</b> Instead of merging JSON bodies during resolution, 
-     *        it builds a {@code bodyStack} to preserve the hierarchy. This allows the 
-     *        {@code BodyResolver} to handle variable interpolation and deep-merging 
-     *        correctly at runtime.
-
-     * 
-     * <p><b>Caching:</b> Resolved moxtures are cached in the {@code materializedCache} 
-     * to ensure performance and consistency throughout the test suite execution.
-     */
-    public static final class MoxResolver
-    {
-        // Reference to the root encompassing engine
-        private final Moxter moxter;
-
-        protected MoxResolver(Moxter moxter) {
-            this.moxter = moxter;
-        }
-
-        /**
-         * An internal container representing a fully prepped, executable moxture.
-         * (aka resolved/materialized/effective moxture)
-         *
-         * <p>This class pairs a completely materialized/effective moxture definition (where all 
-         * {@code basedOn} inheritance and hierarchical merging have been flattened) 
-         * with the physical classpath directory where it was discovered.
-         *
-         * <p>Keeping track of the {@code baseDir} is critical during the execution phase, 
-         * as it acts as the anchor point for resolving relative file imports (e.g., when 
-         * a body or multipart file is defined as {@code "classpath:request.json"}).
-         */
-        private static final class EffectiveMoxture 
-        {
-            /**
-             * The fully materialized moxture definition (with all 'basedOn' inheritance 
-             * deeply merged). 
-             */
-            final Model.Moxture moxt;
-
-            /** 
-             * The classpath directory where this moxture was discovered. 
-             * Used as the anchor point for resolving relative file imports.
-             */
-            final String baseDir;
-
-            EffectiveMoxture(Model.Moxture moxt, String baseDir) 
-            { this.moxt = moxt; this.baseDir = baseDir; 
-            }
-        }
-
-        /** 
-         * Key for memorizing materialized/effective moxtures by scope (baseDir) and name. 
-         */
-        private static final class EffectiveKey 
-        {
-            final String baseDir; // classpath dir where the moxture is defined
-            final String name;
-            
-            EffectiveKey(String baseDir, String name) { this.baseDir = baseDir; this.name = name; }
-            
-            public boolean equals(Object o)
-            { if(this==o)return true;
-                if(!(o instanceof EffectiveKey)) return false;
-                EffectiveKey k=(EffectiveKey)o;
-                return Objects.equals(baseDir,k.baseDir)&&Objects.equals(name,k.name); 
-            }
-            
-            public int hashCode(){ return Objects.hash(baseDir,name); }
-
-            public String toString(){ return baseDir+":"+name; }
-        }
-
-
-        /** 
-         * Resolve a name to a concrete, fully materialized moxture (closest → parents), with its baseDir. 
-         */
-        private EffectiveMoxture resolveByName(String name)
-        {
-            // 1) Try closest file first
-            Model.Moxture local = moxter.byName.get(name);
-            if (local != null) {
-                Model.Moxture mat = materializeDeep(local, moxter.moxturesBaseDir, new ArrayDeque<>(), new HashSet<>());
-                return new EffectiveMoxture(mat, moxter.moxturesBaseDir);
-            }
-
-            // 2) Delegate discovery to the Strategy Loader
-            IMoxLoader.RawMoxture found = moxter.loader.findByName(name, moxter.moxturesBaseDir);
-            if (found == null) {
-                throw new IllegalArgumentException("Moxture/Group not found by name: " + name);
-            }
-
-            // Ensure deep materialization from the found scope
-            Model.Moxture mat = materializeDeep(found.moxt(), found.baseDir(), new ArrayDeque<>(), new HashSet<>());
-            return new EffectiveMoxture(mat, found.baseDir());
-        }
-
-
-        /**
-         * Fully materialize a moxture: follow {@code basedOn} across files to any depth.
-         * Merges at each step with child precedence, using existing merge rules:
-         *  - Scalars: child overrides
-         *  - headers/query (maps): shallow merge, child wins
-         *  - save / moxtures (lists-of-names): REPLACE
-         *  - body: deep-merge objects; arrays/scalars replace
-         *
-         * Cycle-safe with a visiting set + stack (human-friendly chain on error).
-         */
-        private Model.Moxture materializeDeep(Model.Moxture node,
-                                                String nodeBaseDir,
-                                                Deque<EffectiveKey> stack,
-                                                Set<EffectiveKey> visiting)
-        {
-            if (node == null) return null;
-
-            final String parentName = Utils.Misc.firstNonBlank(node.getBasedOn(), node.getBasedOn());
-            final String nodeName = (node.getName() == null || node.getName().isBlank()) ? "<unnamed>" : node.getName();
-            final EffectiveKey key = new EffectiveKey(nodeBaseDir, nodeName);
-
-            // Cache
-            Model.Moxture cached = moxter.materializedCache.get(key);
-            if (cached != null) return cached;
-
-            // No inheritance → normalize + cache
-            if (parentName == null || parentName.isBlank()) {
-                Model.Moxture normalized = cloneWithoutBasedOn(node);
-                moxter.materializedCache.put(key, normalized);
-                return normalized;
-            }
-
-            // Cycle guard
-            if (!visiting.add(key)) {
-                StringBuilder sb = new StringBuilder("Cycle in basedOn: ");
-                for (EffectiveKey k : stack) sb.append(k).append(" -> ");
-                sb.append(key);
-                throw new IllegalStateException(sb.toString());
-            }
-            stack.addLast(key);
-
-            
-            // Resolve parent by searching via the Strategy Loader
-            IMoxLoader.RawMoxture parentResolved = moxter.loader.findByName(parentName, nodeBaseDir);
-
-            if (parentResolved == null) {
-                throw new IllegalArgumentException(
-                    "basedOn refers to unknown moxture '" + parentName + "' (searched from " + nodeBaseDir + ")"
-                );
-            }
-
-            // Recurse
-            Model.Moxture materializedParent =
-                    materializeDeep(parentResolved.moxt(), parentResolved.baseDir(), stack, visiting);
-            // Merge parent → child (child overrides)
-            Model.Moxture merged = new Model.Moxture();
-            merged.setName(node.getName());
-
-            // Protocol: check: redefeining the protocol at child level is not allowed (makes no sense)
-            String parentProto = materializedParent.getProtocol();
-            String childProto = node.getProtocol();
-            if (childProto != null && !childProto.isBlank() && parentProto != null && !parentProto.isBlank()) {
-                if (!childProto.equalsIgnoreCase(parentProto)) {
-                    throw new IllegalStateException(String.format(
-                        "Moxture '%s' attempts to override parent protocol '%s' with '%s'. Protocol overriding is not allowed.",
-                        nodeName, parentProto, childProto
-                    ));
-                }
-            }
-            merged.setProtocol(Utils.Misc.firstNonBlank(childProto, parentProto));
-
-            merged.setMethod(Utils.Misc.firstNonBlank(node.getMethod(), materializedParent.getMethod()));
-            merged.setEndpoint(Utils.Misc.firstNonBlank(node.getEndpoint(), materializedParent.getEndpoint()));
-            merged.setExpect(node.getExpect() != null ? node.getExpect() : materializedParent.getExpect());
-            merged.setOptions(node.getOptions() != null ? node.getOptions() : materializedParent.getOptions());
-            merged.setHeaders(Utils.Misc.mergeMap(materializedParent.getHeaders(), node.getHeaders()));
-            merged.setVars(Utils.Misc.mergeMap(materializedParent.getVars(), node.getVars()));
-            merged.setQuery(Utils.Misc.mergeMap(materializedParent.getQuery(), node.getQuery()));
-            // For "save": replace instead of merge (no inheritance unless explicitly set on the child)
-            merged.setSave(node.getSave() != null ? node.getSave() : materializedParent.getSave());
-            // For "moxtures" (group list): replace instead of merge
-            merged.setMoxtures(node.getMoxtures() != null ? node.getMoxtures() : materializedParent.getMoxtures());
-            merged.setMultipart(node.getMultipart() != null ? node.getMultipart() : materializedParent.getMultipart());
-
-            // Merge options block:
-            Model.RootOptionsDef parentOpts = materializedParent.getOptions();
-            Model.RootOptionsDef childOpts = node.getOptions();
-            
-            if (parentOpts != null || childOpts != null) {
-                Model.RootOptionsDef mergedOpts = new Model.RootOptionsDef();
-                if (parentOpts == null) parentOpts = new Model.RootOptionsDef();
-                if (childOpts == null) childOpts = new Model.RootOptionsDef();
-
-                mergedOpts.setVerbose(childOpts.getVerbose() != null ? childOpts.getVerbose() : parentOpts.getVerbose());
-                mergedOpts.setAllowFailure(childOpts.getAllowFailure() != null ? childOpts.getAllowFailure() : parentOpts.getAllowFailure());
-                merged.setOptions(mergedOpts);
-            }
-
-            // Body block: Build the stack instead of merging nodes
-            List<JsonNode> combinedStack = new ArrayList<>(materializedParent.getBodyStack());
-            if (node.getBody() != null) {
-                combinedStack.add(node.getBody());
-            }
-            merged.setBodyStack(combinedStack);
-            
-            // Keep the 'body' field pointing to the latest definition for backward compatibility
-            merged.setBody(node.getBody() != null ? node.getBody() : materializedParent.getBody());
-
-            // Clear inheritance markers on the final node
-            merged.setBasedOn(null);
-
-            validateMoxture(merged);
-
-            moxter.materializedCache.put(key, merged);
-            stack.removeLast();
-            visiting.remove(key);
-            return merged;
-        }
-
-        /** 
-         * Ensure a moxture is either a group OR a single call, not both. 
-         */
-        private static void validateMoxture(Model.Moxture f) {
-            boolean isGroup = f.getMoxtures() != null;
-            boolean isHttp  = f.getEndpoint() != null; // this field is mandatory 
-/* OLD
-            (f.getEndpoint() != null && !f.getEndpoint().isBlank()) ||
-                (f.getMethod()   != null && !f.getMethod().isBlank())   ||
-                f.getBody() != null ||
-                f.getExpectedStatus() != null ||
-                (f.getHeaders() != null && !f.getHeaders().isEmpty()) ||
-                (f.getQuery()   != null && !f.getQuery().isEmpty())   ||
-                (f.getSave()    != null && !f.getSave().isEmpty());
- */                
-            if (isGroup && isHttp) {
-                throw new IllegalStateException("Moxture '" + f.getName() + "' cannot define both 'moxtures' and HTTP fields");
-            }
-        }
-
-
-        /**
-         * Creates a safe, shallow clone of a moxture definition, completely detaching 
-         * it from its inheritance chain while preserving 
-         * the deeply-merged bodies (=> 'bodyStack')
-         * 
-         * "Detaching" means we resolve the inheritance once, copy the data, and destroy
-         * the pointer to the parent so the execution engine operates blazingly fast on 
-         * a flat object. 
-         * 
-         * "Preserving the stack" means we deliberately delay merging the JSON bodies
-         * until the exact millisecond the HTTP request fires.
-         * 
-         * When and why this is used:
-         * 1. The Caching Phase (Static):  Inside materializeDeep, when 
-         *     a moxture has no parent (or we reach the top of an inheritance chain), 
-         *     we clone it before placing it in the materializedCache. This 
-         *     protects the raw, parsed YAML definitions from accidental mutation.
-         * 2. The Execution Phase (Runtime): Inside MoxtureCaller.blendRuntimeOptions, 
-         *    before a moxture is actually executed, we fetch the static version from 
-         *    the cache and clone it. This provides a disposable "Effective Spec" where 
-         *    runtime Java API overrides (like .allowFailure(true) or .verbose(true)) 
-         *    can be safely applied without permanently poisoning the engine's shared cache 
-         *    for subsequent tests.
-         * 
-         * @param src The source moxture to clone.
-         * @return A disposable, standalone clone safe for runtime mutation.
-         */
-        private static Model.Moxture cloneWithoutBasedOn(Model.Moxture src) {
-            Model.Moxture c = new Model.Moxture();
-            c.setName(src.getName());
-            c.setProtocol(src.getProtocol());
-            c.setMethod(src.getMethod());
-            c.setEndpoint(src.getEndpoint());
-            c.setHeaders(src.getHeaders()==null?null:new LinkedHashMap<>(src.getHeaders()));
-            c.setVars(src.getVars() == null ? null : new LinkedHashMap<>(src.getVars()));
-            c.setQuery(src.getQuery()==null?null:new LinkedHashMap<>(src.getQuery()));
-            c.setSave(src.getSave()==null?null:new LinkedHashMap<>(src.getSave()));
-            c.setExpect(src.getExpect());
-            if (src.getOptions() != null) {
-                Model.RootOptionsDef opt = new Model.RootOptionsDef();
-                opt.setAllowFailure(src.getOptions().getAllowFailure());
-                opt.setVerbose(src.getOptions().getVerbose());
-                c.setOptions(opt);
-            }
-            c.setMoxtures(src.getMoxtures()==null?null:new ArrayList<>(src.getMoxtures()));
-            c.setMultipart(src.getMultipart() == null ? null : new ArrayList<>(src.getMultipart()));
-            c.setBasedOn(null);
-
-            //# OLD c.setBody(src.getBody()); // JSON nodes are fine to share for our usage
-            // THE FIX: Prevent Shared Mutable State
-            // Use Jackson's deepCopy() so runtime body modifications don't poison the cache:
-            c.setBody(src.getBody() == null ? null : src.getBody().deepCopy());
-
-            // Preserve the body stack if it was already built!
-            if (src.getBodyStack() != null && !src.getBodyStack().isEmpty()) {
-                c.setBodyStack(new ArrayList<>(src.getBodyStack()));
-            } else if (src.getBody() != null) {
-                c.getBodyStack().add(src.getBody());
-            }
-
-            return c;
-        }
-
-        /**
-         * Recursively merges two JSON nodes, with the child node taking precedence.
-         * 
-         * <p>Merges nested ObjectNodes. For arrays and value nodes (strings, numbers), 
-         * the child simply replaces the parent.
-         */
-        private static JsonNode deepMergeBody(MoxYamlMapper mapper, JsonNode parent, JsonNode child) {
-            // 1. Coerce to objects if they are JSON strings (though resolveSingleNode usually handles this)
-            parent = Utils.Json.coerceJsonTextToNode(mapper, parent);
-            child  = Utils.Json.coerceJsonTextToNode(mapper, child);
-
-            if (child == null) return parent;
-            if (parent == null) return child;
-
-            // 2. Recursive Object Merge
-            if (child.isObject() && parent.isObject()) {
-                ObjectNode merged = (ObjectNode) parent.deepCopy();
-                Iterator<Map.Entry<String, JsonNode>> fields = child.fields();
-                while (fields.hasNext()) {
-                    Map.Entry<String, JsonNode> entry = fields.next();
-                    String key = entry.getKey();
-                    JsonNode childVal = entry.getValue();
-                    JsonNode parentVal = merged.get(key);
-
-                    if (childVal.isObject() && parentVal != null && parentVal.isObject()) {
-                        merged.set(key, deepMergeBody(mapper, parentVal, childVal));
-                    } else {
-                        merged.set(key, childVal.deepCopy());
-                    }
-                }
-                return merged;
-            }
-
-            // 3. Recursive Array Merge (Merged by index)
-            if (child.isArray() && parent.isArray()) {
-                ArrayNode parentArr = (ArrayNode) parent;
-                ArrayNode childArr = (ArrayNode) child;
-                ArrayNode mergedArr = parentArr.deepCopy();
-
-                for (int i = 0; i < childArr.size(); i++) {
-                    JsonNode childItem = childArr.get(i);
-                    if (i < mergedArr.size()) {
-                        // If both items at this index exist, merge them recursively
-                        mergedArr.set(i, deepMergeBody(mapper, mergedArr.get(i), childItem));
-                    } else {
-                        // If child has more items, append them
-                        mergedArr.add(childItem.deepCopy());
-                    }
-                }
-                return mergedArr;
-            }
-
-            // 4. Fallback: Child replaces Parent (Scalars or Mismatched Types)
-            return child.deepCopy();
-        }
-
-    }
-
-
     // #############################################################################################
-
-
-
 
     /**
      * A fluent builder offered to end-used to configure and execute Moxture calls.
@@ -1376,22 +543,21 @@ public final class Moxter
      * 
      * <p><b>Example Usage:</b></p>
      * <pre>{@code
-     * mx.caller()
-     *   .lax(true)
-     *   .withPrintReturn(true)
-     *   .with("in_petName", "Rex")
-     *   .call("create_pet_for_owner") // Triggers the call
-     *   .assertVar("petId", id -> id.isNotNull());
+     *      mx.caller()
+     *        .with("p.petName", "Rex")
+     *        .call("create_pet_for_owner") // Triggers the call
+     *        .assertBody("$.petId")
+     *            .isNotNull().and()
+     *         .assertBody("$.name")
+     *            .isEqualToInterpolate("${p.petName}");
      * }</pre>
      */
     public static class MoxCaller 
     {
         // Reference to the root encompassing engine
         private final Moxter moxter;
-
         private Map<String, Object> varOverrides = new LinkedHashMap<>();
-        private Object expectedStatusOverride = null;
-
+        private Object   expectedStatusOverride = null;
         private Boolean allowFailure = null; // Not boolean
         private Boolean verbose = null; // replacing printReturn
         private boolean jsonPathLax = false;
@@ -1410,6 +576,63 @@ public final class Moxter
          */
         private Authentication callAuth = null;
 
+        /**
+         * @param moxter      The encompassing Engine.
+         */
+        protected MoxCaller(Moxter moxter) {
+            this(new Builder(moxter));
+        }
+
+       /**
+         * Private "Copy Constructor" used for forking. 
+         * Instead of a giant parameter list, it takes a builder object.
+         */
+        private MoxCaller(Builder b) {
+            this.moxter                 = b.moxter;
+            this.varOverrides           = Collections.unmodifiableMap(new LinkedHashMap<>(b.vars));
+            this.callAuth               = b.auth;
+            this.expectedStatusOverride = b.status;
+            this.allowFailure           = b.fail;
+            this.verbose                = b.verb;
+            this.jsonPathLax            = b.lax;
+        }
+
+        private Builder toBuilder() {
+            return new Builder(this);
+        }
+        
+
+        private static class Builder {
+            private final Moxter moxter;
+            private Map<String, Object> vars = new LinkedHashMap<>();
+            private Authentication auth;
+            private Object status;
+            private Boolean fail;
+            private Boolean verb;
+            private boolean lax;
+
+            Builder(Moxter moxter) { this.moxter = moxter; }
+
+            Builder(MoxCaller src) {
+                this.moxter = src.moxter;
+                this.vars.putAll(src.varOverrides);
+                this.auth = src.callAuth;
+                this.status = src.expectedStatusOverride;
+                this.fail = src.allowFailure;
+                this.verb = src.verbose;
+                this.lax = src.jsonPathLax;
+            }
+
+            Builder var(String k, Object v) { this.vars.put(k, v); return this; }
+            Builder vars(Map<String, Object> v) { if(v != null) this.vars.putAll(v); return this; }
+            Builder auth(Authentication a) { this.auth = a; return this; }
+            Builder verbose(boolean v) { this.verb = v; return this; }
+            Builder status(Object s) { this.status = s; return this; }
+            Builder allowFailure(boolean b) { this.fail = b; return this; }
+            MoxCaller build() { return new MoxCaller(this); }
+        }
+
+
 
         /**
          * Nested builder for overriding moxture expectations fluently.
@@ -1426,20 +649,10 @@ public final class Moxter
                 MoxCaller.this.expectedStatusOverride = status;
                 return MoxCaller.this;
             }
-            
             // Future expansion: public MoxtureCaller body(...) { ... }
         }
 
 
-
-        /**
-         * For end-users: use Moxter.caller() instead
-         * 
-         * @param moxter      The encompassing Engine.
-         */
-        protected MoxCaller(Moxter moxter) {
-            this.moxter = moxter;
-        }
 
         /**
          * Toggles 'allowFailure' mode for this specific call.
@@ -1449,18 +662,20 @@ public final class Moxter
          * 
          * Lets us have "best effort" moxtures the good completion of which are not
          * strictly mandatory.
+         * 
+         * @return a new instance of {@link MoxCaller} for fluent method chaining.
          */
         public MoxCaller allowFailure(boolean allowFailure) {
-            this.allowFailure = allowFailure;
-            return this;
+            return toBuilder().allowFailure(allowFailure).build();
         }
 
         /**
          * Increases the console feedback (disregarding logger threshold)
+         * 
+         * @return a new instance of {@link MoxCaller} for fluent method chaining.
          */
         public MoxCaller verbose(boolean verbose) {
-            this.verbose = verbose;
-            return this;
+            return toBuilder().verbose(verbose).build();
         }
 
         /**
@@ -1486,11 +701,10 @@ public final class Moxter
          * }</pre>
          * 
          * @param auth The Spring Security Authentication object representing the identity for this specific call.
-         * @return this {@link MoxCaller} instance for fluent method chaining.
+         * @return a new instance of {@link MoxCaller} for fluent method chaining.
          */
         public MoxCaller withAuth(Authentication auth) {
-            this.callAuth = auth;
-            return this;
+            return toBuilder().auth(auth).build();
         }
 
 
@@ -1500,7 +714,7 @@ public final class Moxter
          * If true, failed JsonPath extractions will return null rather than throwing an exception.
          * 
          * @param val true to enable lax JsonPath evaluation.
-         * @return this {@link MoxCaller} for chaining.
+         * @return a new instance of {@link MoxCaller} for fluent method chaining.
          */
         public MoxCaller withJsonPathLax(boolean val) {
             this.jsonPathLax = val;
@@ -1518,11 +732,10 @@ public final class Moxter
          * 
          * 
          * @param overrides A map of keys and values placeholders.
-         * @return this {@link MoxCaller} for chaining.
+         * @return a new instance of {@link MoxCaller} for fluent method chaining.
          */
         public MoxCaller withVars(Map<String, Object> overrides) {
-            if (overrides != null) this.varOverrides.putAll(overrides);
-            return this;
+            return toBuilder().vars(overrides).build();
         }
 
         /**
@@ -1530,20 +743,20 @@ public final class Moxter
          * 
          * @param key   The variable name (used as ${key} in YAML).
          * @param value The value to inject.
-         * @return this {@link MoxCaller} for chaining.
+         * @return a new instance of {@link MoxCaller} for fluent method chaining.
          */
         public MoxCaller withVar(String key, Object value) {
-            this.varOverrides.put(key, value);
-            return this;
+            return toBuilder().var(key, value).build();
         }
 
         /**
          * Overrides the expected HTTP status code(s) defined in the YAML moxture.
-         * * @param status Can be an Integer (201), a String ("4xx"), or a List ([200, 204]).
+         * 
+         * @param status Can be an Integer (201), a String ("4xx"), or a List ([200, 204]).
+         * @return a new instance of {@link MoxCaller} for fluent method chaining.
          */
         public MoxCaller expect(Object status) {
-            this.expectedStatusOverride = status;
-            return this;
+            return toBuilder().status(status).build();
         }
 
         /**
@@ -1553,6 +766,47 @@ public final class Moxter
         public ExpectBuilder expect() {
             return new ExpectBuilder();
         }
+
+
+
+        /**
+         * The specific Spring Security Authentication bound to this individual moxture caller.
+         * 
+         * <p><b>Resolution Priority:</b> When the authentication is set 
+         * (via {@link #withAuth(Authentication)}), it takes absolute precedence for the 
+         * duration of this caller's life. It effectively shadows:
+         * - The engine-level {@code authSupplier} (the default identity for this Moxter instance)
+         * - The global {@code SecurityContextHolder} (the standard Spring Security context)
+         * 
+         * <p>This isolation ensures that a specific user (e.g., User B) can attempt actions 
+         * without permanently mutating the thread's global security state or the engine's 
+         * default user.</p>
+         */
+        // TODO merge javadocs
+        /**
+         * <b>Identity Resolution</b>
+         *
+         * <p> Determines the final security identity for the current call by 
+         * evaluating the three-tier precedence chain.
+         *
+         * <p> <b>Precedence:</b>
+         * - 1. Call-Scoped: Provided via .withAuth().
+         * - 2. Engine-Scoped: Provided during Moxter construction.
+         * - 3. Global: The standard Spring SecurityContextHolder.
+         */
+        private Authentication resolveIdentity() {
+            // 1. Highest Priority: The Call-Scoped Override  (from mx.caller().withAuth(...))
+            if (this.callAuth != null) return this.callAuth;
+            
+            // 2. Fallback: The Engine-Scoped Supplier  (from Moxter.forTestClass().authentication(...))
+            if (this.moxter.builderAuthSupplier != null) {
+                try { return this.moxter.builderAuthSupplier.get(); } catch (Exception ignore) {}
+            }
+            
+            // 3. Last Resort: The Global Thread Context
+            return SecurityContextHolder.getContext().getAuthentication();
+        }
+
 
 
         /**
@@ -1614,9 +868,33 @@ public final class Moxter
          */
         public MoxtureResult call(String moxtureName) 
         {
-            MoxRuntime.ResponseEnvelope env = callInternal(moxtureName, varOverrides);
+            try {
+                // 1. Execute the full chain (including groups/recursion)
+                Wire.ResponseEnvelope env = callInternal(moxtureName, varOverrides);
 
-            return new MoxtureResult(env, moxter, moxtureName, varOverrides);
+                // 2. Create the result (this takes a safe snapshot of varOverrides)
+                return new MoxtureResult(env, moxter, moxtureName, varOverrides);
+            } 
+            finally {
+
+/* REMOVED: we have moved into an immutable model where a new MoxCaller is instantiated
+            on each fluent call.
+
+
+
+                // 3. Erase the call scope variables immediately after return.
+                // This ensures the caller instance is clean for its next .call()
+                // (E.g. in cases where the caller is re-used)
+                this.varOverrides.clear(); 
+                
+                // Also reset custom status expectations so they don't leak
+                this.expectedStatusOverride = null;
+                
+                // Reset flags too
+                this.allowFailure = null;
+                this.verbose = null;
+*/
+            }
         }
 
 
@@ -1626,112 +904,119 @@ public final class Moxter
          * @param overrides
          * @return
          */
-        private MoxRuntime.ResponseEnvelope callInternal(String moxtureName, Map<String, Object> overrides) 
+        private Wire.ResponseEnvelope callInternal(String moxtureName, Map<String, Object> overrides) 
         {
             Objects.requireNonNull(moxtureName, "name");
-            MoxResolver.EffectiveMoxture r = this.moxter.moxResolver.resolveByName(moxtureName);
 
-            // ---> THE BLENDER <---
-            // Merge the YAML spec with the runtime Java overrides
-            Model.Moxture finalSpec = blendInRuntimeOptions(r.moxt);
+            // -------------------------------------------------------------------------
+            // 1. Phase 1 : Linking
+            // -------------------------------------------------------------------------
 
-            // 1. Build this moxture's local overrides.
-            // The moxture's own YAML vars yield to the passed-in overrides.
-            // (If this is a child in a group, callScopedOverrides contains the group's vars)
-            Map<String, Object> localOverrides = new LinkedHashMap<>();
+            // Resolve the moxture definition from the hierarchical cache
+            // - Done here and not earlier: => lazy-loaded, plus it's also cached.
+            // - By calling link inside callInternal, we ensure that only the moxtures strictly 
+            // required for the current test are ever processed, and that we don't fall victim
+            // to "zombie" yaml moxtures: If we moved linking to the Moxter constructor (Eager),
+            // the engine would have to scan and link every YAML file on your classpath at startup. 
+            // This would not only slow down test initialization but could also lead to errors 
+            // from "Zombie" files—broken YAMLs in your project that aren't even used by the
+            // current test.
+            MoxLinker.LinkedMoxture linked = this.moxter.moxLinker.linkByName(moxtureName);
 
-            // Build the current running context (globals + call overrides) to resolve interpolations
-            Map<String, Object> runningContext = new LinkedHashMap<>(this.moxter.vars().view());
-            if (overrides != null) {
-                runningContext.putAll(overrides);
+            // -------------------------------------------------------------------------
+            // 2. Phase 2: Blend-in run-time options/settings
+            // -------------------------------------------------------------------------
+            // Merge the YAML spec with the current runtime options (expect status, etc.)
+            Model.Moxture finalSpec = blendInRuntimeOptions(linked.moxt);
+
+            // -------------------------------------------------------------------------
+            // 3. Phase 3: Build the variable context (scopes: call, moxture, global)
+            // -------------------------------------------------------------------------
+            Map<String, Object> finalCallContext = buildFinalContext(finalSpec, overrides);
+
+            // Create the layered view for Phase 2/3 (allows extraction to write back to globals)
+            Map<String, Object> mergedVars = new MoxVars.CallScopedVars(
+                                        finalCallContext, this.moxter.vars, moxter.vars()::put);
+
+
+
+            // -------------------------------------------------------------------------
+            // 4. Phase 4: Handle Group Moxtures by recursing
+            // -------------------------------------------------------------------------
+            if (isGroupMoxture(finalSpec)) {
+                return executeGroup(moxtureName, finalSpec, finalCallContext);
             }
-            
-            // Local vars provided by the moxture (or the group of moxtures):
-            if (finalSpec.getVars() != null) {
-                finalSpec.getVars().forEach((k, v) -> {
-                    if (v instanceof String s) {
-                        // Resolve aliases like "{{ownerId}}" to their actual values
-                        localOverrides.put(k, Templating.interpolate(s, runningContext));
-                    } else {
-                        localOverrides.put(k, v);
-                    }
-                });
-            }
 
-            // Add vars provided by the call or by the previous step (in the case of a group moxture)
-            // These take precedence over local vars.
-            if (overrides != null) {
-                localOverrides.putAll(overrides);
-            }
+            // -------------------------------------------------------------------------
+            // 4b. Continue: Handle Single Moxtures
+            // -------------------------------------------------------------------------
 
-            // 2. Call
-            MoxResolver.validateMoxture(finalSpec);
-            boolean isAllowFailure = finalSpec.getOptions() != null && Boolean.TRUE.equals(finalSpec.getOptions().getAllowFailure());
+            boolean isAllowFailure =    finalSpec.getOptions() != null 
+                                    && Boolean.TRUE.equals(finalSpec.getOptions()
+                                                                    .getAllowFailure());
 
-            // 2.1. If group Moxture
-            if (isGroupMoxture(finalSpec)) 
-            {   final String label = "group '" + moxtureName + "'" + (isAllowFailure ? " (allowFailure)" : "");
-                
-                // We pass THIS group's successfully merged localScope down to its children.
-                // To the children, these act as their "callScopedOverrides".
-                for (String childMoxtureName : finalSpec.getMoxtures()) 
-                {   try 
-                    {   // Recurse
-                        callInternal(childMoxtureName, localOverrides);
-                    } 
-                    catch (Throwable t) 
-                    {   if (isAllowFailure) {
-                            log.warn("[Moxter] (allowFailure) {} → child '{}' failed — skipping. Cause: {}", label, childMoxtureName, t.toString());
-                        } else {
-                            if (t instanceof RuntimeException) throw (RuntimeException) t;
-                            throw new RuntimeException("Error executing moxture '" + childMoxtureName + "' in " + label, t);
-                        }
-                    }
-                }
-                return null;
-            }
-            // 2.2. Else: single moxture
-            else
-            {   // Create the Layered View (Local -> Global) using the fluent facade for writes
-                Map<String, Object> mergedVars = new MoxVars.CallScopedVars(localOverrides, this.moxter.vars, moxter.vars()::put);
-                try 
+            try
+            {
+                // -------------------------------------------------------------------------
+                // 5. Phase 5: Resolving
+                // -------------------------------------------------------------------------
+                // Uses MoxResolver to create a literal, executable snapshot.
+                // Placeholders are replaced; types are unboxed.
+                Model.Moxture resolved = MoxResolver.resolve(
+                    finalSpec, linked.baseDir, finalCallContext, 
+                    this.moxter.bodyResolver, this.moxter.templator
+                );
+
+                // -------------------------------------------------------------------------
+                // 6. Phase 6: Resolve identity
+                // -------------------------------------------------------------------------
+                Authentication finalAuth = resolveIdentity();
+
+
+                // -------------------------------------------------------------------------
+                // 7. Phase 7: Execute
+                // -------------------------------------------------------------------------
+                Wire.ResponseEnvelope env = findExecutor(resolved)
+                                                    .execute(resolved, linked.baseDir, 
+                                                            finalCallContext, finalAuth);
+                if (env != null) 
                 {
-                    // Phase 1: Network I/O
-                    MoxRuntime.IProtocolExecutor executor = this.moxter.executors.stream()
-                            .filter(e -> e.supports(finalSpec))
-                            .findFirst()
-                            .orElseThrow(() -> new IllegalStateException(
-                                "No executor registered for protocol: " + (finalSpec.getProtocol() == null ? "http" : finalSpec.getProtocol())
-                            ));
-                    MoxRuntime.ResponseEnvelope env = executor.execute(finalSpec, r.baseDir, mergedVars, this.callAuth);
+                    Configuration jsonPathConfig = jsonPathLax 
+                        ? JSONPATH_CONF_LAX 
+                        : JSONPATH_CONF_STRICT;
 
-                    if (env != null) {
-                        Configuration jsonPathConfig = jsonPathLax ? JSONPATH_CONF_LAX : JSONPATH_CONF_STRICT;
+                    // -------------------------------------------------------------------------
+                    // 8. Phase 8: Extraction (save variables)
+                    // -------------------------------------------------------------------------
+                    this.moxter.extractor.extractAndSave(finalSpec, env, mergedVars, 
+                                                         moxtureName, jsonPathConfig);
 
-                        // Phase 2: State Extraction (Mutate Variables)
-                        this.moxter.extractor.extractAndSave(finalSpec, env, mergedVars, moxtureName, jsonPathConfig);
-
-                        // Phase 3: Evaluation (Assertions)
-                        try {
-                            this.moxter.verifier.verifyExpectations(finalSpec, env, r.baseDir, mergedVars, moxtureName, jsonPathConfig);
-                        } catch (AssertionError e) {
-                            if (isAllowFailure) {
-                                log.warn("[Moxter] (allowFailure) expectation failed for '{}': {}", moxtureName, e.getMessage());
-                            } else {
-                                throw e;
-                            }
+                    // -------------------------------------------------------------------------
+                    // 9. Phase 9: Assertions 
+                    // -------------------------------------------------------------------------
+                    try {
+                        this.moxter.verifier.verifyExpectations(finalSpec, env, 
+                                            linked.baseDir, mergedVars, moxtureName, jsonPathConfig);
+                    } 
+                    catch (AssertionError e) {
+                        if (isAllowFailure) {
+                            log.warn("[Moxter] (allowFailure) expectation failed for '{}': {}", moxtureName, e.getMessage());
+                        } 
+                        else {
+                            throw e;
                         }
                     }
-                    return env;
-                } 
-                catch (Throwable t) 
-                {   if (isAllowFailure) {
-                        log.warn("[Moxter] (allowFailure) single moxture '{}' failed — skipping. Cause: {}", moxtureName, t.toString());
-                        return null;
-                    }
-                    if (t instanceof RuntimeException) throw (RuntimeException) t;
-                    throw new RuntimeException("Error executing moxture '" + moxtureName + "'", t);
                 }
+                return env;
+            }
+            catch (Throwable t) 
+            {
+                if (isAllowFailure) {
+                    log.warn("[Moxter] (allowFailure) moxture '{}' failed. Cause: {}", moxtureName, t.toString());
+                    return null;
+                }
+                if (t instanceof RuntimeException) throw (RuntimeException) t;
+                throw new RuntimeException("Error executing moxture '" + moxtureName + "'", t);
             }
         }
 
@@ -1743,12 +1028,99 @@ public final class Moxter
 
 
         /**
+         * Aggregates variables from three distinct layers to create a single prioritized 
+         * "Source of Truth" for the current call.
+         *
+         * <p> <b>Precedence Logic:</b>
+         * - 1. Global Variables: The base layer from the engine's long-term memory.
+         * - 2. YAML Defaults: Moxture-level variables. Supports nested references (e.g., 
+         * {@code url: ${global.domain}/api}) using the context built so far.
+         * - 3. Java Overrides: Highest priority. Any key provided here shadows the previous 
+         * layers to enforce the caller's specific intent.
+         */
+        private Map<String, Object> buildFinalContext(Model.Moxture finalSpec, 
+                                                      Map<String, Object> overrides) {
+            Map<String, Object> context = new LinkedHashMap<>();
+            
+            // Layer 1: Global Variables (Lowest priority)
+            context.putAll(this.moxter.vars().view());
+
+            // Layer 2: Moxture-level Variables (YAML Defaults) (with internal interpolation)
+            if (finalSpec.getVars() != null) {
+                finalSpec.getVars().forEach((k, v) -> {
+                    if (v instanceof String s) {
+                        context.put(k, IMoxTemplator.interpolate(s, context));
+                    } else {
+                        context.put(k, v);
+                    }
+                });
+            }
+
+            // Layer 3: Caller-level Overrides (Highest priority - Java overrides ALWAYS win)
+            if (overrides != null) {
+                context.putAll(overrides);
+            }
+
+            return context;
+        }
+
+        /**
+         * Recursively executes a list of moxtures defined as a group.
+         *
+         * <p> Each child is executed using the merged context of the parent, ensuring 
+         * that variables flow down through the group hierarchy. 
+         * Honors the <b>allowFailure</b> flag: if a child fails in a "best-effort" group, 
+         * it is logged as a warning instead of terminating the suite.
+         */
+        private Wire.ResponseEnvelope executeGroup(String groupName, Model.Moxture spec,
+                                                         Map<String, Object> context) {
+            boolean isAllowFailure =    spec.getOptions() != null 
+                                     && Boolean.TRUE.equals(spec.getOptions().getAllowFailure());
+            String label = "group '" + groupName + "'" + (isAllowFailure ? " (allowFailure)" : "");
+
+            // Group Logic: Pass the successfully merged context down to all children
+            for (String childName : spec.getMoxtures()) {
+                try {
+                    // Recursive call back to the orchestrator
+                    callInternal(childName, context);
+                } catch (Throwable t) {
+                    if (isAllowFailure) {
+                        log.warn("[Moxter] (allowFailure) {} → child '{}' failed: {}", label, childName, t.toString());
+                    } else {
+                        if (t instanceof RuntimeException re) throw re;
+                        throw new RuntimeException("Error executing child '" + childName + "' in " + label, t);
+                    }
+                }
+            }
+            return null; // Groups do not return a response envelope
+        }
+
+        /**
+         * <b>Protocol Dispatcher</b>
+         *
+         * <p> Locates the appropriate protocol executor for a resolved moxture.
+         *
+         * <p> Scans the registered executors (HTTP, STOMP, etc.) to find the one that 
+         * supports the moxture's protocol.
+         *
+         * @throws IllegalStateException If no executor is found for the given protocol.
+         */
+        private Wire.IProtocolExecutor findExecutor(Model.Moxture spec) {
+            return this.moxter.executors.stream()
+                .filter(e -> e.supports(spec))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("No executor for protocol: " + spec.getProtocol()));
+        }
+
+
+
+        /**
          * Blends the runtime Java API overrides into the static YAML moxture options.
          * 
          * Creates a shallow clone to avoid mutating the engine's cached definitions.
          */
         private Model.Moxture blendInRuntimeOptions(Model.Moxture staticMoxt) {
-            Model.Moxture finalSpec = MoxResolver.cloneWithoutBasedOn(staticMoxt);
+            Model.Moxture finalSpec = Helper.cloneWithoutBasedOn(staticMoxt);
             Model.RootOptionsDef staticOpts = finalSpec.getOptions();
             Model.RootOptionsDef mergedOpts = new Model.RootOptionsDef();
             
@@ -1778,6 +1150,9 @@ public final class Moxter
     }
 
 
+
+    // #############################################################################################
+    // #############################################################################################
 
     /**
      * A fluent facade for managing Moxter's globally-scoped OR moxture-locally-scoped, variables.
@@ -1845,7 +1220,7 @@ public final class Moxter
 
             // Local Scope
             try {
-                MoxResolver.EffectiveMoxture resolved = this.moxter.moxResolver.resolveByName(moxtureName);
+                MoxLinker.LinkedMoxture resolved = this.moxter.moxLinker.linkByName(moxtureName);
                 Map<String, Object> localVars = resolved.moxt.getVars();
                 return (localVars != null) ? localVars : Collections.emptyMap();
             } catch (Exception e) {
@@ -2015,13 +1390,19 @@ public final class Moxter
                 this.val = val;
             }
 
-            /** Returns true if the underlying value is null. */
+            /** 
+             * Returns true if the underlying value is null. 
+             */
             public boolean isNull() { return val == null; }
             
-            /** Returns the raw, uncast Object. */
+            /** 
+             * Returns the raw, uncast Object. 
+             */
             public Object asObject() { return val; }
 
-            /** Casts the variable to the specified type. */
+            /** 
+             * Casts the variable to the specified type. 
+             */
             public <T> T asType(Class<T> type) {
                 if (val == null) return null;
                 try { return type.cast(val); } 
@@ -2050,9 +1431,15 @@ public final class Moxter
              * @throws IllegalStateException if the variable cannot be parsed as a number
              */
             public Long asLong() {
+
+                log.info("[Moxter][FHI] asLong() for var '{}': type={}, rawValue='{}'", 
+                         key, (val == null ? "null" : val.getClass().getSimpleName()), val);
+
+
                 Object target = val;
-                // Auto-unboxing for lists of one item
-                if (target instanceof List<?> list && list.size() == 1) {
+                // Smart MULTI-LEVEL auto-unboxing for (nested) lists of one item
+                // Recursively peek inside single-item lists (handles [[82]] or [82])
+                while (target instanceof java.util.List<?> list && list.size() == 1) {
                     target = list.get(0);
                 }
                 if (target == null) return null;
@@ -2066,7 +1453,9 @@ public final class Moxter
                 throw new IllegalStateException("Var '" + key + "' is not a number (actual: " + target.getClass().getSimpleName() + ")");
             }
 
-            /** Parses the variable into an {@link Instant} (supports ISO-8601). */
+            /** 
+             * Parses the variable into an {@link Instant} (supports ISO-8601). 
+             */
             public Instant asInstant() {
                 String s = asString();
                 if (s == null) return null;
@@ -2077,14 +1466,37 @@ public final class Moxter
                 }
             }
 
-            /** Parses the variable into an {@link Instant} using a custom formatter. */
+            /** 
+             * Parses the variable into an {@link Instant} using a custom formatter. 
+             */
             public Instant asInstant(DateTimeFormatter formatter) {
                 String s = asString();
                 if (s == null) return null;
                 return formatter.parse(s, Instant::from);
             }
 
-            /** * Casts the variable to a typed List, handling numeric conversions automatically.
+            /** 
+            /** 
+             * Casts the variable to a typed List, handling numeric conversions automatically.
+             * 
+             * <p> Performs automatic unboxing and numeric coercion for ease of use.
+             * 
+             * <p> Key Behaviors:
+             * - Flattening: Automatically unwraps single-item nested lists (e.g., [[A, B]]
+             *   becomes [A, B]). This is critical for results coming from JsonPath filters, 
+             *   which always return a list wrapper.
+             * - Isolation: Unboxing is only performed if the requested elementType is NOT a 
+             *   List itself, ensuring that nested list structures are preserved when intended.
+             * - Numeric Coercion: Automatically converts between various {@link Number} types 
+             *   (e.g., converting a JsonPath Integer to a requested Long).
+             * - Strict Type Safety: If an element cannot be cast or coerced, throws an 
+             *   {@link IllegalStateException} detailing the variable name and the exact index 
+             *   where the failure occurred[cite: 17].
+             * 
+             * @param <T> The expected type of the list elements.
+             * @param elementType The class of the expected element type (e.g., String.class).
+             * @return A typed list containing the resolved elements, or null if the variable is null.
+             * @throws IllegalStateException if the variable is not a list or casting fails.
              */
             public <T> List<T> asList(Class<T> elementType) {
                 if (val == null) return null;
@@ -2093,6 +1505,14 @@ public final class Moxter
                 }
 
                 List<?> rawList = (List<?>) val;
+
+                // If we have [[A, B]] and the user wants a List<T>, unbox the outer list
+                if (    rawList.size() == 1 
+                     && rawList.get(0) instanceof List 
+                     && !List.class.isAssignableFrom(elementType)) {
+                    rawList = (List<?>) rawList.get(0);
+                }
+
                 List<T> result = new ArrayList<>(rawList.size());
 
                 for (int i = 0; i < rawList.size(); i++) {
@@ -2196,1319 +1616,13 @@ public final class Moxter
             }
         }
 
-
     }
 
 
-    // #############################################################################################
-
-    /**
-     * Internal namespace for components that handle the <b>execution phase</b> of a moxture.
-     * 
-     * <p> Once a moxture definition has been discovered and fully materialized/'effectived' 
-     * (flattened), the classes in this namespace take over to perform the actual test execution. 
-     * Their responsibilities include:
-     *   - <b>Templating:</b> Interpolating dynamic variables into endpoints, headers, and bodys.
-     *   - <b>Body Resolution:</b> Parsing and resolving complex or external JSON/YAML request bodies.
-     *   - <b>HTTP Execution:</b> Translating the moxture into a Spring MockMvc request and firing it.
-     *   - <b>Response Handling:</b> Capturing the raw network response and packaging it into an internal envelope.
-
-     * 
-     * <p><b>Note:</b> Classes within this namespace are strictly internal to the Moxter engine 
-     * and should never be accessed or instantiated directly by test code.
-     */
-    static final class MoxRuntime {
-
-        /**
-         * A strategy interface for interpolating dynamic variables into strings.
-         *
-         * <p>This engine is responsible for finding placeholders (e.g., {@code {{varName}}}) 
-         * in the moxture definition and replacing them with their actual values from the 
-         * provided variable context.
-         */
-        interface Templating {
-
-            /**
-             * The regular expression pattern used to identify variable placeholders within strings.
-             * 
-             * <p>Supports two distinct syntax styles:
-             * - Mustache style: {{variableName}} (Legacy support)
-             * - Spring/Maven style: ${variableName}} (Recommended for typo-resilience in YAML
-             *   and URIs)
-             * 
-             * The pattern uses two capture groups to isolate the variable key regardless of the 
-             * surrounding markings.
-             */
-            Pattern DUAL_PATTERN = Pattern.compile("\\{\\{([^}]+)\\}\\}|\\$\\{([^}]+)\\}");
-
-            /**
-             * Processes a single string, replacing all variable placeholders with their 
-             * corresponding values.
-             *
-             * @param s    The template string containing placeholders.
-             * @param vars The contextual map of variables available for substitution.
-             * @return The fully interpolated string, or the original string if no placeholders exist.
-             */
-            String apply(String s, Map<String, Object> vars);
-
-            /**
-             * Processes a map of key-value pairs, applying templating <b>only to the values</b>.
-             * 
-             * <p>This is particularly useful for HTTP headers and query parameters, where 
-             * the keys (e.g., "Authorization" or "page") are static, but the values 
-             * (e.g., "Bearer {{token}}" or "{{pageNumber}}") are dynamic.
-             *
-             * @param in   The original map of static keys and templated values.
-             * @param vars The contextual map of variables available for substitution.
-             * @return A new map containing the original keys and the fully interpolated values.
-             */
-            Map<String, String> applyMapValuesOnly(Map<String, String> in, Map<String, Object> vars);
-
-            /**
-             * Processes a template string by replacing all recognized placeholders with their 
-             * corresponding values from the provided variable context.
-             * 
-             * <p> <b>Technical Behavior:</b>
-             * - <b>Pattern Matching:</b> Scans for both Mustache-style ({@code {{...}}}) and 
-             *   Spring-style ({@code ${...}}) tokens.
-             * - <b>Whitespace Tolerance:</b> Automatically trims the extracted variable keys 
-             *   (e.g., {@code ${ var }} becomes {@code var}).
-             * - <b>Persistence on Miss:</b> If a variable is not found in the context, the 
-             *   original placeholder string is preserved verbatim to assist in visual debugging 
-             *   of the generated request/URI.
-             *  - <b>Regex Safety:</b> Employs {@link java.util.regex.Matcher#quoteReplacement(String)} 
-             *    to ensure that variable values containing special characters (like '$' or '\') 
-             *    do not interfere with the interpolation process.
-             * 
-             * 
-             * @param template  The raw string containing placeholders (e.g., an endpoint URL or JSON value).
-             * @param variables The map representing the current variable context (Global + Scoped overrides).
-             * @return A fully interpolated string where placeholders have been replaced by literals, 
-             *        or the original string if no placeholders were detected or resolved.
-             */
-            static String interpolate(String template, Map<String, Object> variables) {
-                if (template == null || (!template.contains("{{") && !template.contains("${"))) {
-                    return template;
-                }
-
-                Matcher matcher = DUAL_PATTERN.matcher(template);
-                StringBuilder sb = new StringBuilder();
-
-                while (matcher.find()) {
-                    // Group 1 is {{...}}, Group 2 is ${...}
-                    String key = (matcher.group(1) != null ? matcher.group(1) : matcher.group(2)).trim();
-
-                    // 1. Try to resolve as a dynamic function (mx.func())
-                    String dynamicValue = resolveDynamic(key);
-                    if (!dynamicValue.equals(key)) {
-                        // Match found in DynamicLibrary: use the generated value
-                        matcher.appendReplacement(sb, Matcher.quoteReplacement(dynamicValue));
-                    }
-
-                    // 2. Fallback to standard variable map
-                    else if (variables != null && variables.containsKey(key)) {
-                        Object value = variables.get(key);
-                        matcher.appendReplacement(sb, Matcher.quoteReplacement(String.valueOf(value)));
-                    } 
-                    
-                    // 3. Keep literal for debugging if nothing matches
-                    else {
-                        matcher.appendReplacement(sb, Matcher.quoteReplacement(matcher.group(0)));
-                    }
-                }
-                matcher.appendTail(sb);
-                return sb.toString();
-            }
-
-            /**
-             * Resolves reserved dynamic keywords (prefixed with "mx.") by invoking 
-             * corresponding methods in the {@link DynamicLibrary}.
-             * 
-             * <p>The method uses reflection to find a matching static method name 
-             * in the DynamicLibrary. If no match is found, the original keyword is returned 
-             * to allow standard variable interpolation to continue.</p>
-             * 
-             * @param keyword The raw keyword found in the YAML (e.g., "mx.random()")
-             * @return The string result of the Java function, or the original keyword if not found.
-             */
-            static String resolveDynamic(String keyword) {
-                if (keyword == null || !keyword.startsWith("mx.")) {
-                    return keyword;
-                }
-
-                try {
-                    // Parse "mx.random()" -> "random"
-                    String methodName = keyword
-                            .replace("mx.", "")
-                            .replace("()", "")
-                            .trim();
-
-                    // Locate the method in the library
-                    Method method = DynamicLibrary.class.getMethod(methodName);
-                    
-                    // Invoke the static method (null instance for static calls)
-                    return (String) method.invoke(null);
-
-                } catch (NoSuchMethodException e) {
-                    // Log a warning or simply return the string if it's not a dynamic call
-                    return keyword;
-                } catch (Exception e) {
-                    throw new RuntimeException("Failed to resolve dynamic keyword: " + keyword, e);
-                }
-            }
-
-        }
-
-        /**
-         * Simple {{var}} or ${var} string substitution. 
-         */
-        static final class SimpleTemplating implements Templating 
-        {
-            public String apply(String s, Map<String, Object> vars) 
-            {   return Templating.interpolate(s, vars); // Clean delegation
-            }
-
-            /**
-             *  Only applies templating to values (keeps keys untouched). 
-             */
-            public Map<String, String> applyMapValuesOnly(Map<String, String> in, Map<String, Object> vars) 
-            {   if (in == null || in.isEmpty()) return in;
-                Map<String, String> out = new LinkedHashMap<>(in.size());
-                for (Map.Entry<String, String> e : in.entrySet()) {
-                    out.put(e.getKey(), apply(e.getValue(), vars));
-                }
-                return out;
-            }
-        }
-
-
-        /**
-         * A library of plain Java functions accessible within Moxture YAML files via special 
-         * keywords.
-         * 
-         * <p> Any public static method added to this class that returns a {@code String} 
-         * can be invoked in a moxture using the "${mx.methodName()}" syntax.
-         */
-        public class DynamicLibrary {
-
-            /**
-             * Generates a short, 8-character random alphanumeric string.
-             * 
-             * Useful for unique identifiers that don't require full UUID complexity.
-             * 
-             * @return a random 8-char string (e.g., "7f3k9a21")
-             */
-            public static String random() {
-                return UUID.randomUUID().toString().substring(0, 8);
-            }
-
-            /**
-             * Generates a full RFC 4122 version 4 UUID.
-             * 
-             * Use this for fields like channelId or threadId that require strict UUID formats.
-             * 
-             * @return a 36-character UUID string.
-             */
-            public static String uuid() {
-                return UUID.randomUUID().toString();
-            }
-
-            /**
-             * Returns the current system time in milliseconds.
-             * 
-             * Useful for timestamping events or ensuring order in high-velocity tests.
-             * 
-             * @return current time as a string.
-             */
-            public static String time() {
-                return String.valueOf(System.currentTimeMillis());
-            }
-
-            /**
-             * Returns the current system time in ISO-8601 UTC format.
-             * 
-             * Example: "2026-03-17T21:13:53Z"
-             * 
-             * @return a standardized UTC timestamp string.
-             */
-            public static String now() {
-                return java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC)
-                        .format(java.time.format.DateTimeFormatter.ISO_INSTANT);
-            }
-        }
-
-
-        // #########################################################################################
-
-        /**
-         * Resolves raw body definitions into finalized JSON nodes by processing variable 
-         * interpolation, classpath resource loading, and structural recursion.
-         * 
-         * <p>The resolver handles two primary formats:
-
-         * - <b>String/Scalar:</b> Can be a "classpath:..." reference, a raw JSON string, 
-         * or a plain text body. All variables are interpolated before parsing.
-         * - <b>Structural:</b> A YAML map or array. The resolver recursively walks 
-         * the tree and applies templating to every string leaf node.
-
-         */
-        static final class BodyResolver 
-        {
-            private final MoxYamlMapper mapper;
-
-            /**
-             * @param mapper The Jackson mapper (typically a YAML-aware instance) used 
-             * to parse strings and manipulate nodes.
-             */
-            BodyResolver(MoxYamlMapper mapper) { this.mapper = mapper; }
-
-            /**
-             * The new entry point that handles the inheritance stack.
-             * 
-             * <p> Resolves the final body by merging the inheritance stack.
-             * 
-             * <p>This fix ensures thread-safety by creating deep copies of every 
-             * layer before merging, preventing runtime variable interpolation 
-             * from "poisoning" the shared static cache.</p>
-             */
-            JsonNode resolve(Model.Moxture spec, String baseDir, Map<String, Object> vars, Templating tpl) throws IOException {
-                List<JsonNode> stack = spec.getBodyStack();
-                
-                if (stack == null || stack.isEmpty()) {
-                    JsonNode single = resolveSingleNode(spec.getBody(), baseDir, vars, tpl);
-                    // Defensive deepCopy ensures the return value is detached from the cache
-                    return (single == null) ? null : single.deepCopy();
-                }
-
-                JsonNode effective = null;
-                for (JsonNode layer : stack) {
-                    // 1. Resolve the layer (handles interpolation/classpath)
-                    JsonNode resolvedLayer = resolveSingleNode(layer, baseDir, vars, tpl);
-                    
-                    if (resolvedLayer == null) continue;
-
-                    // 2. CRITICAL FIX: Ensure the layer is a detached deep copy 
-                    // before merging it into the effective result.
-                    JsonNode detachedLayer = resolvedLayer.deepCopy();
-                    
-                    // 3. Deep merge into the accumulated result
-                    effective = MoxResolver.deepMergeBody(mapper, effective, detachedLayer);
-                }
-                return effective;
-            }
-
-            /**
-             * The main entry point for body resolution.
-             * 
-             * It handles: Interpolation -> Classpath -> JSON Sniffing -> Parsing
-             * 
-             * @param body    The raw JsonNode from the YAML moxture definition.
-             *                Can be a "classpath:..." to a file containing JSON text.
-             * @param baseDir The directory of the current moxture file (used for relative classpath resolution).
-             * @param vars    The variable context for interpolation.
-             * @param tpl     The templating engine for macro expansion.
-             * @return A finalized {@link JsonNode} ready for HTTP execution.
-             * @throws IOException If a classpath resource cannot be read or JSON is malformed.
-             */
-            private JsonNode resolveSingleNode(JsonNode body, String baseDir,
-                                               Map<String, Object> vars, Templating tpl) throws IOException 
-            {   if (body == null) return null;
-
-                if (body.isTextual()) {
-                    String txt = body.asText().trim();
-                    
-                    // Interpolate variables FIRST (makes the JSON valid!)
-                    txt = Templating.interpolate(txt, vars);
-                    
-                    // Handle 'classpath:'
-                    String lower = txt.toLowerCase(Locale.ROOT);
-                    if (lower.startsWith("classpath:")) {
-                        String rawPath = txt.substring(txt.indexOf(':') + 1).trim();
-                        JsonNode fileContent = loadClasspathBody(baseDir, rawPath);
-                        return resolveSingleNode(fileContent, baseDir, vars, tpl);
-                    }
-
-                    // Heuristic JSON check
-                    if (Utils.Json.looksLikeJson(txt)) {
-                        try {
-                            return mapper.getWrappedMapper().readTree(txt);
-                        } catch (JsonProcessingException e) {
-                            return mapper.getWrappedMapper().getNodeFactory().textNode(txt);
-                        }
-                    }
-                    return mapper.getWrappedMapper().getNodeFactory().textNode(txt);
-                }
-
-                return templateNodeStrings(body, vars, tpl);
-            }
-
-
-            /**
-             * Loads a YAML or JSON file from the classpath and returns it as a JsonNode.
-             */
-            private JsonNode loadClasspathBody(String baseDir, String rawPath) throws IOException {
-                String path = rawPath.startsWith("/") ? rawPath.substring(1) : (baseDir + "/" + rawPath);
-                URL url = Utils.IO.findResource(path);
-
-                if (url == null) throw new IllegalArgumentException("Resource not found on classpath: " + path);
-
-                try (InputStream in = url.openStream()) {
-                    return mapper.getWrappedMapper().readTree(in);
-                }
-            }
-
-
-            /**
-             * Recursively walks a JSON tree and applies templating to all string leaves. 
-             * This ensures that variables inside YAML maps/lists are properly expanded.
-             */
-            private JsonNode templateNodeStrings(JsonNode node, Map<String,Object> vars, Templating tpl) {
-                if (node == null) return null;
-                if (node.isTextual()) {
-                    String replaced = tpl.apply(node.asText(), vars);
-                    return mapper.getWrappedMapper().getNodeFactory().textNode(replaced);
-                }
-                if (node.isArray()) {
-                    ArrayNode arr = mapper.getWrappedMapper().getNodeFactory().arrayNode();
-                    for (JsonNode child : node) arr.add(templateNodeStrings(child, vars, tpl));
-                    return arr;
-                }
-                if (node.isObject()) {
-                    ObjectNode out = mapper.getWrappedMapper().createObjectNode();
-                    Iterator<String> it = node.fieldNames();
-                    while (it.hasNext()) {
-                        String f = it.next();
-                        out.set(f, templateNodeStrings(node.get(f), vars, tpl));
-                    }
-                    return out;
-                }
-                return node;
-            }
-        }
-
-        // ##########################################################################################################
-
-        /**
-         * Strategy interface for executing a moxture across specific transport protocols.
-         * 
-         * <p>Implementations are responsible for the "Wire" phase of the execution pipeline. 
-         * While the {@link MoxCaller} manages orchestration and state, the Executor handles 
-         * the mapping between the abstract Moxture model and a concrete physical request.
-         * 
-         * <p><b>Responsibilities:</b>
-         * - <b>Protocol Identification:</b> Determining if it can handle a spec via {@link #supports}.
-         * - <b>Templating:</b> Resolving placeholders in endpoints, headers, and payloads using 
-         *   the provided variable context.
-         * - <b>Payload Resolution:</b> Loading external body files if referenced in the spec.
-         * - <b>Execution:</b> Interacting with the underlying mock client (e.g., MockMvc, 
-         *   MockStompSession).
-         * - <b>Normalization:</b> Capturing the result into a standardized {@link ResponseEnvelope}.
-         * 
-         * <p><b>Non-Responsibilities:</b>
-         * - Executors <b>must not</b> perform assertions or validations (handled by Verifier).
-         * - Executors <b>must not</b> persist variables to the context (handled by Extractor).
-         * - Executors <b>must not</b> handle {@code basedOn} inheritance (handled by Resolver).
-         * 
-         */
-        interface IProtocolExecutor {
-            
-            /**
-             * Determines if this executor is capable of handling the given moxture.
-             * 
-             * <p>Usually matches against the {@code protocol} field, but can also inspect 
-             * fields like {@code method} or {@code endpoint} to infer the protocol.
-             * 
-             * @param spec The moxture definition to check.
-             * @return true if this executor can process the request.
-             */
-            boolean supports(Model.Moxture spec);
-
-            /**
-             * Translates the abstract moxture into a physical request and captures the response.
-             * 
-             * @param spec     The fully materialized moxture definition.
-             * @param baseDir  The anchor directory for resolving relative file paths.
-             * @param vars     The variable context used for string interpolation.
-             * @param callAuth Optional Spring Security context to apply to this specific execution.
-             * @return A {@link ResponseEnvelope} containing the status, headers, and body.
-             * @throws Exception If the underlying transport fails or if the request is malformed.
-             */
-            ResponseEnvelope execute(Model.Moxture spec, String baseDir, 
-                                     Map<String, Object> vars, Authentication callAuth) throws Exception;
-        }
-
-        // #########################################################################################
-
-        /**
-         * The primary engine responsible for executing Moxture definitions against a MockMvc instance.
-         * 
-         * <p>The execution lifecycle follows a strict sequence:
-         * - <b>Resolution:</b> Variables and templates in the URL, headers, and body are resolved.
-         * - <b>Body Preparation:</b> External resources (classpath) are loaded if specified.
-         * - <b>Request Construction:</b> A {@link MockHttpServletRequestBuilder} is initialized with 
-         *      the appropriate method, URI, and security context (CSRF, Authentication).
-         * - <b>Execution:</b> The request is dispatched via {@code MockMvc.perform()}.
-         * - <b>State Management:</b> Response data (JSON body, headers) is extracted and stored 
-         *       back into the variable context for use by subsequent moxtures.
-         * - <b>Validation:</b> Status codes and body contents are asserted against the 
-         *       {@code expect} block.
-         * 
-         */
-        @Slf4j
-        static final class HttpExecutor implements IProtocolExecutor
-        {
-            private final MockMvc mockMvc;
-            private final ObjectMapper jsonMapper;  // to send the body as JSON
-            private final Templating tpl;
-            private final BodyResolver bodies;
-            private final Supplier<Authentication> authSupplier;
-
-            // Internal session state used to simulate a persistent browser session across multiple 
-            // moxture executions.
-            // In standard {@link MockMvc} tests, each request is stateless by default. This field 
-            // ensures that server-side state—specifically authentication metadata and session-scoped 
-            // beans is preserved between sequential calls made by the same executor instance
-            //# OLD private final MockHttpSession session = new MockHttpSession();
-            // The session needs to be segregated by user (authentication):
-            private final Map<String, MockHttpSession> sessionRegistry = new HashMap<>();
-
-            HttpExecutor(MockMvc mockMvc, 
-                         ObjectMapper jsonMapper, 
-                         Templating tpl,
-                         BodyResolver bodies,
-                         Supplier<Authentication> authSupplier) {
-                this.mockMvc = mockMvc;
-                this.jsonMapper = jsonMapper;
-                this.tpl = tpl;
-                this.bodies = bodies;
-                this.authSupplier = authSupplier;
-            }
-
-            @Override
-            public boolean supports(Model.Moxture spec) {
-                String p = spec.getProtocol();
-                // If omitted, blank, or explicitly http/https, this executor handles it
-                return p == null || p.isBlank() || p.equalsIgnoreCase("http") || p.equalsIgnoreCase("https");
-            }
-
-            /**
-             * Execute a single moxture call.
-             * 
-             * <p>Logs a concise start line, rich DEBUG details, response preview, a finish line with duration,
-             * and a compact warning when the expected status does not match.
-             */
-            @Override
-            public MoxRuntime.ResponseEnvelope execute(Model.Moxture spec, String baseDir, 
-                                                       Map<String,Object> vars, 
-                                                       Authentication callAuth)
-            {
-                final long t0 = System.nanoTime();
-                final String name   = (spec.getName() == null || spec.getName().isBlank()) ? "<unnamed>" : spec.getName();
-                final String method = Utils.Http.safeMethod(spec.getMethod());
-                final boolean verbose = spec.getOptions() != null && Boolean.TRUE.equals(spec.getOptions().getVerbose());
-
-                try {
-                    // 0. Resolve the actual Actor for this call
-                    Authentication auth = resolveAuthentication(callAuth);
-                    String actorKey = (auth != null) ? auth.getName() : "ANONYMOUS";
-
-                    // 0.1 Get or create the session for THIS specific Actor
-                    MockHttpSession actorSession = sessionRegistry.computeIfAbsent(
-                        actorKey, k -> new MockHttpSession()
-                    );
-
-                    // 1. Prepare URI, Headers, and Body
-                    if (spec.getEndpoint() == null || spec.getEndpoint().isBlank()) {
-                        throw new IllegalArgumentException("Moxture '" + name + "' has no 'endpoint'.");
-                    }
-                    final String endpoint = tpl.apply(spec.getEndpoint(), vars);
-                    final Map<String,String> headers0 = tpl.applyMapValuesOnly(spec.getHeaders(), vars);
-                    final Map<String,String> query    = tpl.applyMapValuesOnly(spec.getQuery(), vars);
-                    final URI uri = URI.create(Utils.Http.appendQuery(endpoint, query));
-                    final JsonNode bodyNode = bodies.resolve(spec, baseDir, vars, tpl);
-
-                    logExecutionStart(verbose, name, method, uri, headers0, query, vars, bodyNode);
-
-                    // 2. Build the Spring MockMvc Request
-                    MockHttpServletRequestBuilder req = buildRequest(spec, baseDir, vars, method, uri, headers0, bodyNode, callAuth);
-                    req.session(actorSession); // Forces MockMvc to reuse the same session
-
-                    // 3. Execute HTTP Call & Parse Response
-                    ResultActions actions = mockMvc.perform(req);
-                    // Only trigger the heavy MockMvc print if explicitly requested in YAML options
-                    if (verbose) {
-                        actions.andDo(print());
-                    }
-                    MockHttpServletResponse mvcResp = actions.andReturn().getResponse();
-                    MoxRuntime.ResponseEnvelope env = parseResponse(mvcResp, method, uri);
-
-                    logResponsePreview(verbose, env);
-                    logExecutionEnd(name, method, uri, env.status(), t0);
-                    
-                    return env;
-
-                } catch (RuntimeException re) {
-                    log.warn("[Moxter] X [{}] {} failed: {}", method, name, Utils.Misc.rootMessage(re));
-                    throw re;
-                } catch (Exception e) {
-                    log.warn("[Moxter] X [{}] {} errored: {}", method, name, Utils.Misc.rootMessage(e));
-                    throw new RuntimeException("Error executing moxture '" + name + "'", e);
-                }
-            }
-
-            /**
-             * The specific Spring Security Authentication bound to this individual moxture caller.
-             * 
-             * <p><b>Resolution Priority:</b> When the authentication is set 
-             * (via {@link #withAuth(Authentication)}), it takes absolute precedence for the 
-             * duration of this caller's life. It effectively shadows:
-             * - The engine-level {@code authSupplier} (the default identity for this Moxter instance)
-             * - The global {@code SecurityContextHolder} (the standard Spring Security context)
-             * 
-             * <p>This isolation ensures that a specific user (e.g., User B) can attempt actions 
-             * without permanently mutating the thread's global security state or the engine's 
-             * default user.</p>
-             */
-            private Authentication resolveAuthentication(Authentication callAuth) {
-                // 1. Highest Priority: The Call-Scoped Override (from mx.caller().withAuth(...))
-                if (callAuth != null) return callAuth;
-                
-                // 2. Fallback: The Engine-Scoped Supplier (from Moxter.forTestClass().authentication(...))
-                if (authSupplier != null) {
-                    try { return authSupplier.get(); } catch (Exception ignore) {}
-                }
-                
-                // 3. Last Resort: The Global Thread Context
-                return SecurityContextHolder.getContext().getAuthentication();
-            }
-
-
-            /**
-             * Phase 1: Request Building
-             */
-            private MockHttpServletRequestBuilder buildRequest(Model.Moxture spec, String baseDir, Map<String,Object> vars, 
-                                                               String method, URI uri, Map<String,String> headers0, 
-                                                               JsonNode bodyNode,
-                                                               Authentication callAuth) throws Exception 
-            {
-                MockHttpServletRequestBuilder req;
-                Map<String,String> headers = (headers0 == null) ? new LinkedHashMap<>() : new LinkedHashMap<>(headers0);
-
-                if (spec.getMultipart() != null && !spec.getMultipart().isEmpty()) {
-                    req = buildMultipartRequest(spec, baseDir, vars, method, uri, headers);
-                } else {
-                    req = Utils.Http.toRequestBuilder(method, uri);
-                    if (bodyNode != null) {
-                        req.content(jsonMapper.writeValueAsBytes(bodyNode));
-                        if (!headers.containsKey(HttpHeaders.CONTENT_TYPE)) {
-                            req.contentType(MediaType.APPLICATION_JSON);
-                        }
-                    }
-                }
-
-                // Attach Auth & CSRF
-                attachSecurity(req, method, callAuth);
-
-                // Attach standard headers
-                for (Map.Entry<String,String> e : headers.entrySet()) {
-                    req.header(e.getKey(), e.getValue());
-                }
-                return req;
-            }
-
-            /**
-             * Phase 1 sub: Multipart Request Building
-             */
-            private MockHttpServletRequestBuilder buildMultipartRequest(Model.Moxture spec, String baseDir, Map<String,Object> vars, 
-                                                                      String method, URI uri, Map<String,String> headers) throws Exception 
-            {
-                log.debug("[Moxter] Multipart detected");
-                headers.remove(HttpHeaders.CONTENT_TYPE);
-                headers.remove("Content-Type");
-
-                MockMultipartHttpServletRequestBuilder multiReq = MockMvcRequestBuilders.multipart(uri);
-                String effectiveMethod = (method == null) ? "POST" : method.toUpperCase(Locale.ROOT);
-                multiReq.with(r -> { r.setMethod(effectiveMethod); return r; });
-
-                for (Model.MultipartDef part : spec.getMultipart()) {
-                    String pName = tpl.apply(part.name, vars);
-                    String pType = (part.type != null) ? part.type.toLowerCase() : "json";
-                    String pFilename = tpl.apply(part.filename, vars);
-
-                    byte[] contentBytes;
-                    String contentType;
-
-                    if ("file".equals(pType)) {
-                        String path = part.body.asText();
-                        if (path.toLowerCase().startsWith("classpath:")) path = path.substring(10).trim();
-                        contentBytes = Utils.IO.readResourceBytes(baseDir, tpl.apply(path, vars));
-                        contentType = (pFilename != null && pFilename.endsWith(".pdf")) ? "application/pdf"
-                                    : (pFilename != null && pFilename.endsWith(".png")) ? "image/png"
-                                    : "application/octet-stream";
-                    } else {
-                        JsonNode resolvedPartBody = bodies.resolveSingleNode(part.body, baseDir, vars, tpl);
-                        if ("json".equals(pType) || resolvedPartBody.isContainerNode()) {
-                            contentBytes = jsonMapper.writeValueAsBytes(resolvedPartBody);
-                            contentType = "application/json";
-                            if (pFilename == null) pFilename = "";
-                        } else {
-                            contentBytes = resolvedPartBody.asText().getBytes(StandardCharsets.UTF_8);
-                            contentType = "text/plain";
-                        }
-                    }
-                    multiReq.file(new org.springframework.mock.web.MockMultipartFile(pName, pFilename, contentType, contentBytes));
-                }
-                return multiReq;
-            }
-
-            private void attachSecurity(MockHttpServletRequestBuilder req, String method, org.springframework.security.core.Authentication callAuth) {
-                
-                // 1. Highest Priority: The Call-Scoped Override (from mx.caller().withAuthentication(...))
-                Authentication auth = callAuth;
-                
-                // 2. Fallback (The Default): The Engine-Scoped Supplier (from Moxter.forTestClass().authentication(...))
-                if (auth == null && authSupplier != null) {
-                    try { auth = authSupplier.get(); } catch (Exception ignore) {}
-                }
-                
-                // 3. Last Resort: The Global Thread Context (Standard Spring Security)
-                if (auth == null) {
-                    auth = SecurityContextHolder.getContext().getAuthentication();
-                }
-                
-                // Apply the resolved authentication to the mock request
-                if (auth != null) {
-                    req.with(SecurityMockMvcRequestPostProcessors.authentication(auth));
-                    log.debug("[Moxter] using Authentication principal={}", Utils.Misc.safeName(auth));
-                }
-                
-                // Attach CSRF token for state-changing methods
-                if (Utils.Http.requiresCsrf(method)) {
-                    req.with(SecurityMockMvcRequestPostProcessors.csrf());
-                    log.debug("[Moxter] CSRF token added for {}", method);
-                }
-            }
-
-            /**
-             * Phase 2: Response Parsing
-             */
-            private MoxRuntime.ResponseEnvelope parseResponse(MockHttpServletResponse mvcResp, String method, URI uri) throws Exception {
-                final String raw = mvcResp.getContentAsString(StandardCharsets.UTF_8);
-                final String ctHeader = mvcResp.getHeader(HttpHeaders.CONTENT_TYPE);
-                final boolean hasBody   = raw != null && !raw.isBlank();
-                final boolean isJsonCT  = Utils.Http.isJsonContentType(ctHeader);
-                final boolean looksJson = hasBody && Utils.Json.looksLikeJson(raw);
-
-                JsonNode body = null;
-                if (hasBody && (isJsonCT || looksJson)) {
-                    try { body = jsonMapper.readTree(raw); } 
-                    catch (Exception parseEx) {
-                        log.debug("[Moxter] Non-JSON body (ct='{}') could not be parsed: {}", ctHeader, Utils.Misc.rootMessage(parseEx));
-                    }
-                }
-                
-                // Pack the method and URI into the envelope alongside the response data
-                return new MoxRuntime.ResponseEnvelope(method, uri, mvcResp.getStatus(), Utils.Http.copyHeaders(mvcResp), body, raw);
-            }
-
-
-            /**
-             * Phase 4: Save & Logging Helpers
-             */
-            private void logExecutionStart(boolean verbose, String name, String method, URI uri, 
-                                           Map<String,String> headers, Map<String,String> query, 
-                                           Map<String,Object> vars, JsonNode body) 
-            {
-                log.info("[Moxter] >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
-                log.info("[Moxter] >>> Executing moxture:  [{}, {}, {}]", name, method, uri);
-                
-                if (verbose || log.isDebugEnabled()) {
-                    String msg = "[Moxter] more info: headers={} query={} vars={} body={}";
-                    Object[] args = {
-                            Utils.Logging.previewHeaders(headers),
-                            (query == null || query.isEmpty() ? "{}" : query.toString()),
-                            Utils.Logging.previewVars(vars),
-                            Utils.Logging.previewNode(body)
-                    };
-                    // The bypass: if verbose is requested, force it out at INFO level
-                    if (verbose) log.info(msg, args); else log.debug(msg, args);
-                }
-            }
-
-            private void logResponsePreview(boolean verbose, MoxRuntime.ResponseEnvelope env) {
-                if (verbose || log.isDebugEnabled()) {
-                    String msg = "[Moxter] response preview: status={} headers={} body={}";
-                    Object[] args = { env.status(), Utils.Logging.previewRespHeaders(env.headers()), Utils.Logging.previewNode(env.body()) };
-                    
-                    if (verbose) log.info(msg, args); else log.debug(msg, args);
-                }
-                if (verbose || log.isTraceEnabled()) {
-                    String msg = "[Moxter] Raw body (len={}): {}";
-                    Object[] args = { env.raw() == null ? 0 : env.raw().length(), Utils.Logging.truncate(env.raw(), 4000) };
-                    
-                    if (verbose) log.info(msg, args); else log.trace(msg, args);
-                }
-            }
-
-            private void logExecutionEnd(String name, String method, URI uri, int status, long startTimeNano) {
-                long tookMs = (System.nanoTime() - startTimeNano) / 1_000_000L;
-                log.info("[Moxter] <<< Finished executing moxture: [{}, {}, {}] with status: [{}], in {} ms", name, method, uri, status, tookMs);
-                log.info("[Moxter] <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<");
-            }
-
-        }
-
-        // #########################################################################################
-
-         /**
-         * Executor for the STOMP protocol that bridges Moxter moxtures with the 
-         * <b>MockWebs</b> testing infrastructure.
-         * 
-         * <p>This class serves as the functional equivalent of the {@link HttpExecutor}. 
-         * Just as the {@code HttpExecutor} uses {@code MockMvc} to simulate REST 
-         * interactions, this executor uses <b>MockWebs</b> to perform real-time, 
-         * in-memory STOMP operations within the Spring application context.</p>
-         * 
-         * <p><b>Execution Logic:</b>
-         * - <b>Dispatch:</b> It translates the moxture's {@code endpoint} into a STOMP destination
-         *   and sends the {@code body} payload through the <b>MockWebs</b> client.
-         * - <b>Normalization:</b> While HTTP is naturally synchronous, with a response to the
-         *   request, STOMP is often fire-and-forget. To maintain compatibility with the 
-         *   {@link ExpectVerifier}, it captures the outbound frame and wraps it in a 
-         *   {@link ResponseEnvelope}.
-         * - <b>Verification:</b> This "Loopback" behavior allows the user to perform standard 
-         *   JsonPath assertions (via the {@code expect} block) against the final message content 
-         *   as it was seen by the messaging subsystem.
-         * 
-         * * @see IProtocolExecutor
-         */
-        @Slf4j
-        static final class StompExecutor implements IProtocolExecutor {
-            
-            private final MockWebs mockWebs;
-            private final ObjectMapper jsonMapper;
-            private final BodyResolver bodies;
-            private final Templating tpl;
-            private final Supplier<Authentication> authSupplier;
-
-            /**
-             * Constructs a new StompExecutor with shared engine helpers.
-             * 
-             * @param jsonMapper  Mapper for serializing message payloads.
-             * @param bodies      Resolver for processing {@code body} and {@code classpath:} resources.
-             * @param tpl         Templating engine for variable interpolation in destinations.
-             */
-            StompExecutor(MockWebs mockWebs,
-                          ObjectMapper jsonMapper, 
-                          Templating tpl,
-                          BodyResolver bodies,
-                          Supplier<Authentication> authSupplier
-                        ) 
-            {   this.mockWebs = mockWebs;
-                this.jsonMapper = jsonMapper;
-                this.bodies = bodies;
-                this.tpl = tpl;
-                this.authSupplier = authSupplier;
-            }
-
-            /**
-             * Determines if the moxture explicitly requests the STOMP protocol.
-             * 
-             * @param spec The moxture definition.
-             * @return {@code true} if the protocol is "stomp" (case-insensitive).
-             */
-            @Override
-            public boolean supports(Model.Moxture spec) {
-                return spec.isProtocolStomp();
-            }
-
-            /**
-             * Translates the Moxture into a STOMP SEND frame and captures the 
-             * transmission result.
-             * 
-             * @param spec     The materialized moxture definition.
-             * @param baseDir  Anchor directory for payload resource resolution.
-             * @param vars     Variable context for destination and payload interpolation.
-             * @param callAuth Optional authentication context.
-             * @return A {@link ResponseEnvelope} containing the delivery confirmation.
-             * @throws Exception If payload resolution or serialization fails.
-             */
-            @Override
-            public ResponseEnvelope execute(Model.Moxture spec, String baseDir, 
-                                            Map<String, Object> vars, 
-                                            Authentication callAuth) throws Exception {
-                final long t0 = System.nanoTime();
-                final String name = (spec.getName() == null) ? "<unnamed>" : spec.getName();
-                final boolean verbose = spec.getOptions() != null && Boolean.TRUE.equals(spec.getOptions().getVerbose());
-
-                // 1. SEAMLESS IDENTITY RESOLUTION (Mirroring HttpExecutor)
-                // Hierarchy: Call-Scoped > Engine-Scoped > Global Context
-                Authentication auth = callAuth;
-                if (auth == null && authSupplier != null) {
-                    try { auth = authSupplier.get(); } catch (Exception ignore) {}
-                }
-                if (auth == null) {
-                    auth = SecurityContextHolder.getContext().getAuthentication();
-                }
-
-                // 2. Resolve Destination and Payload
-                if (spec.getEndpoint() == null || spec.getEndpoint().isBlank()) {
-                    throw new IllegalArgumentException("STOMP moxture '" + name + "' has no 'endpoint' (destination).");
-                }
-                String destination = tpl.apply(spec.getEndpoint(), vars);
-                JsonNode payload = bodies.resolve(spec, baseDir, vars, tpl);
-
-                // Start Logging
-                log.info("[Moxter] >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
-                log.info("[Moxter] >>> Executing STOMP moxture: [{}, SEND, {}]", name, destination);
-                log.info("[Moxter] SEND destination: {}");
-                log.info("[Moxter] payload: {}", Utils.Logging.previewNode(payload));
-                
-                if (verbose) {
-                    log.info("[Moxter] identity: {}", Utils.Misc.safeName(auth));
-                }
-
-                // 3. EXECUTION: Dispatch via MockWebs session
-                // This bridges Moxter's identity to the user session, mirroring:
-                MockWebs.StompSession session = mockWebs.with(auth);
-                Object result = session.send(destination, payload); 
-
-                // 4. NORMALIZATION & TIMING
-                // We treat the dispatched content/result as the "response" for verification
-                String rawResponse = (result instanceof byte[] bytes) ? new String(bytes) : jsonMapper.writeValueAsString(result);
-                long tookMs = (System.nanoTime() - t0) / 1_000_000L;
-                
-                log.info("[Moxter] <<< Finished executing STOMP moxture: [{}] in {} ms", name, tookMs);
-                log.info("[Moxter] <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<");
-
-                return new ResponseEnvelope(
-                    "SEND", 
-                    URI.create("stomp://" + destination), 
-                    200, 
-                    Collections.emptyMap(), 
-                    jsonMapper.valueToTree(result), 
-                    rawResponse
-                );
-            }
-        }
-
-        // #########################################################################################
-
-        /**
-         * An internal, immutable container representing the raw HTTP response returned by 
-         * the execution engine.
-         *
-         * <p>This class acts as a bridge between the underlying HTTP client (Spring MockMvc) 
-         * and Moxter's public API. It captures the exact state of the network response 
-         * immediately after execution, before it is wrapped in a user-friendly 
-         * {@link MoxtureResult} for assertions.
-         *
-         * @param method  The HTTP method executed (e.g., "POST").
-         * @param uri     The fully resolved target URI.
-         * @param status  The HTTP status code returned by the server (e.g., 200, 404).
-         * @param headers The HTTP response headers.
-         * @param body    The response body parsed into a Jackson JSON tree (null if not JSON).
-         * @param raw     The raw, unparsed string representation of the HTTP response body.
-         */
-        public record ResponseEnvelope(
-            String method,
-            URI uri,
-            int status, 
-            Map<String, List<String>> headers, 
-            JsonNode body, 
-            String raw
-        ) {}
-
-        // #########################################################################################
-
-        /**
-         * Responsible strictly for extracting values from the network response and saving them 
-         * into the variable context.
-         * 
-         * <p>This component mutates the running state of the test. It runs before assertions 
-         * to ensure that even if a moxture fails (and 'allowFailure' is true), any successfully 
-         * generated IDs or tokens are still captured for subsequent steps.
-         */
-        @Slf4j
-        static final class VarExtractor {
-            
-            /**
-             * Evaluates the 'save' block of a moxture using JsonPath.
-             * 
-             * @param spec           The moxture definition containing the 'save' map.
-             * @param env            The network response envelope.
-             * @param vars           The live variable context where extracted values will be written.
-             * @param name           The name of the current moxture (used for logging).
-             * @param jsonPathConfig The JsonPath configuration (strict or lax).
-             */
-            public void extractAndSave(Model.Moxture spec, MoxRuntime.ResponseEnvelope env, 
-                                       Map<String,Object> vars, String name, 
-                                       Configuration jsonPathConfig) 
-            {
-                if (spec.getSave() != null && !spec.getSave().isEmpty()) {
-                    if (env.body() != null) {
-                        DocumentContext ctx = JsonPath.using(jsonPathConfig).parse(env.raw());
-                        for (Map.Entry<String, String> e : spec.getSave().entrySet()) {
-                            vars.put(e.getKey(), ctx.read(e.getValue()));
-                        }
-                        log.debug("[Moxter] saved vars from '{}': {}", name, spec.getSave().keySet());
-                    }
-                }
-            }
-        }
-
-        // #########################################################################################
-
-        /**
-         * Protocol-agnostic evaluation engine responsible for processing the 'expect' 
-         * directives from a moxture definition against a standardized HTTP/STOMP/... response envelope.
-         * 
-         * <p>By separating the evaluation logic from the network dispatchers (executors), 
-         * Moxter ensures that assertions behave identically regardless of the underlying 
-         * transport protocol. This class acts as the final gatekeeper in the moxture lifecycle.
-         */
-        @Slf4j
-        static final class ExpectVerifier 
-        {
-            private final BodyResolver bodyResolver;
-            private final ObjectMapper jsonMapper;
-            private final Templating tpl;
-
-            // We'll need it for STOMP moxtures to verify the expect.broadcast 
-            private final MockWebs mockWebs;
-
-            /**
-             * Constructs a new verifier with the necessary tools to interpolate strings, 
-             * parse JSON, and evaluate HTTP statuses.
-             * 
-             * @param bodyResolver  Engine to resolve expected JSON payloads (including classpath imports).
-             * @param jsonMapper    Jackson mapper for generic JSON tree manipulations.
-             * @param tpl           Templating engine for variable interpolation.
-             * @param mockWebs      We'll need it for STOMP moxtures to verify the expect.broadcast
-             *                      If we're doing just HTTP, pass null.
-             */
-            ExpectVerifier(BodyResolver bodyResolver, 
-                           ObjectMapper jsonMapper,
-                           Templating tpl,
-                           MockWebs mockWebs
-                        ) {
-                this.bodyResolver = Objects.requireNonNull(bodyResolver, "bodyResolver");
-                this.jsonMapper   = Objects.requireNonNull(jsonMapper, "jsonMapper");
-                this.tpl          = Objects.requireNonNull(tpl, "tpl");
-                this.mockWebs     = mockWebs; // Null is acceptable here
-            }
-
-            /**
-             * The primary entry point for response validation. Orchestrates the evaluation of 
-             * status codes, full JSON body matching, and surgical JsonPath assertions.
-             * 
-             * @param spec           The moxture definition containing the 'expect' block.
-             * @param env            The network response envelope to be evaluated.
-             * @param baseDir        The anchor directory for resolving any expected classpath payloads.
-             * @param vars           The variable context used to template expected values.
-             * @param name           The name of the moxture (for error reporting).
-             * @param jsonPathConfig The JsonPath configuration (strict or lax).
-             * @throws Exception     If a systemic parsing error occurs.
-             * @throws AssertionError If any expectation is violated.
-             */
-            public void verifyExpectations(Model.Moxture spec, MoxRuntime.ResponseEnvelope env, 
-                                           String baseDir, Map<String,Object> vars, 
-                                           String name, Configuration jsonPathConfig) throws Exception 
-            {
-                if (spec.getExpect() == null) return;
-
-                // 1. Check Status
-                verifyStatus(spec, env, name);
-
-                // 2. Check Body Assertions
-                Model.ExpectBodyDef bodyDef = spec.getExpect().getBody();
-                if (bodyDef != null)
-                {
-                    // 2a. Match
-                    if (bodyDef.getMatch() != null) {
-                        verifyBodyMatch(bodyDef.getMatch(), env, baseDir, vars, name, jsonPathConfig);
-                    }
-
-                    // 2b. Assert
-                    if (bodyDef.getAssertDef() != null && !bodyDef.getAssertDef().isEmpty()) {
-                        // We pass the 'spec' down so it can read the allowFailure flag for the Hybrid Short-Circuit
-                        verifyBodyAsserts(spec, bodyDef.getAssertDef(), env, baseDir, vars, jsonPathConfig);
-                    }
-                }
-
-                // 3. Verify Asynchronous Side-Effects (Broadcasts)
-                // Only executed if 'expect.broadcast' is present in the YAML.
-                verifyBroadcast(spec, vars);
-            }
-
-            /**
-             * For verification of the status of the response (expect.status).
-             * 
-             * <p>Evaluates the actual HTTP status code of the response against the expected 
-             * status defined in the moxture.
-             * 
-             * <p>This method leverages the internal {@code StatusMatcher} to support flexible 
-             * status definitions in the YAML file. 
-             * 
-             * <p>Supported expected formats include:
-             * - Exact integers (e.g., 200, 404)
-             * - Wildcard strings (e.g., "2xx", "4xx")
-             * - Arrays of acceptable statuses (e.g., [200, 201, 204])
-             * 
-             * <p>If the status does not match, it throws an {@code AssertionError} equipped with a 
-             * highly contextual message, including the HTTP method, URI, and a truncated 
-             * preview of the actual response body to assist with rapid debugging.
-             *
-             * @param spec   The moxture definition containing the 'expect.status' block.
-             * @param env    The network response envelope containing the actual status and raw body.
-             * @param name   The name of the current moxture (for error reporting).
-             * @param method The HTTP method used during execution (for error reporting).
-             * @param uri    The target URI that was executed (for error reporting).
-             * @throws AssertionError If the actual HTTP status does not satisfy the expected criteria.
-             */
-            private void verifyStatus(Model.Moxture spec, MoxRuntime.ResponseEnvelope env, String name) {
-                if (spec.getExpect().getStatus() != null) {
-                    if (!statusMatches(spec.getExpect().getStatus(), env.status())) {
-                        String bodyPreview = (env.raw() == null || env.raw().isBlank()) ? "<empty>" : Utils.Logging.truncate(env.raw(), 500);
-                        throw new AssertionError(String.format(Locale.ROOT, 
-                            "Unexpected HTTP %d for '%s' %s %s, expected=%s. Body=%s",
-                            env.status(), name, env.method(), env.uri(), 
-                            expectedStatusPreview(spec.getExpect().getStatus()), bodyPreview));
-                    }
-                }
-            }
-
-            /**
-             * For verification of the assertion on the content of the response body (expect.body.match)
-             * 
-             * <p>Performs a structural comparison between the expected JSON body and the actual 
-             * response body.
-             * 
-             * <p>Features:
-             * - Resolves external JSON payloads from the classpath if specified.
-             * - Removes ignored paths dynamically before comparison.
-             * - Supports Strict Mode ("full") and Extensible Mode (default - actual JSON can have extra fields).
-             * 
-             * @param matchDef       The specification defining the expected JSON and ignore paths.
-             * @param env            The network response envelope.
-             * @param baseDir        The anchor directory.
-             * @param vars           The variable context for interpolating the expected JSON.
-             * @param name           The moxture name.
-             * @param jsonPathConfig The JsonPath configuration used to delete ignored paths.
-             * @throws Exception     If I/O fails or JSON is malformed.
-             */
-            private void verifyBodyMatch(Model.ExpectBodyMatchDef matchDef, MoxRuntime.ResponseEnvelope env, 
-                                         String baseDir, Map<String,Object> vars, 
-                                         String name, Configuration jsonPathConfig) throws Exception 
-            {
-                try {
-                    if (env.raw() == null || env.raw().isBlank()) throw new AssertionError("Response body is empty.");
-                    
-                    // We resolve the expected block through the BodyResolver
-                    // Using a dummy moxture to reuse BodyResolver logic for a single node:
-                    Model.Moxture dummy = new Model.Moxture();
-                    dummy.setBody(matchDef.getContent());
-                    JsonNode expectedNodeResolved = bodyResolver.resolve(dummy, baseDir, vars, tpl);
-                    
-                    String expectedJsonStr = jsonMapper.writeValueAsString(expectedNodeResolved);
-                    String actualJsonStr = env.raw();
-
-                    if (matchDef.getIgnorePaths() != null && !matchDef.getIgnorePaths().isEmpty()) 
-                    {   DocumentContext actCtx = JsonPath.using(jsonPathConfig).parse(actualJsonStr);
-                        DocumentContext expCtx = JsonPath.using(jsonPathConfig).parse(expectedJsonStr);
-                        for (String path : matchDef.getIgnorePaths()) {
-                            try { actCtx.delete(path); } catch (Exception ignore) {}
-                            try { expCtx.delete(path); } catch (Exception ignore) {}
-                        }
-                        actualJsonStr = actCtx.jsonString();
-                        expectedJsonStr = expCtx.jsonString();
-                    }
-
-                    boolean strictMode = "full".equalsIgnoreCase(matchDef.getMode());
-                    JSONAssert.assertEquals(expectedJsonStr, actualJsonStr, strictMode);
-                } catch (AssertionError e) {
-                    // Wrap the error with context, but ALWAYS throw. Top-level execute() decides whether to swallow it.
-                    throw new AssertionError(String.format("Moxture '%s' JSON match failed: %s", name, e.getMessage()), e);
-                }
-            }
-
-            /**
-             * For verification of the individual assertions on the response body 
-             * (expect.body.assert.<list of JsonPaths and their expected value>)
-             * 
-             * <p>Iterates through a map of JsonPath expressions and asserts their values against
-             * the response body.
-             *
-             * <p>Features:
-             * - Automatically infers the data type (Boolean, Number, String, Container) and applies 
-             *   the correct AssertJ matcher.
-             * - Collects all assertion failures into a single compiled error report (Strict mode).
-             * - Implements the "Hybrid Short-Circuit": If the moxture has {@code allowFailure: true}, 
-             *   it fails fast on the first error to avoid noisy logs and wasted CPU cycles.
-             * 
-             * @param spec           The moxture definition (used to read the allowFailure flag).
-             * @param assertDef      The map of "$.path" -> "expectedValue".
-             * @param env            The response envelope.
-             * @param baseDir        The anchor directory.
-             * @param vars           The variable context.
-             * @param jsonPathConfig The JsonPath configuration.
-             * @throws Exception     If path evaluation fails fundamentally.
-             */
-            private void verifyBodyAsserts(Model.Moxture spec, Model.ExpectBodyAssertDef assertDef, 
-                                               MoxRuntime.ResponseEnvelope env, String baseDir, 
-                                               Map<String,Object> vars, Configuration jsonPathConfig) throws Exception 
-            {
-                // Read policy from the spec for the short-circuit logic
-                final boolean allowFailure = spec.getOptions() != null 
-                    && Boolean.TRUE.equals(spec.getOptions().getAllowFailure());
-
-                DocumentContext actCtx = com.jayway.jsonpath.JsonPath.using(jsonPathConfig).parse(env.raw());
-                List<String> collectedErrors = new ArrayList<>();
-                
-                // Using a standard for-loop to cleanly handle exceptions and control flow
-                for (Map.Entry<String, JsonNode> entry : assertDef.getPaths().entrySet()) {
-                    String path = entry.getKey();
-                    JsonNode rawExpectedNode = entry.getValue();
-                    
-                    try {
-                        Model.Moxture dummy = new Model.Moxture();
-                        dummy.setBody(rawExpectedNode);
-                        JsonNode expectedNode = bodyResolver.resolve(dummy, baseDir, vars, tpl);
-                        
-                        Object actualValue = actCtx.read(path);
-                        
-                        if (expectedNode.isNull()) {
-                            Assertions.assertThat(actualValue).as("Path '%s'", path).isNull();
-                        } else if (expectedNode.isNumber()) {
-                            Assertions.assertThat(((Number) actualValue).doubleValue())
-                                    .as("Path '%s'", path).isEqualTo(expectedNode.asDouble());
-                        } else if (expectedNode.isBoolean()) {
-                            Assertions.assertThat(actualValue)
-                                    .as("Path '%s'", path).isEqualTo(expectedNode.asBoolean());
-                        } else if (expectedNode.isContainerNode()) {
-                            String expectedJson = jsonMapper.writeValueAsString(expectedNode);
-                            String actualJson = jsonMapper.writeValueAsString(actualValue);
-                            org.skyscreamer.jsonassert.JSONAssert.assertEquals(expectedJson, actualJson, true);
-                        } else {
-                            Assertions.assertThat(String.valueOf(actualValue))
-                                    .as("Path '%s'", path).isEqualTo(expectedNode.asText());
-                        }
-                        
-                    } catch (com.jayway.jsonpath.PathNotFoundException e) {
-                        collectedErrors.add(String.format("Path '%s' was not found in the response.", path));
-                    } catch (AssertionError e) {
-                        collectedErrors.add(e.getMessage());
-                    } catch (Exception e) {
-                        // Infra/Parsing errors still throw immediately, as the JSON/YAML itself is broken
-                        throw new RuntimeException("Failed to evaluate assert for path: " + path, e);
-                    }
-
-                    // THE HYBRID SHORT-CIRCUIT
-                    // If best-effort (allowFailure = true), fail-fast to avoid noisy logs and wasted cycles.
-                    if (allowFailure && !collectedErrors.isEmpty()) {
-                        throw new AssertionError(collectedErrors.get(0));
-                    }
-                }
-
-                // If strict mode, we throw the beautifully compiled list of ALL errors.
-                if (!collectedErrors.isEmpty()) {
-                    throw new AssertionError("Multiple surgical assertions failed:\n- " + String.join("\n- ", collectedErrors));
-                }
-            }
-
-
-            private static String expectedStatusPreview(JsonNode expected) {
-                if (expected == null || expected.isNull()) return "(none)";
-                return expected.toString();
-            }
-
-
-            /**
-             * @param expected  Can be any of:
-             *                    null | int | "2xx"/"3xx"/"4xx"/"5xx" | "201" | "2xx"  ...
-             */
-            private boolean statusMatches(JsonNode expected, int actual) {
-                if (expected == null || expected.isNull()) return true; // optional
-
-                // allow arrays → any element matching is accepted
-                if (expected.isArray()) {
-                    for (JsonNode e : expected) {
-                        if (statusMatches(e, actual)) {
-                            return true;
-                        }
-                    }
-                    return false;
-                }
-
-                if (expected.isInt()) return expected.asInt() == actual;
-                if (expected.isTextual()) {
-                    String s = expected.asText().trim();
-                    if (s.matches("[1-5]xx")) {
-                        int base = (s.charAt(0) - '0') * 100;
-                        return actual >= base && actual < base + 100;
-                    }
-                    try { return Integer.parseInt(s) == actual; }
-                    catch (NumberFormatException ignored) { return false; }
-                }
-                return false;
-            }
-
-            /**
-             * Verifies that a message was broadcasted to a specific STOMP topic.
-             * 
-             * <p>This method implements the asynchronous side-effect verification. It resolves 
-             * the topic name using the current variable context (supporting dynamic paths 
-             * like {@code /topic/{{id}}}) and delegates the assertion to the 
-             * {@link MockWebs} engine.
-             * 
-             * @param expect The expectation definition containing the broadcast details.
-             * @param vars   The variable context (typically {@link CallScopedVars}) used 
-             *               to interpolate the topic name.
-             * @throws AssertionError if the broadcast was expected but did not occur.
-             * @throws IllegalStateException if configuration is missing.
-            */
-            private void verifyBroadcast(Model.Moxture spec, Map<String, Object> vars) 
-            {
-                // 1. Double Guard: Ensure both the 'expect' block and the 'broadcast' block exist
-                if (spec.getExpect() == null || spec.getExpect().getBroadcast() == null) return;
-                
-                Model.ExpectBroadcastDef br = spec.getExpect().getBroadcast();
-                if (br.getTopic() == null) return;
-
-                // 2. Protocol Guard: Using the self-aware Model helper
-                if (!spec.isProtocolStomp()) {
-                    log.warn("[Moxter] Moxture '{}' (protocol: {}) defines 'expect.broadcast' which is only valid for STOMP. Skipping.", 
-                             spec.getName(), (spec.getProtocol() == null ? "http" : spec.getProtocol()));
-                    return;
-                }
-
-                // 3. Dependency Guard: Verify the required tool is available
-                if (this.mockWebs == null) {
-                    throw new IllegalStateException(String.format(
-                        "Moxture '%s' requires broadcast verification, but MockWebs was not provided in the builder.", 
-                        spec.getName()));
-                }
-
-                // 4. Resolve Topic and Type
-                String resolvedTopic = tpl.apply(br.getTopic(), vars);
-                Class<?> payloadClass = "String".equalsIgnoreCase(br.getType()) ? String.class : byte[].class;
-
-                // 5. Execution & Contextual Error Handling
-                log.info("[Moxter] Verifying broadcast to topic: {}", resolvedTopic);
-                try {
-                    mockWebs.verifyBroadcast(resolvedTopic, payloadClass);
-                } catch (AssertionError e) {
-                    throw new AssertionError(String.format("Moxture '%s' failed broadcast verification on topic [%s]: %s", 
-                                             spec.getName(), resolvedTopic, e.getMessage()), e);
-                } catch (Exception e) {
-                    throw new RuntimeException("Internal error during broadcast verification for: " + resolvedTopic, e);
-                }
-            }
-
-        }
-    }
 
     // #############################################################################################
+    // #############################################################################################
+
 
     /**
      * Represents the outcome of a moxture execution.
@@ -3516,7 +1630,7 @@ public final class Moxter
      */
     public static class MoxtureResult 
     {
-        private final MoxRuntime.ResponseEnvelope envelope;
+        private final Wire.ResponseEnvelope envelope;
         private final String moxtureName;
         // Reference to the encompassing engine
         private final Moxter moxter;
@@ -3534,7 +1648,7 @@ public final class Moxter
          * @param moxtureName The name of the moxture that produced this result (for error context).
          * @param moxter      The encompassing Engine.
          */
-        public MoxtureResult(MoxRuntime.ResponseEnvelope envelope, 
+        public MoxtureResult(Wire.ResponseEnvelope envelope, 
                              Moxter moxter, 
                              String moxtureName,
                              Map<String, Object> callVars) {
@@ -3572,7 +1686,7 @@ public final class Moxter
         /**
          * Access to the full envelope including headers.
          */
-        public MoxRuntime.ResponseEnvelope getEnvelope() {
+        public Wire.ResponseEnvelope getEnvelope() {
             return envelope;
         }
 
@@ -3797,8 +1911,8 @@ public final class Moxter
                 lookupContext.putAll(MoxtureResult.this.callVars);
 
                 // 2. Resolve the template
-                MoxRuntime.Templating engine = new MoxRuntime.SimpleTemplating();
-                String resolvedValue = engine.apply(template, lookupContext);
+                IMoxTemplator engine = new MoxSimpleTemplator();
+                String resolvedValue = String.valueOf(engine.apply(template, lookupContext));
 
                 // 3. Perform the assertion
                 return isEqualTo(resolvedValue);
@@ -3828,9 +1942,9 @@ public final class Moxter
              * assertions on different JSON paths or variables.
              * * <p><b>Example:</b></p>
              * <pre>{@code
-             * mx.call("pet")
-             * .assertBody("$.id").isNotNull().and()
-             * .assertBody("$.name").isEqualTo("Snowy");
+             *      mx.call("get_pet")
+             *        .assertBody("$.id").isNotNull().and()
+             *        .assertBody("$.name").isEqualTo("Snowy");
              * }</pre>
              * * @return The original {@link MoxtureResult} caller.
              */
@@ -3929,6 +2043,2506 @@ public final class Moxter
 
 
     // #############################################################################################
+    // #############################################################################################
+
+    public static final class IO
+    {
+
+        /**
+         * Strategy interface for discovering and loading moxture definitions.
+         * 
+         * <p>By abstracting the discovery logic, Moxter can support different loading 
+         * paradigms—such as JUnit-style hierarchical classpath scanning or standalone 
+         * explicit file imports -without modifying the core execution engine.
+         */
+        public interface IMoxLoader {
+
+            /**
+             * Performs the initial load of the primary moxture file (the entry point).
+             * 
+             * <p>For a hierarchical strategy, this is the file closest to the test class. 
+             * For an explicit strategy, this is the file specifically requested by the user.
+             * 
+             * @return A {@link LoadedSuite} containing the parsed entry-point file and its 
+             *         anchor directory.
+             * @throws RuntimeException if the entry-point file cannot be found or parsed.
+             */
+            LoadedSuite loadInitial();
+
+            /**
+             * Resolves the initial variables map used to seed the engine's global context.
+             * 
+             * <p>Implementations determine how these variables are gathered. A hierarchical 
+             * loader might walk up the package tree to merge variables, while an explicit 
+             * loader might only read the current file and its explicit includes.
+             * 
+             * @return A map of variables discovered through the loading strategy, or an empty 
+             *         map if none exist.
+             */
+            Map<String, Object> resolveInitialVars();
+
+            /**
+             * Resolves a moxture definition by name on-demand.
+             * * <p>This method implements the "Anti-Zombie" logic: it only searches paths 
+             * relevant to the current strategy (e.g., package ancestors or explicit includes). 
+             * If a faulty file exists elsewhere in the project, it is ignored unless 
+             * strictly required by the resolution path.</p>
+             * * @param name           The name of the moxture to find (e.g., for a 'basedOn' or 'call' resolution).
+             * @param currentBaseDir The directory of the file currently being processed, used as a starting point for relative lookups.
+             * @return A {@link RawMoxture} containing the unmaterialized definition, or {@code null} if not found.
+             */
+            RawMoxture findByName(String name, String currentBaseDir);
+            // =========================================================================
+            // Data Carriers
+            // =========================================================================
+            /**
+             * Container for a fully parsed Moxture entry-point file and its location.
+             * 
+             * @param suite   The parsed object graph of the YAML file.
+             * @param baseDir The directory where this file resides (used to resolve relative paths like 'classpath:req.json').
+             */
+            record LoadedSuite(Model.MoxtureFile suite, String baseDir) {}
+
+            /**
+             * Container for a raw, unmaterialized moxture discovered during on-demand resolution.
+             * * @param moxt        The raw moxture definition exactly as it appears in the YAML file.
+             * @param baseDir     The directory where this specific moxture's file resides.
+             * @param displayPath A human-readable path (e.g., "classpath:/my/pkg/moxtures.yaml") used for DX-friendly error reporting.
+             */
+            record RawMoxture(Model.Moxture moxt, String baseDir, String displayPath) {}
+        }
+
+
+        // #############################################################################################
+
+        /**
+         * A MoxtureLoader that follows the Java package hierarchy to discover moxtures.
+         * 
+         * <p>This strategy mirrors the test class structure. It starts searching from 
+         * the test's specific package and walks up the tree to the root. This allows 
+         * for localized overrides and global defaults within a shared classpath.</p>
+         * 
+         * Resolve parent by searching upwards (closest → parents → root)
+         */
+        @Slf4j
+        public static class HierarchicalMoxLoader implements IMoxLoader {
+
+            private final Class<?> testClass;
+            private final MoxLoadingConfig cfg;
+            private final MoxYamlMapper yamlMapper;
+            private final MoxClasspathRepository repo;
+
+            public HierarchicalMoxLoader(Class<?> testClass, MoxLoadingConfig cfg, MoxYamlMapper yamlMapper) {
+                this.testClass = Objects.requireNonNull(testClass, "testClass");
+                this.cfg = Objects.requireNonNull(cfg, "cfg");
+                this.yamlMapper = Objects.requireNonNull(yamlMapper, "yamlMapper");
+                this.repo = new MoxClasspathRepository(yamlMapper);
+            }
+
+            @Override
+            public LoadedSuite loadInitial() {
+                MoxClasspathRepository.RepoLoadedSuite res = repo.loadFor(testClass, cfg);
+                return new LoadedSuite(res.suite(), res.baseDir());
+            }
+
+            @Override
+            public RawMoxture findByName(String name, String currentBaseDir) {
+                MoxClasspathRepository.RepoRawMoxture res = repo.findFirstByNameFromBaseDir(testClass, cfg, currentBaseDir, name);
+                return res == null ? null : new RawMoxture(res.call(), res.baseDir(), res.displayPath());
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public Map<String, Object> resolveInitialVars() 
+            {
+                // 1. Convert Class to Resource Path (e.g., "com/fhi/app/MyTest")
+                String pkg = (testClass.getPackageName() == null ? "" : testClass.getPackageName().replace('.', '/'));
+                String startPath = cfg.rootPath + (pkg.isEmpty() ? "" : "/" + pkg);
+                
+                // 2. Add the class sub-directory if configured
+                if (cfg.perTestClassDirectory) {
+                    startPath += "/" + testClass.getSimpleName();
+                }
+
+                // 3. Get the list of potential files from the test class up to the root
+                // Logic: Get every moxtures.yaml from my package up to the root to merge variables
+                // Call the generic walkUp with the string path
+                List<String> candidates = Utils.Classpath.walkUp(startPath, cfg.rootPath, cfg.fileName);
+
+                Map<String, Object> last = null;
+
+                for (String cp : candidates) {
+                    // 2. REPLACED: Tiered classloader logic is now encapsulated here
+                    URL url = Utils.IO.findResource(cp, testClass);
+                    if (url == null) continue;
+
+                    try (InputStream in = url.openStream()) {
+                        // 3. REPLACED: Manual mapper.readValue is now Utils.Yaml.parseFile
+                        // This provides the "Big Red Box" error if a parent YAML is broken
+                        Model.MoxtureFile suite = yamlMapper.parseFile(in, "classpath:/" + cp);
+                        
+                        Map<String, Object> varsFromFile = suite.vars();
+                        if (varsFromFile != null && !varsFromFile.isEmpty()) {
+                            // Completely replace (closest wins)
+                            last = new LinkedHashMap<>(varsFromFile);
+                        }
+                    } catch (IOException e) {
+                        throw new RuntimeException("Failed reading vars from " + cp, e);
+                    }
+                }
+                return (last == null) ? Collections.emptyMap() : last;
+            }
+
+            // =========================================================================
+            // Configuration
+            // =========================================================================
+
+            /** 
+             * Immutable configuration used for locating moxtures on classpath. 
+             */
+            public static final class MoxLoadingConfig {
+                final String rootPath;                // e.g., "integrationtests2/moxtures"
+                final boolean perTestClassDirectory;  // true => add "/{TestClassName}"
+                final String fileName;                // "moxtures.yaml" (includes extension)
+
+                public MoxLoadingConfig(String rootPath, boolean perTestClassDirectory, String fileName) {
+                    this.rootPath = trim(rootPath);
+                    this.perTestClassDirectory = perTestClassDirectory;
+                    this.fileName = trim(fileName);
+                }
+                private static String trim(String s) {
+                    if (s == null) return "";
+                    String out = s.trim();
+                    while (out.startsWith("/")) out = out.substring(1);
+                    while (out.endsWith("/")) out = out.substring(0, out.length() - 1);
+                    return out;
+                }
+            }
+
+            // =========================================================================
+            // Internal Repository Logic
+            // =========================================================================
+
+            /**
+             * Classpath repository:
+             * - Build exact closest path: rootPath + "/" + {package as folders} + ["/{TestClassName}"] + "/" + fileName
+             * - Try TCCL, fall back to test class CL, then this class CL.
+             * - If not found, throw with a clear message.
+             * - Provides hierarchical name lookup helpers.
+             */
+            static final class MoxClasspathRepository {
+                private final MoxYamlMapper yamlMapper;
+
+                MoxClasspathRepository(MoxYamlMapper mapper) { this.yamlMapper = mapper; }
+
+                record RepoLoadedSuite(Model.MoxtureFile suite, String baseDir) {}
+                record RepoRawMoxture(Model.Moxture call, String baseDir, String displayPath) {}
+
+                public RepoLoadedSuite loadFor(Class<?> testClass, MoxLoadingConfig cfg) {
+                    final String classpath = buildClosestClasspath(testClass, cfg);
+                    final String displayPath = "classpath:/" + classpath;
+
+                    URL url = Utils.IO.findResource(classpath, testClass);
+
+                    // CHANGE: Instead of throwing IllegalStateException, handle the missing file gracefully
+                    if (url == null) {
+                        log.warn("[Moxter] No specific moxtures.yaml found for {}. Searched at: {}. " +
+                                "Moxter will rely on parent/global moxtures if available.", 
+                                testClass.getName(), displayPath);
+                        
+                        // Return an empty suite so the engine doesn't crash during boot
+                        return new RepoLoadedSuite(new Model.MoxtureFile(), Utils.IO.parentDirOf(classpath));
+                    }
+
+                    log.debug("[Moxter] Loading {} -> {}", displayPath, url);
+
+                    try (InputStream in = url.openStream()) {
+                        Model.MoxtureFile suite = yamlMapper.parseFile(in, displayPath);
+                        String baseDir = Utils.IO.parentDirOf(classpath);
+                        return new RepoLoadedSuite(suite, baseDir);
+                    } catch (IOException e) {
+                        throw new RuntimeException("Failed loading moxtures: " + displayPath, e);
+                    }
+                }
+
+            /* ===== Hierarchical lookup (helpers) ===== */
+
+                /** Returns candidate ancestor classpaths from closest → root (inclusive). */
+                List<String> candidateAncestorPaths(Class<?> testClass, MoxLoadingConfig cfg) {
+                    List<String> out = new ArrayList<>();
+                    String pkg = (testClass.getPackageName() == null ? "" : testClass.getPackageName().replace('.', '/'));
+
+                    // 1) If per-class dir is enabled, add the closest file first
+                    if (cfg.perTestClassDirectory) {
+                        out.add(cfg.rootPath + (pkg.isEmpty() ? "" : "/" + pkg) + "/" + testClass.getSimpleName() + "/" + cfg.fileName);
+                    }
+
+                    // 2) Then each package ancestor level: root/pkg/.../moxtures.yaml → ... → root/moxtures.yaml
+                    if (!pkg.isEmpty()) {
+                        String[] parts = pkg.split("/");
+                        for (int i = parts.length; i >= 1; i--) {
+                            String prefix = String.join("/", java.util.Arrays.copyOf(parts, i));
+                            out.add(cfg.rootPath + "/" + prefix + "/" + cfg.fileName);
+                        }
+                    }
+
+                    // 3) Finally, the absolute root under cfg.rootPath
+                    out.add(cfg.rootPath + "/" + cfg.fileName);
+                    return out;
+                }
+
+
+                /** 
+                 * Finds the first (closest) occurrence of a moxture by name, starting from an arbitrary baseDir. 
+                 */
+                RepoRawMoxture findFirstByNameFromBaseDir(Class<?> testClass, MoxLoadingConfig cfg,
+                                                        String startBaseDir, String name) {
+                    
+                    // 1. Generate the candidate ancestor paths 
+                    List<String> candidates = Utils.Classpath.walkUp(startBaseDir, cfg.rootPath, cfg.fileName);
+
+                    for (String cp : candidates) {
+                        // We pass testClass to provide the secondary ClassLoader context
+                        URL url = Utils.IO.findResource(cp, testClass); 
+                        
+                        if (url == null) continue;
+
+                        try (InputStream in = url.openStream()) {
+                            Model.MoxtureFile raw = yamlMapper.parseFile(in, "classpath:/" + cp);
+
+                            if (raw.moxtures() == null || raw.moxtures().isEmpty()) continue;
+
+                            for (Model.Moxture f : raw.moxtures()) {
+                                if (name.equals(f.getName())) {
+                                    String baseDir = Utils.IO.parentDirOf(cp);
+                                    return new RepoRawMoxture(f, baseDir, "classpath:/" + cp);
+                                }
+                            }
+                        } catch (IOException e) {
+                            throw new RuntimeException("Failed reading " + cp, e);
+                        }
+                    }
+                    return null;
+                }
+
+
+                private static String buildClosestClasspath(Class<?> testClass, MoxLoadingConfig cfg) {
+                    String pkg = (testClass.getPackageName() == null ? "" : testClass.getPackageName().replace('.', '/'));
+                    String classDir = cfg.perTestClassDirectory ? ("/" + testClass.getSimpleName()) : "";
+                    String base = (pkg.isEmpty() ? cfg.rootPath : (cfg.rootPath + "/" + pkg)) + classDir + "/";
+                    String full = base + cfg.fileName;
+                    log.debug("[Moxter] Expecting moxtures at: classpath:/{} for {}", full, testClass.getName());
+                    return full;
+                }
+            }
+        }
+
+        // #############################################################################################
+
+
+        /**
+         * Internal engine component responsible for the discovery, inheritance, and flattening 
+         * of moxture definitions ("linking").
+         * 
+         * <p>The {@code MoxLinker} handles the "Linking" (aka "Materialization") phase of the moxture
+         * lifecycle. 
+         * Its primary responsibility is to transform a declarative YAML definition — which may 
+         * use hierarchical inheritance via {@code basedOn} — into a flat {@code LinkedMoxture}
+         * ready to be passed on to the next phase (interpolation).
+         * 
+         * <p><b>Key Responsibilities:</b>
+         *   - <b>Lookup:</b> Performs a "closest-first" search for moxtures by name, 
+         *        starting from the test class directory and walking up through parent packages 
+         *        to the root moxtures directory.
+         *   - <b>Deep Materialization:</b> Recursively resolves inheritance chains (via {@code basedOn} 
+         *        or {@code extends}). It merges parents and children using specific precedence rules:
+         *     <ul>
+         *       - Scalars (method, endpoint) are overridden by the child.
+         *       - Maps (headers, query, vars) are shallow-merged (child wins).
+         *       - Lists (save, moxtures) are replaced entirely by the child.
+         *     </ul>
+         *    
+         *    - <b>Cycle Detection:</b> Prevents infinite recursion in inheritance chains by 
+         *        maintaining a visiting stack and throwing an {@link IllegalStateException} 
+         *        if a cycle is detected.
+         *    - <b>Body Stacking:</b> Instead of merging JSON bodies during resolution, 
+         *         builds a {@code bodyStack} to preserve the hierarchy. This allows the 
+         *        {@code BodyResolver} to handle variable interpolation and deep-merging 
+         *        correctly at runtime.
+         * 
+         * <p><b>Caching:</b> Resolved moxtures are cached in the {@code materializedCache} 
+         * to ensure performance and consistency throughout the test suite execution.
+         */
+        public static final class MoxLinker
+        {
+            // Reference to the root encompassing engine
+            private final Moxter moxter;
+
+            protected MoxLinker(Moxter moxter) {
+                this.moxter = moxter;
+            }
+
+            /**
+             * An internal container representing a fully "linked" moxture (aka materialized).
+             *
+             * <p>This class pairs a linked moxture definition (where all 
+             * {@code basedOn} inheritance and hierarchical merging have been flattened) 
+             * with the physical classpath directory where it was discovered.
+             *
+             * <p>Keeping track of the {@code baseDir} is critical during the execution phase, 
+             * as it acts as the anchor point for resolving relative file imports (e.g., when 
+             * a body or multipart file is defined as {@code "classpath:request.json"}).
+             */
+            private static final class LinkedMoxture 
+            {
+                /**
+                 * The fully materialized moxture definition (with all 'basedOn' inheritance 
+                 * deeply merged). 
+                 */
+                final Model.Moxture moxt;
+
+                /** 
+                 * The classpath directory where this moxture was discovered. 
+                 * Used as the anchor point for resolving relative file imports.
+                 */
+                final String baseDir;
+
+                LinkedMoxture(Model.Moxture moxt, String baseDir) 
+                { this.moxt = moxt; this.baseDir = baseDir; 
+                }
+            }
+
+            /** 
+             * Key for memorizing materialized/effective moxtures by scope (baseDir) and name. 
+             */
+            private static final class LinkedMoxtureKey 
+            {
+                final String baseDir; // classpath dir where the moxture is defined
+                final String name;
+                
+                LinkedMoxtureKey(String baseDir, String name) { this.baseDir = baseDir; this.name = name; }
+                
+                public boolean equals(Object o)
+                { if(this==o)return true;
+                    if(!(o instanceof LinkedMoxtureKey)) return false;
+                    LinkedMoxtureKey k=(LinkedMoxtureKey)o;
+                    return Objects.equals(baseDir,k.baseDir)&&Objects.equals(name,k.name); 
+                }
+                
+                public int hashCode(){ return Objects.hash(baseDir,name); }
+
+                public String toString(){ return baseDir+":"+name; }
+            }
+
+
+            /** 
+             * Materialize a moxture to a flattened, materialized moxture (closest → parents),
+             * with its baseDir. 
+             */
+            private LinkedMoxture linkByName(String name)
+            {
+                // 1) Try closest file first
+                Model.Moxture local = moxter.byName.get(name);
+                if (local != null) {
+                    Model.Moxture mat = linkDeep(local, moxter.moxturesBaseDir, new ArrayDeque<>(), new HashSet<>());
+                    return new LinkedMoxture(mat, moxter.moxturesBaseDir);
+                }
+
+                // 2) Delegate discovery to the Strategy Loader
+                IMoxLoader.RawMoxture found = moxter.loader.findByName(name, moxter.moxturesBaseDir);
+                if (found == null) {
+                    throw new IllegalArgumentException("Moxture/Group not found by name: " + name);
+                }
+
+                // Ensure deep materialization from the found scope
+                Model.Moxture mat = linkDeep(found.moxt(), found.baseDir(), new ArrayDeque<>(), new HashSet<>());
+                return new LinkedMoxture(mat, found.baseDir());
+            }
+
+
+            /**
+             * Fully materialize a moxture: follow {@code basedOn} across files to any depth.
+             * 
+             * Merges at each step with child precedence, using existing merge rules:
+             *  - Scalars: child overrides
+             *  - headers/query (maps): shallow merge, child wins
+             *  - save / moxtures (lists-of-names): REPLACE
+             *  - body: deep-merge objects; arrays/scalars replace
+             *
+             * Cycle-safe with a visiting set + stack (human-friendly chain on error).
+             */
+            private Model.Moxture linkDeep(Model.Moxture node,
+                                                    String nodeBaseDir,
+                                                    Deque<LinkedMoxtureKey> stack,
+                                                    Set<LinkedMoxtureKey> visiting)
+            {
+                if (node == null) return null;
+
+                final String parentName = Utils.Misc.firstNonBlank(node.getBasedOn(), node.getBasedOn());
+                final String nodeName = (node.getName() == null || node.getName().isBlank()) 
+                                            ? "<unnamed>" 
+                                            : node.getName();
+                final LinkedMoxtureKey key = new LinkedMoxtureKey(nodeBaseDir, nodeName);
+
+                // Cache
+                Model.Moxture cached = moxter.materializedCache.get(key);
+                if (cached != null) return cached;
+
+                // No inheritance → normalize + cache
+                if (parentName == null || parentName.isBlank()) {
+                    Model.Moxture normalized = Helper.cloneWithoutBasedOn(node);
+                    moxter.materializedCache.put(key, normalized);
+                    return normalized;
+                }
+
+                // Cycle guard
+                if (!visiting.add(key)) {
+                    StringBuilder sb = new StringBuilder("Cycle in basedOn: ");
+                    for (LinkedMoxtureKey k : stack) sb.append(k).append(" -> ");
+                    sb.append(key);
+                    throw new IllegalStateException(sb.toString());
+                }
+                stack.addLast(key);
+
+                
+                // Resolve parent by searching via the Strategy Loader
+                IMoxLoader.RawMoxture parentResolved = moxter.loader.findByName(parentName, nodeBaseDir);
+
+                if (parentResolved == null) {
+                    throw new IllegalArgumentException(
+                        "basedOn refers to unknown moxture '" + parentName + "' (searched from " + nodeBaseDir + ")"
+                    );
+                }
+
+                // Recurse
+                Model.Moxture materializedParent =
+                        linkDeep(parentResolved.moxt(), parentResolved.baseDir(), stack, visiting);
+                // Merge parent → child (child overrides)
+                Model.Moxture merged = new Model.Moxture();
+                merged.setName(node.getName());
+
+                // Protocol: check: redefeining the protocol at child level is not allowed (makes no sense)
+                String parentProto = materializedParent.getProtocol();
+                String childProto = node.getProtocol();
+                if (childProto != null && !childProto.isBlank() && parentProto != null && !parentProto.isBlank()) {
+                    if (!childProto.equalsIgnoreCase(parentProto)) {
+                        throw new IllegalStateException(String.format(
+                            "Moxture '%s' attempts to override parent protocol '%s' with '%s'. Protocol overriding is not allowed.",
+                            nodeName, parentProto, childProto
+                        ));
+                    }
+                }
+                merged.setProtocol(Utils.Misc.firstNonBlank(childProto, parentProto));
+
+                merged.setMethod(Utils.Misc.firstNonBlank(node.getMethod(), materializedParent.getMethod()));
+                merged.setEndpoint(Utils.Misc.firstNonBlank(node.getEndpoint(), materializedParent.getEndpoint()));
+                merged.setExpect(node.getExpect() != null ? node.getExpect() : materializedParent.getExpect());
+                merged.setOptions(node.getOptions() != null ? node.getOptions() : materializedParent.getOptions());
+                merged.setHeaders(Utils.Misc.mergeMap(materializedParent.getHeaders(), node.getHeaders()));
+                merged.setVars(Utils.Misc.mergeMap(materializedParent.getVars(), node.getVars()));
+                merged.setQuery(Utils.Misc.mergeMap(materializedParent.getQuery(), node.getQuery()));
+                // For "save": replace instead of merge (no inheritance unless explicitly set on the child)
+                merged.setSave(node.getSave() != null ? node.getSave() : materializedParent.getSave());
+                // For "moxtures" (group list): replace instead of merge
+                merged.setMoxtures(node.getMoxtures() != null ? node.getMoxtures() : materializedParent.getMoxtures());
+                merged.setMultipart(node.getMultipart() != null ? node.getMultipart() : materializedParent.getMultipart());
+
+                // Merge options block:
+                Model.RootOptionsDef parentOpts = materializedParent.getOptions();
+                Model.RootOptionsDef childOpts = node.getOptions();
+                
+                if (parentOpts != null || childOpts != null) {
+                    Model.RootOptionsDef mergedOpts = new Model.RootOptionsDef();
+                    if (parentOpts == null) parentOpts = new Model.RootOptionsDef();
+                    if (childOpts == null) childOpts = new Model.RootOptionsDef();
+
+                    mergedOpts.setVerbose(childOpts.getVerbose() != null ? childOpts.getVerbose() : parentOpts.getVerbose());
+                    mergedOpts.setAllowFailure(childOpts.getAllowFailure() != null ? childOpts.getAllowFailure() : parentOpts.getAllowFailure());
+                    merged.setOptions(mergedOpts);
+                }
+
+                // Body block: Build the stack instead of merging nodes
+                List<JsonNode> combinedStack = new ArrayList<>(materializedParent.getBodyStack());
+                if (node.getBody() != null) {
+                    combinedStack.add(node.getBody());
+                }
+                merged.setBodyStack(combinedStack);
+                
+                // Keep the 'body' field pointing to the latest definition for backward compatibility
+                merged.setBody(node.getBody() != null ? node.getBody() : materializedParent.getBody());
+
+                // Clear inheritance markers on the final node
+                merged.setBasedOn(null);
+
+                Helper.validateMoxture(merged);
+
+                moxter.materializedCache.put(key, merged);
+                stack.removeLast();
+                visiting.remove(key);
+                return merged;
+            }
+
+        }
+
+
+
+
+        /**
+         * A specialized YAML mapper acting as a **Structural Preprocessor** and version-agnostic
+         * bridge for the Moxter engine.
+         *
+         * <p> **Requirement: Phase 1 (Preprocessing)**
+         * This class ensures that all template injections occur at the very beginning of the YAML lifecycle. 
+         * By patching the raw Map structure immediately after parsing, it guarantees that all inherited 
+         * variables and body fragments are present before the engine attempts POJO mapping or variable 
+         * interpolation.
+         *
+         * <p> **The __template__ Directive**
+         * Implements a custom "C-style" include system. This 
+         * preprocessor resolves named references against a local '.template' registry, 
+         * making for a good replacement for projects using versions of the SnakeYAML library < 1.x.
+         * where the "merge key" is unavaible.
+         * 
+         * <p> <b>Historical Context:</b>
+         * The merge key was a standard feature in YAML 1.1 but was moved to an optional 
+         * extension in YAML 1.2. Consequently, modern YAML parsers like SnakeYAML have 
+         * disabled this feature by default for security and specification compliance.
+         * This allowed us to inject an anchored template into a set of variable somewhere else in the
+         * yaml structure.
+         * 
+         * <p>E.g. 
+         * <pre>{@code
+         *      .templates:
+         *        # 1. Define an anchor (&) named 'common_headers'
+         *        default_headers: &common_headers
+         *          Content-Type: "application/json"
+         *          Accept: "application/json"
+         *      
+         *      moxtures:
+         *        - name: get_pet_details
+         *          method: GET
+         *          endpoint: "/api/pets/1"
+         *          # 2. Use the merge key (<<) and alias (*) to inject the anchored data
+         *          headers:
+         *            <<: *common_headers
+         *            X-Trace-ID: "abc-123" # Local keys are preserved or override the merge
+         *  }</pre>
+         * 
+         * <p> <b>Version Compatibility & Constraints:</b>
+         * - <b>SnakeYAML 2.0+:</b> Introduced {@code LoaderOptions.setProcessMerge(true)} 
+         *   to re-enable this feature natively.
+         * - <b>SnakeYAML 1.x:</b> Does not support native merge key toggling.
+         * 
+         * Projects that do not have the option of using SnakeYAML 2.0+ can use this '__template__'
+         * feature as a replacement.
+         */
+        @Slf4j
+        public static final class MoxYamlMapper 
+        {
+
+
+            private static final String TEMPLATE_INJECTION_KEY = "__template__";
+            private static final String TEMPLATE_SECTION_NAME  = ".templates";
+
+
+
+            // The underlying Jackson ObjectMapper configured with a YAMLFactory.
+            @Getter
+            private final ObjectMapper wrappedMapper;
+
+            // Capability flag determined at initialization via reflection.
+            private final boolean nativeMergeSupported;
+
+
+            private MoxYamlMapper(ObjectMapper mapper, boolean nativeMergeSupported) {
+                this.wrappedMapper = mapper;
+                this.nativeMergeSupported = nativeMergeSupported;
+            }
+
+            /**
+             * Factory method that "sniffs" the classpath environment to configure the YAML engine.
+             * 
+             * - Attempts to enable native merge support via reflection on 
+             *   {@link org.yaml.snakeyaml.LoaderOptions#setProcessMerge(boolean)}.
+             * - Gracefully falls back if SnakeYAML 1.x (v1.33) is detected, marking the mapper for
+             *   manual patching.
+             * - Configures the Jackson pipeline to ignore unknown properties and handle date 
+             *   serialization safely.
+             * @return A capability-aware {@code MoxYamlMapper} instance.
+             */
+            public static MoxYamlMapper create() {
+                org.yaml.snakeyaml.LoaderOptions loaderOptions = new org.yaml.snakeyaml.LoaderOptions();
+                boolean supported = false;
+
+                try {
+                    // Attempt to enable native YAML 1.1 merge (SnakeYAML 2.0+)
+                    java.lang.reflect.Method setProcessMerge = org.yaml.snakeyaml.LoaderOptions.class
+                            .getMethod("setProcessMerge", boolean.class);
+                    setProcessMerge.invoke(loaderOptions, true);
+                    supported = true;
+                    log.debug("[Moxter] Native YAML 1.1 merge key (<<) support enabled.");
+                } catch (NoSuchMethodException e) {
+                    log.debug("[Moxter] SnakeYAML 1.x detected (v1.33): Manual merge patch will be applied.");
+                } catch (Exception e) {
+                    log.warn("[Moxter] Error configuring YAML loader: {}", e.getMessage());
+                }
+
+                YAMLFactory factory = YAMLFactory.builder().loaderOptions(loaderOptions).build();
+                ObjectMapper om = new ObjectMapper(factory)
+                        .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+                        .configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
+
+                return new MoxYamlMapper(om, supported);
+            }
+
+            /**
+             * The primary orchestrator for transforming a YAML stream into a fully materialized 
+             * {@link Model.MoxtureFile}.
+             * 
+             * <p> The transformation follows a specific "Extraction-then-Patch" lifecycle: 
+             * - 1. Raw Read: Parses the stream into a generic Map structure to allow structural 
+             *      manipulation.
+             * - 2. Registry Capture: Identifies the {@code .templates} block to act as a lookup table 
+             *      for includes.
+             * - 3. Manual Patching: Recursively resolves {@code __template__} directives and flattens 
+             *      data blocks.
+             * - 4. POJO Mapping: Converts the finalized, flattened Map into the target model objects.
+             * 
+             * @param in The YAML input stream.
+             * @param displayPath Path used for enhanced "Big Red Box" syntax error reporting.
+             * @return A patched MoxtureFile ready for execution.
+             * @throws IOException If the file is unreachable or contains invalid syntax.
+             */
+            public Model.MoxtureFile parseFile(InputStream in, String displayPath) throws IOException {
+                try {
+                        // 1. Read into intermediate Map to allow manual structural modification
+                        Map<String, Object> raw = wrappedMapper.readValue(in, 
+                                new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+
+                        // 2. Extract the Custom Registry (The .templates block)
+                        // This acts as our "Header File" or "C-Directive" store
+                        Map<String, Object> registry = (Map<String, Object>) raw.get(TEMPLATE_SECTION_NAME);
+
+                        // 3. Apply the manual patch, passing the registry for lookup
+                        if (!nativeMergeSupported || registry != null) {
+                            preprocess(raw, registry);
+                        }
+
+                        // 4. Map the patched structure to our final Model
+                        return wrappedMapper.convertValue(raw, Model.MoxtureFile.class);
+
+                } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                    // Re-use your existing "Big Red Box" error reporting here
+                    throw new RuntimeException("YAML Syntax Error in " + displayPath, e);
+                }
+            }
+
+            /**
+             * The recursive engine responsible for resolving custom directives and structural merges.
+             * 
+             * <p> <b>Implementation Details</b>: 
+             * - <b>{@code __template__} resolution</b>: If a Map contains the {@code __template__} key as a String,
+             *   it retrieves the corresponding block from the {@code .templates} registry.
+             * - <b>Priority Merging</b>: Uses {@code putIfAbsent} semantics to ensure that local variables
+             *    defined in the moxture always win over template defaults: i.e. if a variable is 
+             *    already defined in the moxture where the injection is requested, the template's
+             *    version of the variable will not override the local definition of the variable.
+             * - <b>How the template is resolved</b>: If you provide a plain name 
+             *   (e.g. {@code __template__: ckeVars}), we manually fetch that block from the 
+             *   {@code .templates} registry. If you use a YAML alias 
+             *   (e.g. {@code __template__: *ckeVars}), the parser already resolved it into a Map. 
+             *   We skip the lookup and use the data directly.
+             * - <b>Recursive Crawl</b>: Recursively visits every Map and List in the tree, ensuring that 
+             *   includes work inside nested bodies or variable blocks. I.e. will find and resolve
+             *   {@code __template__} directives inside {@code vars}, {@code body}, or nested objects.
+             * 
+             * <p> <b>Template-in-Template Support (Nesting & Chaining)</b>:
+             * <p> The preprocessor supports multi-level inheritance and complex composition:
+             * - <b>Nesting</b>: A template can contain a nested object that defines its own
+             *    {@code __template__}. This is useful for injecting standard sub-structures 
+             *   (like an audit header) into a specific part of a JSON body.
+             * - <b>Chaining</b>: A template can include another template at its own root level. 
+             *   This allows you to build a hierarchy where specialized templates extend generic ones.
+             *
+             * <p> Example of Chaining (Inheritance):
+             * <pre>
+             *    .templates:
+             *      base: { p.class: "Order" }
+             *      spec: { __template__: base, p.id: 123 }
+             * </pre>
+             * 
+             * <p> Using {@code __template__: spec} results in: {@code { p.class: "Order", p.id: 123 }}
+             *
+             * @param input The current node in the object graph (Map, List, or Scalar).
+             * @param registry The lookup table of reusable templates defined at the file root
+             *                  (by convention '.templates')
+             */
+            @SuppressWarnings("unchecked")
+            private void preprocess(Object input, Map<String, Object> registry) {
+                if (input instanceof Map) {
+                    Map<String, Object> map = (Map<String, Object>) input;
+                    
+                    // 1. Resolve all templates at the CURRENT level first (Chaining)
+                    // Using a while loop handles cases where one template pulls in another
+                    while (map.containsKey(TEMPLATE_INJECTION_KEY)) {
+                        Object templateRef = map.remove(TEMPLATE_INJECTION_KEY);
+                        
+                        if (templateRef instanceof String name && registry != null) {
+                            Object templateData = registry.get(name);
+                            if (templateData instanceof Map) {
+                                // Local definitions still take priority (putIfAbsent)
+                                ((Map<String, Object>) templateData).forEach(map::putIfAbsent);
+                            }
+                        } else if (templateRef instanceof Map) {
+                            // Handles standard YAML aliases if resolved to a Map
+                            ((Map<String, Object>) templateRef).forEach(map::putIfAbsent);
+                        }
+                    }
+
+                    // 2. Dive into NESTED maps/lists (Recursion)
+                    // Now that the top level is expanded, we check every child
+                    new ArrayList<>(map.values()).forEach(child -> preprocess(child, registry));
+
+                } else if (input instanceof List) {
+                    ((List<?>) input).forEach(item -> preprocess(item, registry));
+                }
+            }
+        }
+
+
+
+
+    }
+
+    // #############################################################################################
+    // #############################################################################################
+
+    public static final class Engine
+    {
+        // #########################################################################################
+
+        /**
+         * <b>Phase 4: The MoxResolver (Snapshot Resolution)</b>
+         *
+         * <p> The MoxResolver is the "Brain" of the execution pipeline. Its sole responsibility 
+         * is to transform a dynamic {@link Model.Moxture} (full of placeholders and inheritance 
+         * stacks) into a <b>Resolved Moxture</b>—a literal, executable snapshot where every 
+         * variable has been "baked" into its final literal value.
+         *
+         * <p> <b>Architectural Role:</b>
+         * By centralizing interpolation here, we enforce a strict <b>Resolution Boundary</b>. 
+         * Protocol executors (HTTP, STOMP) no longer need to understand variable precedence, 
+         * unboxing, or dynamic topics; they simply "consume" the literal strings and objects 
+         * produced by this resolver.
+         *
+         * <p> <b>Resolution Lifecycle:</b>
+         * - Snapshotting: Creates a transient clone of the moxture via {@link Helper} to 
+         *   prevent "Shared Cache Poisoning".
+         * - Precedence Enforcement: Uses the merged variable context (Java > YAML > Global) to 
+         *   resolve every field.
+         * - Type Recovery: Preserves native Java types (Booleans, Longs, Lists) during 
+         *   interpolation to satisfy strict backend requirements.
+         * - Deferred Deep Merging: Triggers the {@link BodyResolver} to resolve and blend the 
+         *   inheritance stack into a single literal JSON body.
+         */
+        static final class MoxResolver 
+        {
+            /**
+             * Resolves a moxture blueprint into a literal, executable snapshot.
+             *
+             * <p> This method gathers the ingredients (context and blueprint), clones the spec 
+             * to protect the cache, and resolves all dynamic strings and structures.
+             *
+             * @param blueprint    The materialized moxture template (from the cache).
+             * @param baseDir      The anchor directory for resolving relative file paths.
+             * @param context      The prioritized variable context (Call-scoped + Globals).
+             * @param bodyResolver The engine used to resolve and deep-merge the body stack.
+             * @param tpl          The templating engine for string interpolation.
+             * @return A "Resolved" {@link Model.Moxture} containing only literal values.
+             * @throws IOException If body resolution or classpath loading fails.
+             */
+            public static Model.Moxture resolve(Model.Moxture blueprint, 
+                                                String baseDir, 
+                                                Map<String, Object> context, 
+                                                BodyResolver bodyResolver, 
+                                                IMoxTemplator tpl) throws IOException 
+            {
+                
+                // 1. Create the disposable "Cake" pan (Clone)
+                // Detaches the execution spec from the static cache.
+                Model.Moxture resolved = Helper.cloneWithoutBasedOn(blueprint);
+
+                // 2. Resolve the Metadata
+                resolved.setProtocol(resolveString(blueprint.getProtocol(), context, tpl));
+                resolved.setMethod(resolveString(blueprint.getMethod(), context, tpl));
+                resolved.setEndpoint(resolveString(blueprint.getEndpoint(), context, tpl));
+
+                // 3. Resolve the Maps (Headers, Query)
+                resolved.setHeaders(resolveMapValues(blueprint.getHeaders(), context, tpl));
+                resolved.setQuery(resolveMapValues(blueprint.getQuery(), context, tpl));
+
+                // 4. Resolve the Body (The Layered JSON)
+                // Resolves placeholders in each layer before deep-merging them.
+                resolved.setBody(bodyResolver.resolve(blueprint, baseDir, context, tpl));
+
+                // 5. Resolve the Expectations (Dynamic topics or broadcast assertions)
+                resolved.setExpect(resolveExpectations(blueprint.getExpect(), context, tpl));
+
+                // 6. Resolve Multipart Metadata (Dynamic filenames/part names)
+                resolved.setMultipart(resolveMultipart(blueprint.getMultipart(), context, tpl));
+
+                return resolved;
+            }
+
+
+            /**
+             * Interpolates a single template string into its literal form, handling variable unboxing.
+             *
+             * <p> Uses the templating engine to replace placeholders while preserving the underlying 
+             * Java type's string representation.
+             * 
+             * <p> Handles unboxed IDs and native types (Long, Boolean) gracefully for the protocol wire.
+             */
+            private static String resolveString(String raw, Map<String, Object> context, IMoxTemplator tpl) 
+            {
+                if (raw == null) return null;
+                // String.valueOf() handles unboxed IDs and native types gracefully.
+                return String.valueOf(tpl.apply(raw, context));
+            }
+
+            /**
+             * Resolves all values within a map, typically used for HTTP Headers or Query Parameters.
+             *
+             * <p> Iterates through the provided map and ensures every value is processed through 
+             * the "resolving" phase before execution.
+             *
+             * <p> Maintains the original map's insertion order via LinkedHashMap.
+             */
+            private static Map<String, String> resolveMapValues(Map<String, String> raw, 
+                                                                Map<String, Object> context,
+                                                                IMoxTemplator tpl) 
+            {
+                if (raw == null) return null;
+                Map<String, String> resolved = new LinkedHashMap<>();
+                raw.forEach((k, v) -> resolved.put(k, resolveString(v, context, tpl)));
+                return resolved;
+            }
+
+            /**
+             * Resolves dynamic fields within the expectation block.
+             *
+             * <p> This is a vital step for asynchronous protocols like STOMP, where the 
+             * broadcast topic path (e.g., /topic/cke/${p.id}) must be resolved before verification.
+             *
+             * <p> Status codes are treated as literal nodes and passed through without interpolation.
+             */
+            private static Model.ExpectDef resolveExpectations( Model.ExpectDef raw, 
+                                                                Map<String, Object> context, 
+                                                                IMoxTemplator tpl) 
+            {   if (raw == null) return null;
+                Model.ExpectDef resolved = new Model.ExpectDef();
+                resolved.setStatus(raw.getStatus()); // Status codes are literal nodes
+                resolved.setBody(raw.getBody());
+                
+                if (raw.getBroadcast() != null) {
+                    Model.ExpectBroadcastDef b = new Model.ExpectBroadcastDef();
+                    // Topic interpolation: e.g. /topic/ckeditor/field/${p.fieldName}/published
+                    b.setTopic(resolveString(raw.getBroadcast().getTopic(), context, tpl));
+                    b.setType(raw.getBroadcast().getType());
+                    resolved.setBroadcast(b);
+                }
+                return resolved;
+            }
+
+            /**
+             * Resolves multipart metadata, ensuring part names and filenames are literal.
+             *
+             * <p> Transforms dynamic part definitions into a literal snapshot for the multipart 
+             * request builder.
+             *
+             * <p> The part body is intentionally left raw here to be resolved by the executor, 
+             * allowing for specialized binary stream handling.
+             */
+            private static List<Model.MultipartDef> resolveMultipart(
+                    List<Model.MultipartDef> raw,
+                    Map<String, Object> context, IMoxTemplator tpl) 
+            {
+                if (raw == null) return null;
+                List<Model.MultipartDef> resolved = new ArrayList<>();
+                for (Model.MultipartDef part : raw) {
+                    Model.MultipartDef resolvedPart = new Model.MultipartDef();
+                    resolvedPart.setName(resolveString(part.name, context, tpl));
+                    resolvedPart.setType(part.type); 
+                    resolvedPart.setFilename(resolveString(part.filename, context, tpl));
+                    // Part bodies are resolved later by the executor.
+                    resolvedPart.setBody(part.body); 
+                    resolved.add(resolvedPart);
+                }
+                return resolved;
+            }
+        }  //MoxResolver
+
+        // #########################################################################################
+
+        /**
+         * Responsible strictly for extracting values from the network response and saving them 
+         * into the variable context.
+         * 
+         * <p>This component mutates the running state of the test. It runs before assertions 
+         * to ensure that even if a moxture fails (and 'allowFailure' is true), any successfully 
+         * generated IDs or tokens are still captured for subsequent steps.
+         */
+        @Slf4j
+        static final class VarExtractor 
+        {
+            /**
+             * Evaluates the 'save' block of a moxture using JsonPath.
+             * 
+             * <p> Implements a two-step resolution process:
+             * - <b>Interpolation:</b> The value is first processed by the templating engine. 
+             *   This enables <b>Dynamic JsonPaths</b> (e.g., using a variable within a path) 
+             *   and <b>Variable Promotion</b> (e.g., {@code global.petId: ${p.petId}}).
+             * - <b>Identification:</b> The resolved string is inspected. If it starts with a 
+             *   JsonPath trigger ({@code $.} or {@code $[} or {@code ..}), it is evaluated against 
+             *   the response body. Otherwise, it is saved as a literal value.
+             *
+             * <p> Saved values are written to the global variable context, making them persistent 
+             * for all subsequent moxture calls in the test scenario.
+             * 
+             * @param spec           The moxture definition containing the 'save' map.
+             * @param env            The network response envelope.
+             * @param vars           The live variable context where extracted values will be written.
+             * @param name           The name of the current moxture (used for logging).
+             * @param jsonPathConfig The JsonPath configuration (strict or lax).
+             */
+            public void extractAndSave(Model.Moxture spec, Wire.ResponseEnvelope env, 
+                                        Map<String,Object> vars, String name, 
+                                        Configuration jsonPathConfig) 
+            {
+                Map<String, String> saveMap = spec.getSave();
+                if (saveMap == null || saveMap.isEmpty()) return;
+
+                for (Map.Entry<String, String> e : saveMap.entrySet()) {
+                    String rawValue = e.getValue();
+                    
+                    // 1. Interpolate first (resolves ${p.threadId}, {{var}}, or mx.func())
+                    Object interpolatedObj = IMoxTemplator.interpolate(rawValue, vars);
+                    String interpolated = String.valueOf(interpolatedObj);
+
+                    // 2. Identify Intent: Is it a JsonPath or a Literal?
+                    // Heuristic: JsonPaths start with $ (standard) or .. (deep scan)
+                    boolean isJsonPath = interpolated.startsWith("$.") || 
+                                            interpolated.startsWith("$[") || 
+                                            interpolated.startsWith("..") ||
+                                            interpolated.startsWith("(");     // "unboxing syntax"
+                    // "unboxing syntax" = the JsonPath trick of wrapping a filter expression
+                    // in parentheses and adding a bracket index at the end, like
+                    // ($.path[?(@.type=='X')])[0].
+
+                    log.debug("[Moxter][FHI] Extractor: var='{}', interpolated='{}', isJsonPath={}", 
+                                                    e.getKey(), interpolated, isJsonPath);
+
+                    if (isJsonPath && env.body() != null) {
+                        try {
+                            DocumentContext ctx = JsonPath.using(jsonPathConfig).parse(env.raw());
+                            Object extractedValue = ctx.read(interpolated);
+                            
+                            // Save the extracted result (Object, List, etc.)
+                            vars.put(e.getKey(), extractedValue);
+                        } catch (Exception ex) {
+                            // Fallback: If it looked like a path but failed (or returned null), 
+                            // we save the interpolated string as a literal.
+                            log.warn("[Moxter] JsonPath extraction failed for '{}' in moxture '{}'. Saving as literal.", interpolated, name);
+                            vars.put(e.getKey(), interpolated);
+                        }
+                    } else {
+                        // 3. VARIABLE PROMOTION / LITERALS
+                        // If it's not a JsonPath (e.g. "cke.threadId: ${p.threadId}"),
+                        // we just take the resolved result and put it into the global scope.
+                        vars.put(e.getKey(), interpolatedObj); 
+                    }
+                }
+                log.debug("[Moxter] Extracted/Promoted vars from '{}': {}", name, saveMap.keySet());
+            }
+        }  // VarExtractor
+
+
+        // #########################################################################################
+
+        /**
+         * Protocol-agnostic evaluation engine responsible for processing the 'expect' 
+         * directives from a moxture definition against a standardized HTTP/STOMP/... response envelope.
+         * 
+         * <p>By separating the evaluation logic from the network dispatchers (executors), 
+         * Moxter ensures that assertions behave identically regardless of the underlying 
+         * transport protocol. This class acts as the final gatekeeper in the moxture lifecycle.
+         */
+        @Slf4j
+        static final class ExpectVerifier 
+        {
+            private final BodyResolver bodyResolver;
+            private final ObjectMapper jsonMapper;
+            private final IMoxTemplator tpl;
+
+            // We'll need it for STOMP moxtures to verify the expect.broadcast 
+            private final MockWebs mockWebs;
+
+            /**
+             * Constructs a new verifier with the necessary tools to interpolate strings, 
+             * parse JSON, and evaluate HTTP statuses.
+             * 
+             * @param bodyResolver  Engine to resolve expected JSON payloads (including classpath imports).
+             * @param jsonMapper    Jackson mapper for generic JSON tree manipulations.
+             * @param tpl           Templating engine for variable interpolation.
+             * @param mockWebs      We'll need it for STOMP moxtures to verify the expect.broadcast
+             *                      If we're doing just HTTP, pass null.
+             */
+            ExpectVerifier(BodyResolver bodyResolver, 
+                           ObjectMapper jsonMapper,
+                           IMoxTemplator tpl,
+                           MockWebs mockWebs
+                        ) 
+            {
+                this.bodyResolver = Objects.requireNonNull(bodyResolver, "bodyResolver");
+                this.jsonMapper   = Objects.requireNonNull(jsonMapper, "jsonMapper");
+                this.tpl          = Objects.requireNonNull(tpl, "tpl");
+                this.mockWebs     = mockWebs; // Null is acceptable here
+            }
+
+            /**
+             * The primary entry point for response validation. Orchestrates the evaluation of 
+             * status codes, full JSON body matching, and surgical JsonPath assertions.
+             * 
+             * @param spec           The moxture definition containing the 'expect' block.
+             * @param env            The network response envelope to be evaluated.
+             * @param baseDir        The anchor directory for resolving any expected classpath payloads.
+             * @param vars           The variable context used to template expected values.
+             * @param name           The name of the moxture (for error reporting).
+             * @param jsonPathConfig The JsonPath configuration (strict or lax).
+             * @throws Exception     If a systemic parsing error occurs.
+             * @throws AssertionError If any expectation is violated.
+             */
+            public void verifyExpectations(Model.Moxture spec, Wire.ResponseEnvelope env, 
+                                           String baseDir, Map<String,Object> vars, 
+                                           String name, Configuration jsonPathConfig) throws Exception 
+            {
+                if (spec.getExpect() == null) return;
+
+                // 1. Check Status
+                verifyStatus(spec, env, name);
+
+                // 2. Check Body Assertions
+                Model.ExpectBodyDef bodyDef = spec.getExpect().getBody();
+                if (bodyDef != null)
+                {
+                    // 2a. Match
+                    if (bodyDef.getMatch() != null) {
+                        verifyBodyMatch(bodyDef.getMatch(), env, baseDir, vars, name, jsonPathConfig);
+                    }
+
+                    // 2b. Assert
+                    if (bodyDef.getAssertDef() != null && !bodyDef.getAssertDef().isEmpty()) {
+                        // We pass the 'spec' down so it can read the allowFailure flag for the Hybrid Short-Circuit
+                        verifyBodyAsserts(spec, bodyDef.getAssertDef(), env, baseDir, vars, jsonPathConfig);
+                    }
+                }
+
+                // 3. Verify Asynchronous Side-Effects (Broadcasts)
+                // Only executed if 'expect.broadcast' is present in the YAML.
+                verifyBroadcast(spec, vars);
+            }
+
+            /**
+             * For verification of the status of the response (expect.status).
+             * 
+             * <p>Evaluates the actual HTTP status code of the response against the expected 
+             * status defined in the moxture.
+             * 
+             * <p>This method leverages the internal {@code StatusMatcher} to support flexible 
+             * status definitions in the YAML file. 
+             * 
+             * <p>Supported expected formats include:
+             * - Exact integers (e.g., 200, 404)
+             * - Wildcard strings (e.g., "2xx", "4xx")
+             * - Arrays of acceptable statuses (e.g., [200, 201, 204])
+             * 
+             * <p>If the status does not match, it throws an {@code AssertionError} equipped with a 
+             * highly contextual message, including the HTTP method, URI, and a truncated 
+             * preview of the actual response body to assist with rapid debugging.
+             *
+             * @param spec   The moxture definition containing the 'expect.status' block.
+             * @param env    The network response envelope containing the actual status and raw body.
+             * @param name   The name of the current moxture (for error reporting).
+             * @param method The HTTP method used during execution (for error reporting).
+             * @param uri    The target URI that was executed (for error reporting).
+             * @throws AssertionError If the actual HTTP status does not satisfy the expected criteria.
+             */
+            private void verifyStatus(Model.Moxture spec, Wire.ResponseEnvelope env, String name) 
+            {
+                if (spec.getExpect().getStatus() != null) {
+                    if (!statusMatches(spec.getExpect().getStatus(), env.status())) {
+                        String bodyPreview = (env.raw() == null || env.raw().isBlank()) 
+                            ? "<empty>" 
+                            : Utils.Logging.truncate(env.raw(), 500);
+                        throw new AssertionError(String.format(Locale.ROOT, 
+                            "Unexpected HTTP %d for '%s' %s %s, expected=%s. Body=%s",
+                            env.status(), name, env.method(), env.uri(), 
+                            expectedStatusPreview(spec.getExpect().getStatus()), bodyPreview));
+                    }
+                }
+            }
+
+            /**
+             * For verification of the assertion on the content of the response body (expect.body.match)
+             * 
+             * <p>Performs a structural comparison between the expected JSON body and the actual 
+             * response body.
+             * 
+             * <p>Features:
+             * - Resolves external JSON payloads from the classpath if specified.
+             * - Removes ignored paths dynamically before comparison.
+             * - Supports Strict Mode ("full") and Extensible Mode (default - actual JSON can have extra fields).
+             * 
+             * @param matchDef       The specification defining the expected JSON and ignore paths.
+             * @param env            The network response envelope.
+             * @param baseDir        The anchor directory.
+             * @param vars           The variable context for interpolating the expected JSON.
+             * @param name           The moxture name.
+             * @param jsonPathConfig The JsonPath configuration used to delete ignored paths.
+             * @throws Exception     If I/O fails or JSON is malformed.
+             */
+            private void verifyBodyMatch(Model.ExpectBodyMatchDef matchDef, Wire.ResponseEnvelope env, 
+                                         String baseDir, Map<String,Object> vars, 
+                                         String name, Configuration jsonPathConfig) throws Exception 
+            {
+                try {
+                    if (env.raw() == null || env.raw().isBlank()) throw new AssertionError("Response body is empty.");
+                    
+                    // We resolve the expected block through the BodyResolver
+                    // Using a dummy moxture to reuse BodyResolver logic for a single node:
+                    Model.Moxture dummy = new Model.Moxture();
+                    dummy.setBody(matchDef.getContent());
+                    JsonNode expectedNodeResolved = bodyResolver.resolve(dummy, baseDir, vars, tpl);
+                    
+                    String expectedJsonStr = jsonMapper.writeValueAsString(expectedNodeResolved);
+                    String actualJsonStr = env.raw();
+
+                    if (matchDef.getIgnorePaths() != null && !matchDef.getIgnorePaths().isEmpty()) 
+                    {   DocumentContext actCtx = JsonPath.using(jsonPathConfig).parse(actualJsonStr);
+                        DocumentContext expCtx = JsonPath.using(jsonPathConfig).parse(expectedJsonStr);
+                        for (String path : matchDef.getIgnorePaths()) {
+                            try { actCtx.delete(path); } catch (Exception ignore) {}
+                            try { expCtx.delete(path); } catch (Exception ignore) {}
+                        }
+                        actualJsonStr = actCtx.jsonString();
+                        expectedJsonStr = expCtx.jsonString();
+                    }
+
+                    boolean strictMode = "full".equalsIgnoreCase(matchDef.getMode());
+                    JSONAssert.assertEquals(expectedJsonStr, actualJsonStr, strictMode);
+                } catch (AssertionError e) {
+                    // Wrap the error with context, but ALWAYS throw. Top-level execute() decides whether to swallow it.
+                    throw new AssertionError(String.format("Moxture '%s' JSON match failed: %s", name, e.getMessage()), e);
+                }
+            }
+
+            /**
+             * For verification of the individual assertions on the response body 
+             * (expect.body.assert.<list of JsonPaths and their expected value>)
+             * 
+             * <p>Iterates through a map of JsonPath expressions and asserts their values against
+             * the response body.
+             *
+             * <p>Features:
+             * - Automatically infers the data type (Boolean, Number, String, Container) and applies 
+             *   the correct AssertJ matcher.
+             * - Collects all assertion failures into a single compiled error report (Strict mode).
+             * - Implements the "Hybrid Short-Circuit": If the moxture has {@code allowFailure: true}, 
+             *   it fails fast on the first error to avoid noisy logs and wasted CPU cycles.
+             * 
+             * @param spec           The moxture definition (used to read the allowFailure flag).
+             * @param assertDef      The map of "$.path" -> "expectedValue".
+             * @param env            The response envelope.
+             * @param baseDir        The anchor directory.
+             * @param vars           The variable context.
+             * @param jsonPathConfig The JsonPath configuration.
+             * @throws Exception     If path evaluation fails fundamentally.
+             */
+            private void verifyBodyAsserts(Model.Moxture spec, Model.ExpectBodyAssertDef assertDef, 
+                                               Wire.ResponseEnvelope env, String baseDir, 
+                                               Map<String,Object> vars, Configuration jsonPathConfig) throws Exception 
+            {
+                // Read policy from the spec for the short-circuit logic
+                final boolean allowFailure = spec.getOptions() != null 
+                    && Boolean.TRUE.equals(spec.getOptions().getAllowFailure());
+
+                DocumentContext actCtx = com.jayway.jsonpath.JsonPath.using(jsonPathConfig).parse(env.raw());
+                List<String> collectedErrors = new ArrayList<>();
+                
+                // Using a standard for-loop to cleanly handle exceptions and control flow
+                for (Map.Entry<String, JsonNode> entry : assertDef.getPaths().entrySet()) {
+                    String path = entry.getKey();
+                    JsonNode rawExpectedNode = entry.getValue();
+                    
+                    try {
+                        Model.Moxture dummy = new Model.Moxture();
+                        dummy.setBody(rawExpectedNode);
+                        JsonNode expectedNode = bodyResolver.resolve(dummy, baseDir, vars, tpl);
+                        
+                        Object actualValue = actCtx.read(path);
+                        
+                        if (expectedNode.isNull()) {
+                            Assertions.assertThat(actualValue).as("Path '%s'", path).isNull();
+                        } else if (expectedNode.isNumber()) {
+                            Assertions.assertThat(((Number) actualValue).doubleValue())
+                                    .as("Path '%s'", path).isEqualTo(expectedNode.asDouble());
+                        } else if (expectedNode.isBoolean()) {
+                            Assertions.assertThat(actualValue)
+                                    .as("Path '%s'", path).isEqualTo(expectedNode.asBoolean());
+                        } else if (expectedNode.isContainerNode()) {
+                            String expectedJson = jsonMapper.writeValueAsString(expectedNode);
+                            String actualJson = jsonMapper.writeValueAsString(actualValue);
+                            org.skyscreamer.jsonassert.JSONAssert.assertEquals(expectedJson, actualJson, true);
+                        } else {
+                            Assertions.assertThat(String.valueOf(actualValue))
+                                    .as("Path '%s'", path).isEqualTo(expectedNode.asText());
+                        }
+                        
+                    } catch (com.jayway.jsonpath.PathNotFoundException e) {
+                        collectedErrors.add(String.format("Path '%s' was not found in the response.", path));
+                    } catch (AssertionError e) {
+                        collectedErrors.add(e.getMessage());
+                    } catch (Exception e) {
+                        // Infra/Parsing errors still throw immediately, as the JSON/YAML itself is broken
+                        throw new RuntimeException("Failed to evaluate assert for path: " + path, e);
+                    }
+
+                    // THE HYBRID SHORT-CIRCUIT
+                    // If best-effort (allowFailure = true), fail-fast to avoid noisy logs and wasted cycles.
+                    if (allowFailure && !collectedErrors.isEmpty()) {
+                        throw new AssertionError(collectedErrors.get(0));
+                    }
+                }
+
+                // If strict mode, we throw the beautifully compiled list of ALL errors.
+                if (!collectedErrors.isEmpty()) {
+                    throw new AssertionError("Multiple surgical assertions failed:\n- " + String.join("\n- ", collectedErrors));
+                }
+            }
+
+
+            private static String expectedStatusPreview(JsonNode expected) {
+                if (expected == null || expected.isNull()) return "(none)";
+                return expected.toString();
+            }
+
+
+            /**
+             * @param expected  Can be any of:
+             *                    null | int | "2xx"/"3xx"/"4xx"/"5xx" | "201" | "2xx"  ...
+             */
+            private boolean statusMatches(JsonNode expected, int actual) 
+            {
+                if (expected == null || expected.isNull()) return true; // optional
+
+                // allow arrays → any element matching is accepted
+                if (expected.isArray()) {
+                    for (JsonNode e : expected) {
+                        if (statusMatches(e, actual)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+
+                if (expected.isInt()) return expected.asInt() == actual;
+                if (expected.isTextual()) {
+                    String s = expected.asText().trim();
+                    if (s.matches("[1-5]xx")) {
+                        int base = (s.charAt(0) - '0') * 100;
+                        return actual >= base && actual < base + 100;
+                    }
+                    try { return Integer.parseInt(s) == actual; }
+                    catch (NumberFormatException ignored) { return false; }
+                }
+                return false;
+            }
+
+            /**
+             * Verifies that a message was broadcasted to a specific STOMP topic.
+             * 
+             * <p>This method implements the asynchronous side-effect verification. It resolves 
+             * the topic name using the current variable context (supporting dynamic paths 
+             * like {@code /topic/{{id}}}) and delegates the assertion to the 
+             * {@link MockWebs} engine.
+             * 
+             * @param expect The expectation definition containing the broadcast details.
+             * @param vars   The variable context (typically {@link CallScopedVars}) used 
+             *               to interpolate the topic name.
+             * @throws AssertionError if the broadcast was expected but did not occur.
+             * @throws IllegalStateException if configuration is missing.
+            */
+            private void verifyBroadcast(Model.Moxture spec, Map<String, Object> vars) 
+            {
+                // 1. Double Guard: Ensure both the 'expect' block and the 'broadcast' block exist
+                if (spec.getExpect() == null || spec.getExpect().getBroadcast() == null) return;
+                
+                Model.ExpectBroadcastDef br = spec.getExpect().getBroadcast();
+                if (br.getTopic() == null) return;
+
+/* REMOVED : expecting a broadcast after a http request is entirely possible
+                // 2. Protocol Guard: Using the self-aware Model helper
+                if (!spec.isProtocolStomp()) {
+                    log.warn("[Moxter] Moxture '{}' (protocol: {}) defines 'expect.broadcast' which is only valid for STOMP. Skipping.", 
+                             spec.getName(), (spec.getProtocol() == null ? "http" : spec.getProtocol()));
+                    return;
+                }
+*/
+                // 3. Dependency Guard: Verify the required tool is available
+                if (this.mockWebs == null) {
+                    throw new IllegalStateException(String.format(
+                        "Moxture '%s' defines a broadcast expectation, but the STOMP/WebSocket " +
+                        "testing infrastructure is not configured. Did you forget @AutoConfigureMockWebs " +
+                        "or .mockWebs(webs) in the Moxter builder?", spec.getName()));
+                }
+
+                // 4. Resolve Topic and Type
+                String resolvedTopic = String.valueOf(tpl.apply(br.getTopic(), vars));
+                Class<?> payloadClass = "String".equalsIgnoreCase(br.getType()) ? String.class : byte[].class;
+
+                // 5. Execution & Contextual Error Handling
+                log.info("[Moxter] Verifying broadcast to topic: {}", resolvedTopic);
+                try {
+                    mockWebs.verifyBroadcast(resolvedTopic, payloadClass);
+                } catch (AssertionError e) {
+                    throw new AssertionError(String.format("Moxture '%s' failed broadcast verification on topic [%s]: %s", 
+                                             spec.getName(), resolvedTopic, e.getMessage()), e);
+                } catch (Exception e) {
+                    throw new RuntimeException("Internal error during broadcast verification for: " + resolvedTopic, e);
+                }
+            }
+
+        }  //ExpectVerifier
+
+        // #############################################################################################
+
+        /**
+         * A strategy interface for interpolating dynamic variables into strings.
+         *
+         * <p>This engine is responsible for finding placeholders (e.g., {@code {{varName}}}) 
+         * in the moxture definition and replacing them with their actual values from the 
+         * provided variable context.
+         */
+        interface IMoxTemplator {
+
+            /**
+             * The regular expression pattern used to identify variable placeholders within strings.
+             * 
+             * <p>Supports two distinct syntax styles:
+             * - Mustache style: {{variableName}} (Legacy support)
+             * - Spring/Maven style: ${variableName}} (Recommended for typo-resilience in YAML
+             *   and URIs)
+             * 
+             * The pattern uses two capture groups to isolate the variable key regardless of the 
+             * surrounding markings.
+             */
+            Pattern DUAL_PATTERN = Pattern.compile("\\{\\{([^}]+)\\}\\}|\\$\\{([^}]+)\\}");
+
+            /**
+             * Processes a single string, replacing all variable placeholders with their 
+             * corresponding values.
+             * 
+             * <p> If the input is exactly one placeholder (e.g., "${p.id}"), 
+             * returns the raw <b>Object</b> (Integer, Boolean, etc.) from the variable context 
+             * to ensure the JSON Serializer does treat it as a String and add unnecessary double 
+             * quotes.
+             * 
+             * <p> Mixed Templates: If the input contains surrounding text (e.g., "Order: {{id}}"), 
+             * returns a concatenated <b>String</b>.
+             *
+             * @param s    The template string containing placeholders.
+             * @param vars The contextual map of variables available for substitution.
+             * @return The resolved Object (preserving numeric/boolean types for pure variables) 
+             *         or a String for mixed content.
+             */
+            Object apply(String s, Map<String, Object> vars);
+
+            /**
+             * Processes a map of key-value pairs, applying templating <b>only to the values</b>.
+             * while preserving their original types where possible.
+             * 
+             * <p> This is particularly useful for HTTP headers and query parameters, where 
+             * the keys (e.g., "Authorization" or "page") are static, but the values 
+             * (e.g., "Bearer {{token}}" or "{{pageNumber}}") are dynamic.
+             * 
+             * 
+             * @param in   The original map of static keys and templated values.
+             * @param vars The contextual map of variables available for substitution.
+             * @return A new map containing the original keys and the resolved <b>Object</b> values 
+             *        (Integers, Booleans, or Strings).
+             */
+            Map<String, Object> applyMapValuesOnly(Map<String, String> in, Map<String, Object> vars);
+
+            /**
+             * Processes a template string by replacing all recognized placeholders with their 
+             * corresponding values from the provided variable context.
+             * 
+             * <p> <b>Technical Behavior:</b>
+             * - <b>Pattern Matching:</b> Scans for both Mustache-style ({@code {{...}}}) and 
+             *   Spring-style ({@code ${...}}) tokens.
+             * - <b>Whitespace Tolerance:</b> Automatically trims the extracted variable keys 
+             *   (e.g., {@code ${ var }} becomes {@code var}).
+             * - <b>Persistence on Miss:</b> If a variable is not found in the context, the 
+             *   original placeholder string is preserved verbatim to assist in visual debugging 
+             *   of the generated request/URI.
+             *  - <b>Regex Safety:</b> Employs {@link java.util.regex.Matcher#quoteReplacement(String)} 
+             *    to ensure that variable values containing special characters (like '$' or '\') 
+             *    do not interfere with the interpolation process.
+             * 
+             * 
+             * @param template  The raw string containing placeholders (e.g., an endpoint URL or JSON value).
+             * @param variables The map representing the current variable context (Global + Scoped overrides).
+             * @return A fully interpolated string where placeholders have been replaced by literals, 
+             *        or the original string if no placeholders were detected or resolved.
+             */
+            static Object interpolate(String template, Map<String, Object> variables) {
+                if (template == null || (!template.contains("{{") && !template.contains("${"))) {
+                    return template;
+                }
+
+                // A. THE CLEVER CHECK: Is it a "Pure Variable" (e.g. ${p.id})?
+                Matcher pureMatcher = DUAL_PATTERN.matcher(template);
+                if (pureMatcher.matches()) {
+                    String key = (pureMatcher.group(1) != null 
+                        ? pureMatcher.group(1) 
+                        : pureMatcher.group(2)).trim();
+                    String dynamicValue = resolveDynamic(key);
+                    if (!dynamicValue.equals(key)) return dynamicValue;
+
+                    if (variables != null && variables.containsKey(key)) {
+                        return variables.get(key); // Return the RAW Integer/Boolean
+                    }
+                }
+
+                // B. FALLBACK: Standard string replacement for mixed text
+                Matcher matcher = DUAL_PATTERN.matcher(template);
+                StringBuilder sb = new StringBuilder();
+
+                while (matcher.find()) {
+                    // Group 1 is {{...}}, Group 2 is ${...}
+                    String key = (matcher.group(1) != null 
+                        ? matcher.group(1) 
+                        : matcher.group(2)).trim();
+
+                    // 1. Try to resolve as a dynamic function (mx.func())
+                    String dynamicValue = resolveDynamic(key);
+                    if (!dynamicValue.equals(key)) {
+                        // Match found in DynamicLibrary: use the generated value
+                        matcher.appendReplacement(sb, Matcher.quoteReplacement(dynamicValue));
+                    }
+
+                    // 2. Fallback to standard variable map
+                    else if (variables != null && variables.containsKey(key)) {
+                        Object value = variables.get(key);
+                        // Unbox single-item lists for Strings (mirrors VarAccessor):
+                        if (value instanceof java.util.List<?> list && list.size() == 1) {
+                            value = list.get(0);
+                        }
+                        matcher.appendReplacement(sb, Matcher.quoteReplacement(String.valueOf(value)));
+                    } 
+                    
+                    // 3. Keep literal for debugging if nothing matches
+                    else {
+                        matcher.appendReplacement(sb, Matcher.quoteReplacement(matcher.group(0)));
+                    }
+                }
+                matcher.appendTail(sb);
+                return sb.toString();
+            }
+
+            /**
+             * Resolves reserved dynamic keywords (prefixed with "mx.") by invoking 
+             * corresponding methods in the {@link DynamicLibrary}.
+             * 
+             * <p>The method uses reflection to find a matching static method name 
+             * in the DynamicLibrary. If no match is found, the original keyword is returned 
+             * to allow standard variable interpolation to continue.</p>
+             * 
+             * @param keyword The raw keyword found in the YAML (e.g., "mx.random()")
+             * @return The string result of the Java function, or the original keyword if not found.
+             */
+            static String resolveDynamic(String keyword) {
+                if (keyword == null || !keyword.startsWith("mx.")) {
+                    return keyword;
+                }
+
+                try {
+                    // Parse "mx.random()" -> "random"
+                    String methodName = keyword
+                            .replace("mx.", "")
+                            .replace("()", "")
+                            .trim();
+
+                    // Locate the method in the library
+                    Method method = DynamicLibrary.class.getMethod(methodName);
+                    
+                    // Invoke the static method (null instance for static calls)
+                    return (String) method.invoke(null);
+
+                } catch (NoSuchMethodException e) {
+                    // Log a warning or simply return the string if it's not a dynamic call
+                    return keyword;
+                } catch (Exception e) {
+                    throw new RuntimeException("Failed to resolve dynamic keyword: " + keyword, e);
+                }
+            }
+
+        }
+
+        // #############################################################################################
+
+        /**
+         * Simple {{var}} or ${var} string substitution. 
+         */
+        static final class MoxSimpleTemplator implements IMoxTemplator 
+        {
+            /**
+             * Delegates to the clever interpolation engine. 
+             * Returns an Object to preserve the original variable type (e.g., Integer).
+             */
+            @Override
+            public Object apply(String s, Map<String, Object> vars) 
+            {   
+                return IMoxTemplator.interpolate(s, vars); 
+            }
+
+            /**
+             * Processes values in a map while preserving their native Java types.
+             * This ensures that headers or query parameters can be treated as 
+             * Numbers or Booleans by the underlying protocol executors.
+             */
+            @Override
+            public Map<String, Object> applyMapValuesOnly(Map<String, String> in, Map<String, Object> vars) 
+            {   
+                if (in == null || in.isEmpty()) return Collections.emptyMap();
+                
+                Map<String, Object> out = new LinkedHashMap<>(in.size());
+                for (Map.Entry<String, String> e : in.entrySet()) {
+                    // Invokes the new Object-returning apply() method
+                    out.put(e.getKey(), apply(e.getValue(), vars));
+                }
+                return out;
+            }
+        }
+
+        // #############################################################################################
+
+        /**
+         * A library of plain Java functions accessible within Moxture YAML files via special 
+         * keywords.
+         * 
+         * <p> Any public static method added to this class that returns a {@code String} 
+         * can be invoked in a moxture using the "${mx.methodName()}" syntax.
+         */
+        public class DynamicLibrary {
+
+            /**
+             * Generates a short, 8-character random alphanumeric string.
+             * 
+             * Useful for unique identifiers that don't require full UUID complexity.
+             * 
+             * @return a random 8-char string (e.g., "7f3k9a21")
+             */
+            public static String random() {
+                return UUID.randomUUID().toString().substring(0, 8);
+            }
+
+            /**
+             * Generates a full RFC 4122 version 4 UUID.
+             * 
+             * Use this for fields like channelId or threadId that require strict UUID formats.
+             * 
+             * @return a 36-character UUID string.
+             */
+            public static String uuid() {
+                return UUID.randomUUID().toString();
+            }
+
+            /**
+             * Returns the current system time in milliseconds.
+             * 
+             * Useful for timestamping events or ensuring order in high-velocity tests.
+             * 
+             * @return current time as a string.
+             */
+            public static String time() {
+                return String.valueOf(System.currentTimeMillis());
+            }
+
+            /**
+             * Returns the current system time in ISO-8601 UTC format.
+             * 
+             * Example: "2026-03-17T21:13:53Z"
+             * 
+             * @return a standardized UTC timestamp string.
+             */
+            public static String now() {
+                return java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC)
+                        .format(java.time.format.DateTimeFormatter.ISO_INSTANT);
+            }
+        }
+
+
+        // #########################################################################################
+
+        /**
+         * Resolves raw body definitions into finalized JSON nodes by processing variable 
+         * interpolation, classpath resource loading, and structural recursion.
+         * 
+         * <p>The resolver handles two primary formats:
+
+         * - <b>String/Scalar:</b> Can be a "classpath:..." reference, a raw JSON string, 
+         * or a plain text body. All variables are interpolated before parsing.
+         * - <b>Structural:</b> A YAML map or array. The resolver recursively walks 
+         * the tree and applies templating to every string leaf node.
+
+         */
+        static final class BodyResolver 
+        {
+            private final MoxYamlMapper mapper;
+
+            /**
+             * @param mapper The Jackson mapper (typically a YAML-aware instance) used 
+             * to parse strings and manipulate nodes.
+             */
+            BodyResolver(MoxYamlMapper mapper) { this.mapper = mapper; }
+
+            /**
+             * The new entry point that handles the inheritance stack.
+             * 
+             * <p> Resolves the final body by merging the inheritance stack.
+             * 
+             * <p>This fix ensures thread-safety by creating deep copies of every 
+             * layer before merging, preventing runtime variable interpolation 
+             * from "poisoning" the shared static cache.</p>
+             */
+            JsonNode resolve(Model.Moxture spec, String baseDir, Map<String, Object> vars, IMoxTemplator tpl) throws IOException {
+                List<JsonNode> stack = spec.getBodyStack();
+                
+                if (stack == null || stack.isEmpty()) {
+                    JsonNode single = resolveSingleNode(spec.getBody(), baseDir, vars, tpl);
+                    // Defensive deepCopy ensures the return value is detached from the cache
+                    return (single == null) ? null : single.deepCopy();
+                }
+
+                JsonNode effective = null;
+                for (JsonNode layer : stack) {
+                    // 1. Resolve the layer (handles interpolation/classpath)
+                    JsonNode resolvedLayer = resolveSingleNode(layer, baseDir, vars, tpl);
+                    
+                    if (resolvedLayer == null) continue;
+
+                    // 2. CRITICAL FIX: Ensure the layer is a detached deep copy 
+                    // before merging it into the effective result.
+                    JsonNode detachedLayer = resolvedLayer.deepCopy();
+                    
+                    // 3. Deep merge into the accumulated result
+                    effective = Helper.deepMergeBody(mapper, effective, detachedLayer);
+                }
+                return effective;
+            }
+
+            /**
+             * The main entry point for body resolution.
+             * 
+             * It handles: Interpolation -> Classpath -> JSON Sniffing -> Parsing
+             * 
+             * @param body    The raw JsonNode from the YAML moxture definition.
+             *                Can be a "classpath:..." to a file containing JSON text.
+             * @param baseDir The directory of the current moxture file (used for relative classpath resolution).
+             * @param vars    The variable context for interpolation.
+             * @param tpl     The templating engine for macro expansion.
+             * @return A finalized {@link JsonNode} ready for HTTP execution.
+             * @throws IOException If a classpath resource cannot be read or JSON is malformed.
+             */
+            private JsonNode resolveSingleNode(JsonNode body, String baseDir,
+                                               Map<String, Object> vars, IMoxTemplator tpl) throws IOException 
+            {   if (body == null) return null;
+
+                if (body.isTextual()) {
+                    
+                    // Interpolate variables FIRST (makes the JSON valid!)
+                    Object resolved = tpl.apply(body.asText(), vars);
+
+                    // 2. TYPE RECOVERY: If it's a Number or Boolean, return the proper Node immediately
+                    if (resolved instanceof Number n) {
+                        return mapper.getWrappedMapper().getNodeFactory().numberNode(n.longValue());
+                    }
+                    if (resolved instanceof Boolean b) {
+                        return mapper.getWrappedMapper().getNodeFactory().booleanNode(b);
+                    }
+                    if (resolved instanceof java.util.Collection<?> col) {
+                        return mapper.getWrappedMapper().valueToTree(col);
+                    }
+
+                    // 3. STRING LOGIC: If it's text, proceed with classpath/JSON sniffing
+                    String txt = String.valueOf(resolved).trim();
+                    
+                    // Handle 'classpath:'
+                    String lower = txt.toLowerCase(Locale.ROOT);
+                    if (lower.startsWith("classpath:")) {
+                        String rawPath = txt.substring(txt.indexOf(':') + 1).trim();
+                        JsonNode fileContent = loadClasspathBody(baseDir, rawPath);
+                        return resolveSingleNode(fileContent, baseDir, vars, tpl);
+                    }
+
+                    // Heuristic JSON check
+                    if (Utils.Json.looksLikeJson(txt)) {
+                        try {
+                            return mapper.getWrappedMapper().readTree(txt);
+                        } catch (JsonProcessingException e) {
+                            return mapper.getWrappedMapper().getNodeFactory().textNode(txt);
+                        }
+                    }
+                    return mapper.getWrappedMapper().getNodeFactory().textNode(txt);
+                }
+
+                return templateNodeStrings(body, vars, tpl);
+            }
+
+
+            /**
+             * Loads a YAML or JSON file from the classpath and returns it as a JsonNode.
+             */
+            private JsonNode loadClasspathBody(String baseDir, String rawPath) throws IOException {
+                String path = rawPath.startsWith("/") ? rawPath.substring(1) : (baseDir + "/" + rawPath);
+                URL url = Utils.IO.findResource(path);
+
+                if (url == null) throw new IllegalArgumentException("Resource not found on classpath: " + path);
+
+                try (InputStream in = url.openStream()) {
+                    return mapper.getWrappedMapper().readTree(in);
+                }
+            }
+
+
+            /**
+             * Recursively walks a JSON tree and applies templating to all string leaves. 
+             * This ensures that variables inside YAML maps/lists are properly expanded.
+             */
+            private JsonNode templateNodeStrings(JsonNode node, Map<String, Object> vars, IMoxTemplator tpl) {
+                if (node == null) return null; //
+
+                if (node.isTextual()) { //
+                    // 1. CLEVER CHECK: Get the resolved object (could be Integer, Boolean, or String)
+                    Object resolved = tpl.apply(node.asText(), vars);
+
+                    // 2. TYPE RECOVERY: Create the specific Jackson node type based on the result
+                    if (resolved instanceof Number n) {
+                        // numberNode(long) ensures Jackson serializes as a numeric literal (no quotes)
+                        return mapper.getWrappedMapper().getNodeFactory().numberNode(n.longValue());
+                    } 
+                    
+                    if (resolved instanceof Boolean b) {
+                        // booleanNode ensures Jackson serializes as true/false (no quotes)
+                        return mapper.getWrappedMapper().getNodeFactory().booleanNode(b);
+                    }
+
+                    if (resolved instanceof java.util.Collection<?> col) {
+                        ArrayNode arrayNode = mapper.getWrappedMapper().getNodeFactory().arrayNode();
+                        for (Object item : col) {
+                            // Convert each item (handles nested IDs or numbers)
+                            arrayNode.add(mapper.getWrappedMapper().valueToTree(item));
+                        }
+                        return arrayNode;
+                    }
+
+                    // 3. FALLBACK: If it's still a String or null, use the standard textNode (with quotes)
+                    return mapper.getWrappedMapper().getNodeFactory().textNode(String.valueOf(resolved));
+                }
+
+                if (node.isArray()) { //
+                    ArrayNode arr = mapper.getWrappedMapper().getNodeFactory().arrayNode();
+                    for (JsonNode child : node) {
+                        arr.add(templateNodeStrings(child, vars, tpl)); // Recurse
+                    }
+                    return arr;
+                }
+
+                if (node.isObject()) { //
+                    ObjectNode out = mapper.getWrappedMapper().createObjectNode();
+                    Iterator<String> it = node.fieldNames();
+                    while (it.hasNext()) {
+                        String f = it.next();
+                        // Recurse to handle nested objects and preserve types at any depth
+                        out.set(f, templateNodeStrings(node.get(f), vars, tpl)); //
+                    }
+                    return out;
+                }
+
+                return node; //
+            }
+        }
+
+ 
+
+    } // Engine
+
+
+
+
+
+    // #############################################################################################
+    // #############################################################################################
+
+    /**
+     * Internal namespace for components that handle the <b>execution phase</b> of a moxture.
+     * 
+     * <p> Once a moxture definition has been discovered and fully linked (aka materialized/
+     * flattened), the classes in this namespace take over to perform the actual test execution. 
+     * Their responsibilities include:
+     *   - <b>Templating:</b> Interpolating dynamic variables into endpoints, headers, and bodys.
+     *   - <b>Body Resolution:</b> Parsing and resolving complex or external JSON/YAML request bodies.
+     *   - <b>HTTP Execution:</b> Translating the moxture into a Spring MockMvc request and firing it.
+     *   - <b>Response Handling:</b> Capturing the raw network response and packaging it into an internal envelope.
+     * 
+     * <p><b>Note:</b> Classes within this namespace are strictly internal to the Moxter engine 
+     * and should never be accessed or instantiated directly by test code.
+     */
+    static final class Wire 
+    {
+
+
+        // ##########################################################################################################
+
+        /**
+         * Strategy interface for executing a moxture across specific transport protocols.
+         * 
+         * <p>Implementations are responsible for the "Wire" phase of the execution pipeline. 
+         * While the {@link MoxCaller} manages orchestration and state, the Executor handles 
+         * the mapping between the abstract Moxture model and a concrete physical request.
+         * 
+         * <p><b>Responsibilities:</b>
+         * - <b>Protocol Identification:</b> Determining if it can handle a spec via {@link #supports}.
+         * - <b>Templating:</b> Resolving placeholders in endpoints, headers, and payloads using 
+         *   the provided variable context.
+         * - <b>Payload Resolution:</b> Loading external body files if referenced in the spec.
+         * - <b>Execution:</b> Interacting with the underlying mock client (e.g., MockMvc, 
+         *   MockStompSession).
+         * - <b>Normalization:</b> Capturing the result into a standardized {@link ResponseEnvelope}.
+         * 
+         * <p><b>Non-Responsibilities:</b>
+         * - Executors <b>must not</b> perform assertions or validations (handled by Verifier).
+         * - Executors <b>must not</b> persist variables to the context (handled by Extractor).
+         * - Executors <b>must not</b> handle {@code basedOn} inheritance (handled by Resolver).
+         * 
+         */
+        interface IProtocolExecutor {
+            
+            /**
+             * Determines if this executor is capable of handling the given moxture.
+             * 
+             * <p>Usually matches against the {@code protocol} field, but can also inspect 
+             * fields like {@code method} or {@code endpoint} to infer the protocol.
+             * 
+             * @param spec The moxture definition to check.
+             * @return true if this executor can process the request.
+             */
+            boolean supports(Model.Moxture spec);
+
+            /**
+             * Translates the abstract moxture into a physical request and captures the response.
+             * 
+             * @param spec     The fully materialized moxture definition.
+             * @param baseDir  The anchor directory for resolving relative file paths.
+             * @param vars     The variable context used for string interpolation.
+             * @param callAuth Optional Spring Security context to apply to this specific execution.
+             * @return A {@link ResponseEnvelope} containing the status, headers, and body.
+             * @throws Exception If the underlying transport fails or if the request is malformed.
+             */
+            ResponseEnvelope execute(Model.Moxture spec, String baseDir, 
+                                     Map<String, Object> vars, Authentication callAuth) throws Exception;
+        }
+
+        // #########################################################################################
+
+        /**
+         * The primary engine responsible for executing Moxture definitions against a MockMvc instance.
+         * 
+         * <p>The execution lifecycle follows a strict sequence:
+         * - <b>Resolution:</b> Variables and templates in the URL, headers, and body are resolved.
+         * - <b>Body Preparation:</b> External resources (classpath) are loaded if specified.
+         * - <b>Request Construction:</b> A {@link MockHttpServletRequestBuilder} is initialized with 
+         *      the appropriate method, URI, and security context (CSRF, Authentication).
+         * - <b>Execution:</b> The request is dispatched via {@code MockMvc.perform()}.
+         * - <b>State Management:</b> Response data (JSON body, headers) is extracted and stored 
+         *       back into the variable context for use by subsequent moxtures.
+         * - <b>Validation:</b> Status codes and body contents are asserted against the 
+         *       {@code expect} block.
+         * 
+         */
+        @Slf4j
+        static final class HttpExecutor implements IProtocolExecutor
+        {
+            private final MockMvc mockMvc;
+            private final ObjectMapper jsonMapper;  // to send the body as JSON
+
+            // Internal session state used to simulate a persistent browser session across multiple 
+            // moxture executions.
+            // In standard {@link MockMvc} tests, each request is stateless by default. This field 
+            // ensures that server-side state—specifically authentication metadata and session-scoped 
+            // beans is preserved between sequential calls made by the same executor instance
+            //# OLD private final MockHttpSession session = new MockHttpSession();
+            // The session needs to be segregated by user (authentication):
+            private final Map<String, MockHttpSession> sessionRegistry = new HashMap<>();
+
+            HttpExecutor(MockMvc mockMvc, 
+                         ObjectMapper jsonMapper) {
+                this.mockMvc = mockMvc;
+                this.jsonMapper = jsonMapper;
+            }
+
+            @Override
+            public boolean supports(Model.Moxture resolved) {
+                String p = resolved.getProtocol();
+                // If omitted, blank, or explicitly http/https, this executor handles it
+                return p == null || p.isBlank() || p.equalsIgnoreCase("http") || p.equalsIgnoreCase("https");
+            }
+
+            /**
+             * Execute a single moxture call.
+             * 
+             * <p>Logs a concise start line, rich DEBUG details, response preview, a finish
+             * line with duration, and a compact warning when the expected status does not match.
+             */
+            @Override
+            public Wire.ResponseEnvelope execute(Model.Moxture resolved, String baseDir, 
+                                                       Map<String,Object> vars, 
+                                                       Authentication callAuth)
+            {
+                final long   t0       = System.nanoTime();
+                final String  name    =   (resolved.getName() == null 
+                                        || resolved.getName().isBlank()) 
+                                                ? "<unnamed>" 
+                                                : resolved.getName();
+                final String  method  = Utils.Http.safeMethod(resolved.getMethod());
+                final boolean verbose =    resolved.getOptions() != null 
+                                        && Boolean.TRUE.equals(resolved.getOptions().getVerbose());
+
+                try {
+                    // 1. Resolve the actual Actor for this call
+                    String actorKey = (callAuth != null) ? callAuth.getName() : "ANONYMOUS";
+
+                    // 1.1 Get or create the session for THIS specific Actor
+                    MockHttpSession actorSession = sessionRegistry.computeIfAbsent(
+                        actorKey, k -> new MockHttpSession()
+                    );
+
+                    // 2. Build URI (Already resolved by MoxResolver)   
+                    final URI uri = URI.create(Utils.Http.appendQuery(resolved.getEndpoint(), 
+                                                                      resolved.getQuery()));
+                    
+                    
+                    // 3. Log (using the baked data)
+                    logExecutionStart(verbose, name, method, uri, resolved.getHeaders(), 
+                                      resolved.getQuery(), vars, resolved.getBody());
+
+                    // 4. Build Spring Request
+                    MockHttpServletRequestBuilder req = buildRequest(resolved, baseDir, method, uri, callAuth);
+                    req.session(actorSession);  // Forces MockMvc to reuse the same session
+
+                    // 5. Execute HTTP Call & Parse Response
+                    ResultActions actions = mockMvc.perform(req);
+                    // Only trigger the heavy MockMvc print if explicitly requested in YAML options
+                    if (verbose) {
+                        actions.andDo(print());
+                    }
+                    MockHttpServletResponse mvcResp = actions.andReturn().getResponse();
+                    Wire.ResponseEnvelope env = parseResponse(mvcResp, method, uri);
+
+                    logResponsePreview(verbose, env);
+                    logExecutionEnd(name, method, uri, env.status(), t0);
+                    
+                    return env;
+
+                } catch (RuntimeException re) {
+                    log.warn("[Moxter] X [{}] {} failed: {}", method, name, Utils.Misc.rootMessage(re));
+                    throw re;
+                } catch (Exception e) {
+                    log.warn("[Moxter] X [{}] {} errored: {}", method, name, Utils.Misc.rootMessage(e));
+                    throw new RuntimeException("Error executing moxture '" + name + "'", e);
+                }
+            }
+
+
+
+            private MockHttpServletRequestBuilder buildRequest(Model.Moxture resolved, 
+                                                            String baseDir, 
+                                                            String method, 
+                                                            URI uri, 
+                                                            Authentication auth) throws Exception 
+            {
+                MockHttpServletRequestBuilder req;
+
+                // Multipart logic uses the resolved spec directly
+                if (resolved.getMultipart() != null && !resolved.getMultipart().isEmpty()) {
+                    req = buildMultipartRequest(resolved, baseDir, uri); // Simplified multipart call too
+                } else {
+                    req = Utils.Http.toRequestBuilder(method, uri);
+                    if (resolved.getBody() != null) {
+                        req.content(jsonMapper.writeValueAsBytes(resolved.getBody()));
+                        req.contentType(MediaType.APPLICATION_JSON);
+                    }
+                }
+
+                // Attach Security (CSRF + Auth)
+                if (auth != null) {
+                    req.with(SecurityMockMvcRequestPostProcessors.authentication(auth));
+                }
+                if (Utils.Http.requiresCsrf(method)) {
+                    req.with(SecurityMockMvcRequestPostProcessors.csrf());
+                }
+
+                // Attach Headers: resolved.getHeaders() is now Map<String, String>
+                if (resolved.getHeaders() != null) {
+                    resolved.getHeaders().forEach(req::header);
+                }
+                
+                return req;
+            }
+
+            /**
+             * Phase 1 sub: Multipart Request Building
+             */
+            private MockHttpServletRequestBuilder buildMultipartRequest(Model.Moxture resolved, 
+                                                                        String baseDir, 
+                                                                        URI uri) throws Exception 
+            {
+                MockMultipartHttpServletRequestBuilder multiReq = MockMvcRequestBuilders.multipart(uri);
+                String method = Utils.Http.safeMethod(resolved.getMethod()).toUpperCase(Locale.ROOT);
+                multiReq.with(r -> { r.setMethod(method); return r; });
+
+                for (Model.MultipartDef part : resolved.getMultipart()) {
+                    // Parts are now pre-baked: part.name and part.filename are already literal Strings
+                    String pName = part.getName();
+                    String pType = (part.getType() != null) ? part.getType().toLowerCase() : "json";
+                    String pFilename = part.getFilename();
+
+                    byte[] contentBytes;
+                    String contentType;
+
+                    if ("file".equals(pType)) {
+                        // Path is the only thing we still treat as a raw reference to load from classpath
+                        String path = part.getBody().asText();
+                        if (path.toLowerCase().startsWith("classpath:"))
+                        {   path = path.substring(10).trim();
+                        }
+                        contentBytes = Utils.IO.readResourceBytes(baseDir, path);
+                        contentType = Utils.Http.determineContentType(pFilename);
+                    } else {
+                        // Body is already resolved as a JsonNode
+                        contentBytes = jsonMapper.writeValueAsBytes(part.getBody());
+                        contentType = "application/json";
+                    }
+                    
+                    multiReq.file(new MockMultipartFile(pName, pFilename, contentType, contentBytes));
+                }
+                return multiReq;
+            }
+
+            /**
+             * Phase 2: Response Parsing
+             */
+            private Wire.ResponseEnvelope parseResponse(MockHttpServletResponse mvcResp, String method, URI uri) throws Exception {
+                final String raw = mvcResp.getContentAsString(StandardCharsets.UTF_8);
+                final String ctHeader = mvcResp.getHeader(HttpHeaders.CONTENT_TYPE);
+                final boolean hasBody   = raw != null && !raw.isBlank();
+                final boolean isJsonCT  = Utils.Http.isJsonContentType(ctHeader);
+                final boolean looksJson = hasBody && Utils.Json.looksLikeJson(raw);
+
+                JsonNode body = null;
+                if (hasBody && (isJsonCT || looksJson)) {
+                    try { body = jsonMapper.readTree(raw); } 
+                    catch (Exception parseEx) {
+                        log.debug("[Moxter] Non-JSON body (ct='{}') could not be parsed: {}", ctHeader, Utils.Misc.rootMessage(parseEx));
+                    }
+                }
+                
+                // Pack the method and URI into the envelope alongside the response data
+                return new Wire.ResponseEnvelope(method, uri, mvcResp.getStatus(), Utils.Http.copyHeaders(mvcResp), body, raw);
+            }
+
+
+            /**
+             * Phase 4: Save & Logging Helpers
+             */
+            private void logExecutionStart(boolean verbose, String name, String method, URI uri, 
+                                           Map<String,?> headers, Map<String,?> query, 
+                                           Map<String,?> vars, JsonNode body) 
+            {
+                log.info("[Moxter] >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+                log.info("[Moxter] >>> Executing moxture:  [{}, {}, {}]", name, method, uri);
+                
+                if (verbose || log.isDebugEnabled()) {
+                    String msg = "[Moxter] more info: headers={} query={} vars={} body={}";
+                    Object[] args = {
+                            Utils.Logging.previewHeaders(headers),
+                            (query == null || query.isEmpty() ? "{}" : query.toString()),
+                            Utils.Logging.previewVars(vars),
+                            Utils.Logging.previewNode(body)
+                    };
+                    // The bypass: if verbose is requested, force it out at INFO level
+                    if (verbose) log.info(msg, args); else log.debug(msg, args);
+                }
+            }
+
+            private void logResponsePreview(boolean verbose, Wire.ResponseEnvelope env) {
+                if (verbose || log.isDebugEnabled()) {
+                    String msg = "[Moxter] response preview: status={} headers={} body={}";
+                    Object[] args = { env.status(), Utils.Logging.previewRespHeaders(env.headers()), Utils.Logging.previewNode(env.body()) };
+                    
+                    if (verbose) log.info(msg, args); else log.debug(msg, args);
+                }
+                if (verbose || log.isTraceEnabled()) {
+                    String msg = "[Moxter] Raw body (len={}): {}";
+                    Object[] args = { env.raw() == null ? 0 : env.raw().length(), Utils.Logging.truncate(env.raw(), 4000) };
+                    
+                    if (verbose) log.info(msg, args); else log.trace(msg, args);
+                }
+            }
+
+            private void logExecutionEnd(String name, String method, URI uri, int status, long startTimeNano) {
+                long tookMs = (System.nanoTime() - startTimeNano) / 1_000_000L;
+                log.info("[Moxter] <<< Finished executing moxture: [{}, {}, {}] with status: [{}], in {} ms", name, method, uri, status, tookMs);
+                log.info("[Moxter] <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<");
+            }
+
+        }
+
+        // #########################################################################################
+
+         /**
+         * Executor for the STOMP protocol that bridges Moxter moxtures with the 
+         * <b>MockWebs</b> testing infrastructure.
+         * 
+         * <p>This class serves as the functional equivalent of the {@link HttpExecutor}. 
+         * Just as the {@code HttpExecutor} uses {@code MockMvc} to simulate REST 
+         * interactions, this executor uses <b>MockWebs</b> to perform real-time, 
+         * in-memory STOMP operations within the Spring application context.</p>
+         * 
+         * <p><b>Execution Logic:</b>
+         * - <b>Dispatch:</b> It translates the moxture's {@code endpoint} into a STOMP destination
+         *   and sends the {@code body} payload through the <b>MockWebs</b> client.
+         * - <b>Normalization:</b> While HTTP is naturally synchronous, with a response to the
+         *   request, STOMP is often fire-and-forget. To maintain compatibility with the 
+         *   {@link ExpectVerifier}, it captures the outbound frame and wraps it in a 
+         *   {@link ResponseEnvelope}.
+         * - <b>Verification:</b> This "Loopback" behavior allows the user to perform standard 
+         *   JsonPath assertions (via the {@code expect} block) against the final message content 
+         *   as it was seen by the messaging subsystem.
+         * 
+         * * @see IProtocolExecutor
+         */
+        @Slf4j
+        static final class StompExecutor implements IProtocolExecutor {
+            
+            private final MockWebs mockWebs;
+            private final ObjectMapper jsonMapper;
+
+            /**
+             * Constructs a new StompExecutor with shared engine helpers.
+             * 
+             * @param jsonMapper  Mapper for serializing message payloads.
+             */
+            StompExecutor(MockWebs mockWebs,
+                          ObjectMapper jsonMapper
+                        ) 
+            {   this.mockWebs = mockWebs;
+                this.jsonMapper = jsonMapper;
+            }
+
+            /**
+             * Determines if the moxture explicitly requests the STOMP protocol.
+             * 
+             * @param spec The moxture definition.
+             * @return {@code true} if the protocol is "stomp" (case-insensitive).
+             */
+            @Override
+            public boolean supports(Model.Moxture spec) {
+                return spec.isProtocolStomp();
+            }
+
+            /**
+             * Translates the Moxture into a STOMP SEND frame and captures the 
+             * transmission result.
+             * 
+             * @param resolved     The materialized moxture definition.
+             * @param baseDir  Anchor directory for payload resource resolution.
+             * @param vars     Variable context for destination and payload interpolation.
+             * @param callAuth Optional authentication context.
+             * @return A {@link ResponseEnvelope} containing the delivery confirmation.
+             * @throws Exception If payload resolution or serialization fails.
+             */
+            @Override
+            public ResponseEnvelope execute(Model.Moxture resolved, String baseDir, 
+                                            Map<String, Object> vars, 
+                                            Authentication callAuth) throws Exception {
+                final long t0 = System.nanoTime();
+                final String name = (resolved.getName() == null) ? "<unnamed>" : resolved.getName();
+                final boolean verbose = resolved.getOptions() != null && Boolean.TRUE.equals(resolved.getOptions().getVerbose());
+
+                // 2. Use BAKED data directly
+                String destination = resolved.getEndpoint();
+                JsonNode payload = resolved.getBody();
+
+                // Start Logging
+                log.info("[Moxter] >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+                log.info("[Moxter] >>> Executing STOMP moxture: [{}, SEND, {}]", name, destination);
+                log.info("[Moxter] SEND destination: {}", destination);
+                log.info("[Moxter] payload: {}", Utils.Logging.previewNode(payload));
+                
+                if (verbose) {
+                    log.info("[Moxter] identity: {}", Utils.Misc.safeName(callAuth));
+                }
+
+                // 3. EXECUTION: Dispatch via MockWebs session
+                // This bridges Moxter's identity to the user session, mirroring:
+                MockWebs.StompSession session = mockWebs.with(callAuth);
+                Object result = session.send(destination, payload); 
+
+                // 4. NORMALIZATION & TIMING
+                // We treat the dispatched content/result as the "response" for verification
+                String rawResponse = (result instanceof byte[] bytes) 
+                                        ? new String(bytes) 
+                                        : jsonMapper.writeValueAsString(result);
+                long tookMs = (System.nanoTime() - t0) / 1_000_000L;
+                
+                log.info("[Moxter] <<< Finished executing STOMP moxture: [{}] in {} ms", name, tookMs);
+                log.info("[Moxter] <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<");
+
+                return new ResponseEnvelope(
+                    "SEND", 
+                    URI.create("stomp://" + destination), 
+                    200, 
+                    Collections.emptyMap(), 
+                    jsonMapper.valueToTree(result), 
+                    rawResponse
+                );
+            }
+        }
+
+        // #########################################################################################
+
+        /**
+         * An internal, immutable container representing the raw HTTP response returned by 
+         * the execution engine.
+         *
+         * <p>This class acts as a bridge between the underlying HTTP client (Spring MockMvc) 
+         * and Moxter's public API. It captures the exact state of the network response 
+         * immediately after execution, before it is wrapped in a user-friendly 
+         * {@link MoxtureResult} for assertions.
+         *
+         * @param method  The HTTP method executed (e.g., "POST").
+         * @param uri     The fully resolved target URI.
+         * @param status  The HTTP status code returned by the server (e.g., 200, 404).
+         * @param headers The HTTP response headers.
+         * @param body    The response body parsed into a Jackson JSON tree (null if not JSON).
+         * @param raw     The raw, unparsed string representation of the HTTP response body.
+         */
+        public record ResponseEnvelope(
+            String method,
+            URI uri,
+            int status, 
+            Map<String, List<String>> headers, 
+            JsonNode body, 
+            String raw
+        ) {}
+    }
+
+
+
+    // #############################################################################################
+    // #############################################################################################
+
+    /**
+     * <b>Moxter Domain Utilities</b>
+     *
+     * <p> The MoxHelper provides static, stateless utility methods specifically tailored 
+     * for the Moxter domain model. 
+     *
+     * <p> <b>Architectural Role:</b>
+     * This class acts as a bridge between the core engine components, allowing static 
+     * inner classes (like {@link MoxCaller}) to perform structural operations on moxtures 
+     * without requiring an instance of the {@link Moxter} engine. It keeps the generic 
+     * {@link Utils} class free of domain-specific POJO knowledge.
+     */
+    static final class Helper {
+
+
+        /**
+         * Validates the structural integrity of a moxture definition.
+         *
+         * <p> Ensures a moxture follows the "One Identity" rule:
+         * - If it's a <b>Group</b>, it must define 'moxtures' and nothing else.
+         * - If it's a <b>Call</b>, it must define a valid 'endpoint'.
+         *
+         * <p> This prevents "Zombie" moxtures that contain headers or variables 
+         * but lack a destination to send them to.
+         */
+        private static void validateMoxture(Model.Moxture f) {
+            boolean isGroup = f.getMoxtures() != null;
+            boolean hasEndpoint = f.getEndpoint() != null && !f.getEndpoint().isBlank();
+            boolean hasInheritance = f.getBasedOn() != null && !f.getBasedOn().isBlank();
+            
+            String name = (f.getName() == null) ? "<unnamed>" : f.getName();
+
+            // 1. Check for "Identity Crisis" (Defining both)
+            if (isGroup && hasEndpoint) {
+                throw new IllegalStateException("Moxture '" + name + "' cannot define both 'moxtures' and an 'endpoint'.");
+            }
+
+            // 2. Check for "Identity Void" (Defining neither)
+            if (!isGroup && !hasEndpoint && !hasInheritance) {
+                    throw new IllegalArgumentException("Moxture '" + name + "' is invalid: " +
+                        "it must either be a group (define 'moxtures'), a call (define an 'endpoint'), " +
+                        "or inherit from another (define 'basedOn' or 'extends').");
+            }
+        }
+
+        /**
+         * Creates a safe, shallow clone of a moxture definition, completely detaching 
+         * it from its inheritance chain while preserving the deeply-merged bodies 
+         * (=> into the 'bodyStack')
+         * 
+         * <p> "Detaching" means we resolve the inheritance once, copy the data, and destroy
+         * the pointer to the parent so the execution engine operates blazingly fast on 
+         * a flat object. 
+         * 
+         * <p> "Preserving the stack" means we deliberately delay merging the JSON bodies
+         * until the exact millisecond the HTTP request fires.
+         * 
+         * <p> When and why this is used:
+         * 1. The Caching Phase (Static):  Inside materializeDeep, when 
+         *     a moxture has no parent (or we reach the top of an inheritance chain), 
+         *     we clone it before placing it in the materializedCache. This 
+         *     protects the raw, parsed YAML definitions from accidental mutation.
+         * 2. The Execution Phase (Runtime): Inside MoxtureCaller.blendRuntimeOptions, 
+         *    before a moxture is actually executed, we fetch the static version from 
+         *    the cache and clone it. This provides a disposable "Effective Spec" where 
+         *    runtime Java API overrides (like .allowFailure(true) or .verbose(true)) 
+         *    can be safely applied without permanently poisoning the engine's shared cache 
+         *    for subsequent tests.
+         * 
+         * @param src The source moxture to clone.
+         * @return A disposable, standalone clone safe for runtime mutation.
+         */
+        private static Model.Moxture cloneWithoutBasedOn(Model.Moxture src) {
+            Model.Moxture c = new Model.Moxture();
+            c.setName(src.getName());
+            c.setProtocol(src.getProtocol());
+            c.setMethod(src.getMethod());
+            c.setEndpoint(src.getEndpoint());
+            c.setHeaders(src.getHeaders()==null?null:new LinkedHashMap<>(src.getHeaders()));
+            c.setVars(src.getVars() == null ? null : new LinkedHashMap<>(src.getVars()));
+            c.setQuery(src.getQuery()==null?null:new LinkedHashMap<>(src.getQuery()));
+            c.setSave(src.getSave()==null?null:new LinkedHashMap<>(src.getSave()));
+
+            if (src.getExpect() != null) {
+                Model.ExpectDef deepExpect = new Model.ExpectDef();
+                deepExpect.setStatus(src.getExpect().getStatus()); // JsonNode is immutable enough here
+                deepExpect.setBody(src.getExpect().getBody());
+                deepExpect.setBroadcast(src.getExpect().getBroadcast());
+                c.setExpect(deepExpect);
+            }
+
+            if (src.getOptions() != null) {
+                Model.RootOptionsDef opt = new Model.RootOptionsDef();
+                opt.setAllowFailure(src.getOptions().getAllowFailure());
+                opt.setVerbose(src.getOptions().getVerbose());
+                c.setOptions(opt);
+            }
+            c.setMoxtures(src.getMoxtures()==null?null:new ArrayList<>(src.getMoxtures()));
+            c.setMultipart(src.getMultipart() == null ? null : new ArrayList<>(src.getMultipart()));
+            c.setBasedOn(null);
+
+            //# OLD c.setBody(src.getBody()); // JSON nodes are fine to share for our usage
+            // THE FIX: Prevent Shared Mutable State
+            // Use Jackson's deepCopy() so runtime body modifications don't poison the cache:
+            c.setBody(src.getBody() == null ? null : src.getBody().deepCopy());
+
+            // Preserve the body stack if it was already built!
+            if (src.getBodyStack() != null && !src.getBodyStack().isEmpty()) {
+                c.setBodyStack(new ArrayList<>(src.getBodyStack()));
+            } else if (src.getBody() != null) {
+                c.getBodyStack().add(src.getBody());
+            }
+
+            return c;
+        }
+
+
+
+        /**
+         * Recursively merges two JSON nodes, with the child node taking precedence.
+         * 
+         * <p>Merges nested ObjectNodes. For arrays and value nodes (strings, numbers), 
+         * the child simply replaces the parent.
+         */
+        private static JsonNode deepMergeBody(MoxYamlMapper mapper, JsonNode parent, JsonNode child) {
+            // 1. Coerce to objects if they are JSON strings (though resolveSingleNode usually handles this)
+            parent = Utils.Json.coerceJsonTextToNode(mapper, parent);
+            child  = Utils.Json.coerceJsonTextToNode(mapper, child);
+
+            if (child == null) return parent;
+            if (parent == null) return child;
+
+            // 2. Recursive Object Merge
+            if (child.isObject() && parent.isObject()) {
+                ObjectNode merged = (ObjectNode) parent.deepCopy();
+                Iterator<Map.Entry<String, JsonNode>> fields = child.fields();
+                while (fields.hasNext()) {
+                    Map.Entry<String, JsonNode> entry = fields.next();
+                    String key = entry.getKey();
+                    JsonNode childVal = entry.getValue();
+                    JsonNode parentVal = merged.get(key);
+
+                    if (childVal.isObject() && parentVal != null && parentVal.isObject()) {
+                        merged.set(key, deepMergeBody(mapper, parentVal, childVal));
+                    } else {
+                        merged.set(key, childVal.deepCopy());
+                    }
+                }
+                return merged;
+            }
+
+            // 3. Recursive Array Merge (Merged by index)
+            if (child.isArray() && parent.isArray()) {
+                ArrayNode parentArr = (ArrayNode) parent;
+                ArrayNode childArr = (ArrayNode) child;
+                ArrayNode mergedArr = parentArr.deepCopy();
+
+                for (int i = 0; i < childArr.size(); i++) {
+                    JsonNode childItem = childArr.get(i);
+                    if (i < mergedArr.size()) {
+                        // If both items at this index exist, merge them recursively
+                        mergedArr.set(i, deepMergeBody(mapper, mergedArr.get(i), childItem));
+                    } else {
+                        // If child has more items, append them
+                        mergedArr.add(childItem.deepCopy());
+                    }
+                }
+                return mergedArr;
+            }
+
+            // 4. Fallback: Child replaces Parent (Scalars or Mismatched Types)
+            return child.deepCopy();
+        }
+
+    }
+
+
+    // #############################################################################################
+    // #############################################################################################
 
 
     /** 
@@ -3936,44 +4550,6 @@ public final class Moxter
      */
     static final class Utils 
     {
-        
-
-
-
-
-            /**
-             * Manual implementation of the YAML 1.1 "Merge Key" (<<) specification.
-             * 
-             * <p> <b>Historical Context:</b>
-             * The merge key was a standard feature in YAML 1.1 but was moved to an optional 
-             * extension in YAML 1.2. Consequently, modern YAML parsers like SnakeYAML have 
-             * disabled this feature by default for security and specification compliance.
-             * 
-             * <p> <b>Version Compatibility & Constraints:</b>
-             * - <b>SnakeYAML 2.0+:</b> Introduced {@code LoaderOptions.setProcessMerge(true)} 
-             *   to re-enable this feature natively.
-             * - <b>SnakeYAML 1.x:</b> Does not support native merge key toggling.
-             * 
-             * <p> This project transitively inherits <b>SnakeYAML 1.33</b> (via {@code liquibase-core}), 
-             * which lacks native support and causes the "magic switch" code to fail compilation.
-             * To support factorization in {@code moxtures.yaml} 
-             * without forcing corporate dependency upgrades, this method provides a 
-             * library-agnostic manual patch.
-             * 
-             * <b>Technical Behavior:</b>
-            *  Recursively traverses the object graph (Maps and Lists). When a {@code "<<"} key 
-            *  is encountered in a Map:
-            *  - The value (Map or List of Maps) is extracted.</li>
-            *  - All entries from the extracted map(s) are merged into the current Map.</li>
-            *  - <b>Precedence:</b> Existing keys in the current map are preserved (child wins).</li>
-            *  - The {@code "<<"} key is removed to prevent downstream JSON parsing errors.</li>
-            *
-            * @param input The raw object graph returned by the YAML parser.
-            */
-
-
-
-
         public static class Classpath {
             /**
              * Generates a list of paths by walking up from the startPath to the limitPath.
@@ -4144,6 +4720,38 @@ public final class Moxter
         public static class Http 
         {
             /**
+             * Infers the appropriate MIME type for a file based on its extension.
+             *
+             * <p> This utility is primarily used by the multipart request builder to set the 
+             * Content-Type of file attachments without requiring heavy external 
+             * MIME-type libraries.
+             *
+             * <p> <b>Supported Extensions:</b>
+             * - .json -> application/json
+             * - .pdf -> application/pdf
+             * - .png -> image/png
+             * - .jpg / .jpeg -> image/jpeg
+             * - .txt -> text/plain
+             * - Default -> application/octet-stream
+             *
+             * @param filename The name of the file (e.g., "report.pdf").
+             * @return The corresponding MIME type string.
+             */
+            public static String determineContentType(String filename) {
+                if (filename == null) return "application/octet-stream";
+                
+                String lower = filename.toLowerCase(java.util.Locale.ROOT);
+                
+                if (lower.endsWith(".json")) return "application/json";
+                if (lower.endsWith(".pdf"))  return "application/pdf";
+                if (lower.endsWith(".png"))  return "image/png";
+                if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+                if (lower.endsWith(".txt"))  return "text/plain";
+                
+                return "application/octet-stream";
+            }
+
+            /**
              * Determines if a Content-Type header indicates a JSON body.
              * 
              * <p>This method is intentionally broad. It safely handles nulls, ignores case, 
@@ -4211,15 +4819,23 @@ public final class Moxter
              * @param query    A map of query parameters to append.
              * @return The fully constructed URI string.
              */
-            public static String appendQuery(String endpoint, Map<String,String> query) {
-                if (query == null || query.isEmpty()) return endpoint;
+            public static String appendQuery(String endpoint, Map<String, ?> query) { 
+                if (query == null || query.isEmpty()) return endpoint; //
+                
                 StringBuilder sb = new StringBuilder(endpoint);
                 sb.append(endpoint.contains("?") ? "&" : "?");
                 boolean first = true;
-                for (Map.Entry<String, String> e : query.entrySet()) {
+                
+                for (Map.Entry<String, ?> e : query.entrySet()) { 
                     if (!first) sb.append("&");
                     first = false;
-                    sb.append(urlEncode(e.getKey())).append("=").append(urlEncode(e.getValue()));
+                    
+                    // Use String.valueOf() to handle Integers/Booleans/Nulls safely.
+                    // This is where our clever objects finally become text for the wire.
+                    String key = urlEncode(e.getKey()); //
+                    String val = urlEncode(String.valueOf(e.getValue())); //
+                    
+                    sb.append(key).append("=").append(val);
                 }
                 return sb.toString();
             }
@@ -4451,9 +5067,9 @@ public final class Moxter
              * @param vars The current map of scoped variables.
              * @return A sanitized, shallow copy of the variables map.
              */
-            static Map<String,Object> previewVars(Map<String,Object> vars) {
+            static Map<String,Object> previewVars(Map<String,?> vars) {
                 Map<String,Object> out = new LinkedHashMap<>();
-                for (Map.Entry<String, Object> e : vars.entrySet()) {
+                for (Map.Entry<String, ?> e : vars.entrySet()) {
                     String k = e.getKey();
                     Object v = e.getValue();
                     out.put(k, k.toLowerCase(Locale.ROOT).contains("token") ? "***" : v);
@@ -4470,12 +5086,13 @@ public final class Moxter
              * @param headers The HTTP request headers.
              * @return A string representation of the sanitized headers.
              */
-            static String previewHeaders(Map<String,String> headers) {
+            static String previewHeaders(Map<String, ?> headers) {
                 if (headers == null || headers.isEmpty()) return "{}";
-                Map<String,String> out = new LinkedHashMap<>();
-                for (Map.Entry<String, String> e : headers.entrySet()) {
+                Map<String, Object> out = new LinkedHashMap<>();
+                for (Map.Entry<String, ?> e : headers.entrySet()) {
                     String k = e.getKey();
-                    String v = e.getValue();
+                    Object v = e.getValue();
+                    // Mask sensitive tokens but keep the raw Object for others
                     out.put(k, k.equalsIgnoreCase(HttpHeaders.AUTHORIZATION) ? "****" : v);
                 }
                 return out.toString();
@@ -4539,6 +5156,7 @@ public final class Moxter
 
 
     // #############################################################################################
+    // #############################################################################################
 
     /** 
      * POJOs for moxtures + response. 
@@ -4564,18 +5182,13 @@ public final class Moxter
         /** 
          * Definition of a single part in a multipart request. 
          */
+        @Getter @Setter
         static final class MultipartDef 
         {
             public String name;
             public String type;      // "json", "file", "text" (default: json if body is object, text otherwise)
             public String filename;  // filename to report (required for files)
             public JsonNode body;    // The content (JSON object, or "classpath:..." string)
-
-            // getters/setters needed for Jackson
-            public void setName(String name) { this.name = name; }
-            public void setType(String type) { this.type = type; }
-            public void setFilename(String filename) { this.filename = filename; }
-            public void setBody(JsonNode body) { this.body = body; }
         }
 
 

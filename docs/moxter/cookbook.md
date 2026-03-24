@@ -96,3 +96,21 @@ this not available on your project, another non-yaml-native mechanism is offered
 
 Whatever injection mechanism chosen, the injection is done early in the
 processing of the moxture file, before any interpolation or resolution happens.
+
+
+
+## interpolation in the 'save' section is now possible:
+
+
+```yaml
+
+  -name   ...
+   vars
+     p.name: Rex  # define a default moxture local var
+   ...
+   save:
+     glob.name : ${p.name}  # interpolation is possible
+                            # in this example we 'save' the local scope in 
+                            # the global one.
+
+```

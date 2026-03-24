@@ -50,6 +50,38 @@ The ASCII "Banner" Pollution: Big ASCII art in logs is the "Comic Sans" of the D
     expect:
 
 
+
+
+---
+### nested interpolation
+
+the recursive resolveDynamic logic now, so you can start nesting your variables and functions like ${mx.complexFunc(${p.threadId})}?
+
+
+
+---
+### accumulator variable
+
+See Confluence
+
+```yaml
+...
+  save:
+    listPetIds[] : $.id  # adds the newly created pet id to the list
+```
+
+- Access : interpolated: 
+${listPetIds[n]}
+${listPetIds[last]}
+
+- Reset:
+```yaml
+...
+  save:
+    listPetIds : []  # clears the list
+```
+
+
 ---
 ### as(...) support in assertions
 
