@@ -2482,6 +2482,34 @@ public final class Moxter
             }
         }
 
+
+        // #############################################################################################
+
+        public class MoxtureLoader 
+        {
+            private final Set<String> loadedFiles = new HashSet<>();
+            private final Map<String, MoxtureDefinition> registry = new HashMap<>();
+
+            public void load(String path) {
+                if (loadedFiles.contains(path)) return; // Avoid circular refs
+                
+                loadedFiles.add(path);
+                RawYaml raw = parseYaml(path);
+                
+                // 1. Process Includes first (Depth-First)
+                if (raw.getIncludes() != null) {
+                    for (String inc : raw.getIncludes()) {
+                        load(resolvePath(path, inc));
+                    }
+                }
+                
+                // 2. Register Moxtures (Local wins)
+                for (MoxtureDefinition mox : raw.getMoxtures()) {
+                    registry.put(mox.getName(), mox);
+                }
+            }
+        }
+
         // #############################################################################################
 
 
