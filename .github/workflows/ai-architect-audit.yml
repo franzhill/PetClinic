@@ -1,0 +1,79 @@
+name: "AI architect Audit"
+
+
+
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+  # Triggered when you comment /override on a PR
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write      # Required to update agent_memory.md
+  pull-requests: write # Required to post review comments
+  issues: write        # Required for issue_comment triggers
+
+jobs:
+  # JOB 1: The Audit
+  audit:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # AI needs full history for context
+
+      - name: "Run Architectural Review"
+
+      #  uses: google-github-actions/ai-review-agent@v2
+      #  with:
+      #    model: "gemini-1.5-pro" # High-reasoning model for architectural judgment
+      #    system_instructions: ".github/agents/architect.md"
+      #    # Context Injection: This is how the agent "sees" your vision
+      #    context_files: |
+      #      docs/adr/*.md
+      #      docs/moxter/next.md
+      #      docs/moxter/blueprint.yaml
+      #    # Focus the AI on the changes to keep it fast and cheap
+      #    mode: "diff"
+      #  env:
+      #    GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+        uses: github/super-audit-action@v1 # The 2026 native AI reviewer
+        with:
+          model: "gpt-4o" 
+          api_endpoint: "https://models.inference.ai.azure.com"
+          system_prompt_file: ".github/agents/architect.md"
+          context_files: |
+            docs/adr/*.md
+            docs/moxter/blueprint.yaml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
+
+  # JOB 2: The Learning Protocol (Memory Update)
+  #  Handles the /override command
+  learn:
+    if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/override')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: "Log Decision to Agent Memory"
+        # uses: google-github-actions/ai-memory-manager@v1
+        # with:
+        #   memory_file: "docs/adr/agent_memory.md"
+        #   instruction_file: ".github/agents/architect.md"
+        #   action: "append-override"
+        # env:
+        #   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        #   GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        uses: github/ai-memory-sync@v1
+        with:
+          memory_file: "docs/adr/agent_memory.md"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
+

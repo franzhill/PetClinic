@@ -21,6 +21,8 @@ moxtures:
   # --------------------------------------------------------
 
   - name: create_pet_for_owner
+    tags: list, of, tags   # TODO (aka labels) 
+                           # for easy sorting, categorization, launching moxtures of a certain type...
     description: this moxture creates a pet for a given owner # TODO
     extends: parent_moxture   # or 'basedOn'
 
