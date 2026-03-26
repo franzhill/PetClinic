@@ -24,6 +24,12 @@ import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.messaging.simp.annotation.SendToUser;
 import org.springframework.messaging.simp.annotation.SubscribeMapping;
+import org.springframework.security.access.expression.method.DefaultMethodSecurityExpressionHandler;
+import org.springframework.security.authorization.method.PreAuthorizeAuthorizationManager;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.util.SimpleMethodInvocation;
 import org.springframework.stereotype.Controller;
 import org.springframework.util.AntPathMatcher;
 
@@ -59,7 +65,8 @@ import lombok.extern.slf4j.Slf4j;
  * 
  */
 @Slf4j
-public class MockWebs {
+public class MockWebs 
+{
 
     /**
     * The mocked or spied messaging template.
@@ -88,12 +95,17 @@ public class MockWebs {
    /**
     * Represents a single STOMP endpoint registered in the system.
     * 
-    * @param pattern    The destination template (e.g., "/editor/field/{entityClass}/{objectId}/publish")
+    * @param pattern    The destination template (e.g., 
+    *                   "/editor/field/{entityClass}/{objectId}/publish")
     * @param controller The Spring singleton controller instance that handles the request
     * @param method     The specific Java method to invoke via reflection
     */
    private record Route(String pattern, Object controller, Method method) {}
 
+    /** 
+     * Manager for evaluating @PreAuthorize expressions. 
+     */
+    private final PreAuthorizeAuthorizationManager authManager = new PreAuthorizeAuthorizationManager();
 
    /**
     * Constructs the MockWebSocket utility. 
@@ -111,66 +123,73 @@ public class MockWebs {
     * @param mapper     The Jackson ObjectMapper used to deserialize the captured broadcast(ed) 
     *                   payloads back into strongly-typed Java objects for test assertions.
     */
-   public MockWebs(ApplicationContext context, SimpMessagingTemplate template, ObjectMapper mapper)
-   {
-      // Fail Fast Guard: Enforce Mockito contract
-      if (!Mockito.mockingDetails(template).isMock() && !Mockito.mockingDetails(template).isSpy()) 
-      {  throw new IllegalArgumentException(
-            "The SimpMessagingTemplate passed to MockWebs MUST be a Mockito Mock or Spy! " +
-            "Please ensure you are using @MockBean or @SpyBean in your test configuration."
-         );
-      }
-      this.template = template;
-      this.mapper = mapper;
+    public MockWebs(ApplicationContext context, SimpMessagingTemplate template, ObjectMapper mapper)
+    {
+        // Fail Fast Guard: Enforce Mockito contract
+        if (!Mockito.mockingDetails(template).isMock() && !Mockito.mockingDetails(template).isSpy()) 
+        {  throw new IllegalArgumentException(
+                "The SimpMessagingTemplate passed to MockWebs MUST be a Mockito Mock or Spy! " +
+                "Please ensure you are using @MockBean or @SpyBean in your test configuration."
+            );
+        }
+        this.template = template;
+        this.mapper = mapper;
 
-      log.debug("[MockWebs] Initializing routing table...");
-      Map<String, Object> controllers = context.getBeansWithAnnotation(Controller.class);
+        log.debug("[MockWebs] Initializing routing table...");
+        Map<String, Object> controllers = context.getBeansWithAnnotation(Controller.class);
 
-      if (controllers.isEmpty()) {
-            log.warn("[MockWebs] No @Controller beans found in ApplicationContext. Routing will be empty!");
-      }
+        if (controllers.isEmpty()) {
+                log.warn("[MockWebs] No @Controller beans found in ApplicationContext. Routing will be empty!");
+        }
 
-      for (Object controller : controllers.values()) 
-      {
-        // 1. Get the actual user-defined class (strips the CGLIB proxy)
-        Class<?> targetClass = AopUtils.getTargetClass(controller);
-        log.debug("[MockWebs] Controller Found: {} (Target: {})", 
-                  controller.getClass().getSimpleName(), targetClass.getSimpleName());
+        for (Object controller : controllers.values()) 
+        {
+            // 1. Get the actual user-defined class (strips the CGLIB proxy)
+            Class<?> targetClass = AopUtils.getTargetClass(controller);
+            log.debug("[MockWebs] Controller Found: {} (Target: {})", 
+                    controller.getClass().getSimpleName(), targetClass.getSimpleName());
 
-        // 2. Use Spring's MethodIntrospector to find methods with @MessageMapping
-        //   (these are triggered when a frontend client sends a STOMP SEND command.
-        // Because controllers can be wrapped in transactions or security proxies, 
-        // this entails that standard Java reflection only sees the generated proxy
-        // class, which lacks the original annotations. As a qonsequence, a basic scan
-        // fails to find any routes. So, we use MethodIntrospector to "pierce" the proxy
-        // and find the real @MessageMapping metadata on the underlying target class.
-        Map<Method, MessageMapping> messageMappings = MethodIntrospector.selectMethods(targetClass,
-                (MethodIntrospector.MetadataLookup<MessageMapping>) method -> 
-                        AnnotatedElementUtils.findMergedAnnotation(method, MessageMapping.class));
+            // 2. Use Spring's MethodIntrospector to find methods with @MessageMapping
+            //   (these are triggered when a frontend client sends a STOMP SEND command.
+            // Because controllers can be wrapped in transactions or security proxies, 
+            // this entails that standard Java reflection only sees the generated proxy
+            // class, which lacks the original annotations. As a qonsequence, a basic scan
+            // fails to find any routes. So, we use MethodIntrospector to "pierce" the proxy
+            // and find the real @MessageMapping metadata on the underlying target class.
+            Map<Method, MessageMapping> messageMappings = MethodIntrospector.selectMethods(targetClass,
+                    (MethodIntrospector.MetadataLookup<MessageMapping>) method -> 
+                            AnnotatedElementUtils.findMergedAnnotation(method, MessageMapping.class));
 
-        messageMappings.forEach((method, annotation) -> {
-            for (String mapping : annotation.value()) {
-                routes.add(new Route(mapping, controller, method));
-                log.debug("[MockWebs] Registered MessageMapping: {} -> {}.{}()", 
-                          mapping, targetClass.getSimpleName(), method.getName());
-            }
-        });
+            messageMappings.forEach((method, annotation) -> {
+                for (String mapping : annotation.value()) {
+                    routes.add(new Route(mapping, controller, method));
+                    log.debug("[MockWebs] Registered MessageMapping: {} -> {}.{}()", 
+                            mapping, targetClass.getSimpleName(), method.getName());
+                }
+            });
 
-        // 3. Repeat for @SubscribeMapping
-        Map<Method, SubscribeMapping> subscribeMappings = MethodIntrospector.selectMethods(targetClass,
-                (MethodIntrospector.MetadataLookup<SubscribeMapping>) method -> 
-                        AnnotatedElementUtils.findMergedAnnotation(method, SubscribeMapping.class));
+            // 3. Repeat for @SubscribeMapping
+            Map<Method, SubscribeMapping> subscribeMappings = MethodIntrospector.selectMethods(targetClass,
+                    (MethodIntrospector.MetadataLookup<SubscribeMapping>) method -> 
+                            AnnotatedElementUtils.findMergedAnnotation(method, SubscribeMapping.class));
 
-        subscribeMappings.forEach((method, annotation) -> {
-            for (String mapping : annotation.value()) {
-                routes.add(new Route(mapping, controller, method));
-                log.debug("[MockWebs] Registered SubscribeMapping: {} -> {}.{}()", 
-                          mapping, targetClass.getSimpleName(), method.getName());
-            }
-        });
-      }
-      log.info("[MockWebs] Initialization complete. Total routes: {}", routes.size());
-   }
+            subscribeMappings.forEach((method, annotation) -> {
+                for (String mapping : annotation.value()) {
+                    routes.add(new Route(mapping, controller, method));
+                    log.debug("[MockWebs] Registered SubscribeMapping: {} -> {}.{}()", 
+                            mapping, targetClass.getSimpleName(), method.getName());
+                }
+            });
+
+            // 4. Initialize the Security Manager with the ApplicationContext
+            // This allows @PreAuthorize expressions to reference other beans via SpEL 
+            // (e.g. @myService.check())
+            DefaultMethodSecurityExpressionHandler handler = new DefaultMethodSecurityExpressionHandler();
+            handler.setApplicationContext(context); 
+            this.authManager.setExpressionHandler(handler);
+        }
+        log.info("[MockWebs] Initialization complete. Total routes: {}", routes.size());
+    }
 
    /**
     * Creates a lightweight session bound to a specific user.
@@ -180,186 +199,248 @@ public class MockWebs {
     * @param principal The user's Authentication or Principal object.
     * @return A StompSession instance tied to the provided principal.
     */
-   public StompSession with(Object principal) {
-       return new StompSession(this, principal);
+   public StompSession with(Object principal) 
+   {   return new StompSession(this, principal);
    }
 
 
-   /**
-    * A lightweight wrapper that remembers the user identity for subsequent WebSocket calls.
-    */
-   public record StompSession(MockWebs engine, Object principal) {
-       
-       /**
-        * Sends a STOMP message as the session's bound user.
-        * 
-        * @param destination The raw STOMP target destination (path) (e.g., "/field/account/200/publish")
-        * @param jsonPayload The JSON string payload.
-        * @return The object returned by the controller method.
-        */
-       public Object send(String destination, String jsonPayload) throws Exception {
-           return engine.send(destination, jsonPayload, principal);
-       }
+    /**
+     * A lightweight wrapper that remembers the user identity for subsequent WebSocket calls.
+     */
+    public record StompSession(MockWebs engine, Object principal) 
+    {
+        /**
+         * Sends a STOMP message as the session's bound user.
+         * 
+         * @param destination The raw STOMP target destination (path) (e.g., "/field/account/200/publish")
+         * @param jsonPayload The JSON string payload.
+         * @return The object returned by the controller method.
+         */
+        public Object send(String destination, String jsonPayload) throws Exception {
+            return engine.send(destination, jsonPayload, principal);
+        }
 
-       /**
-        * Sends a STOMP message as the session's bound user using a JsonNode payload.
-        * 
-        * @param destination The raw STOMP target destination (path) (e.g., "/field/account/200/publish")
-        * @param payload     The payload as a Jackson JsonNode.
-        * @return The object returned by the controller method.
-        */
+        /**
+         * Sends a STOMP message as the session's bound user using a JsonNode payload.
+         * 
+         * @param destination The raw STOMP target destination (path) (e.g., "/field/account/200/publish")
+         * @param payload     The payload as a Jackson JsonNode.
+         * @return The object returned by the controller method.
+         */
         public Object send(String destination, JsonNode payload) throws Exception {
             // Delegate to the engine using the standardized string representation
             return engine.send(destination, payload.toString(), principal);
         }
-   }
+    }
 
 
 
-   /**
-    * Emulates STOMP routing by destination URL, acting as a true alter-ego to MockMvc.
-    * 
-    * @param destination The raw STOMP target destination (path) (e.g., "/field/account/200/publish")
-    * @param jsonPayload The message payload
-    * @param principal   The user's Authentication or Principal object
-    * @return The object returned by the controller method (useful for @SubscribeMapping assertions).
-    */
-   public Object send(String destination, String jsonPayload, Object principal) throws Exception 
-   {
-      log.debug("[MockWebs] Attempting to route message to: {}", destination);
+    /**
+     * Emulates STOMP routing by destination URL, acting as a true alter-ego to MockMvc.
+     * 
+     * @param destination The raw STOMP target destination (path) (e.g., "/field/account/200/publish")
+     * @param jsonPayload The message payload
+     * @param principal   The user's Authentication or Principal object
+     * @return The object returned by the controller method (useful for @SubscribeMapping assertions).
+     */
+    public Object send(String destination, String jsonPayload, Object principal) throws Exception 
+    {
+        log.debug("[MockWebs] Attempting to route message to: {}", destination);
 
-      // --------------------------------------------------------------------
-      // PHASE 1: THE ROUTER (Scanning our in-memory registry)
-      // --------------------------------------------------------------------
-      // Instead of querying the Spring ApplicationContext on every test call, we scan 
-      // the lightweight 'routes' list we built during the class constructor.
-      for (Route route : routes) {
-         
-         // Spring's AntPathMatcher checks if the actual URL (e.g., ".../BCS/200/...") 
-         // matches the route's template (e.g., ".../{entityClass}/{objectId}/...")
-         if (pathMatcher.match(route.pattern(), destination)) {
-               
-               // ----------------------------------------------------------
-               // PHASE 2: VARIABLE EXTRACTION
-               // ----------------------------------------------------------
-               // Extracts the values from the URL based on the matched template.
-               // Example: pathVars will contain {"objectId": "200", "entityClass": "BCS"}
-               Map<String, String> pathVars = pathMatcher.extractUriTemplateVariables(route.pattern(), destination);
-               
-               // We prepare an array to hold the exact arguments we will pass to the Java method
-               Object[] args = new Object[route.method().getParameterCount()];
-               Parameter[] parameters = route.method().getParameters();
-               
-               // ----------------------------------------------------------
-               // PHASE 3: THE BINDING PROCESS (Mapping data to method parameters)
-               // ----------------------------------------------------------
-               for (int i = 0; i < parameters.length; i++) {
-                  Parameter param = parameters[i];
-                  
-                  // --- 3A. Handle @DestinationVariable ---
-                  // If the parameter expects a value from the URL (like @PathVariable in REST)
-                  if (param.isAnnotationPresent(DestinationVariable.class)) {
-                     
-                     // Get the variable name. If the annotation doesn't specify it, use the parameter's name
-                     String varName = param.getAnnotation(DestinationVariable.class).value();
-                     if (varName.isEmpty()) varName = param.getName();
-                     
-                     // Get the raw string value from the extracted URL variables
-                     String strValue = pathVars.get(varName);
-                     
-                     // Perform basic type casting (Spring normally does this automatically)
-                     if (param.getType().equals(Long.class) || param.getType().equals(long.class)) {
-                           args[i] = Long.parseLong(strValue);
-                     } else if (param.getType().equals(String.class)) {
-                           args[i] = strValue;
-                     } else if (param.getType().equals(Integer.class) || param.getType().equals(int.class)) {
-                           args[i] = Integer.parseInt(strValue);
-                     }
-                  } 
-                  
-                  // --- 3B. Handle Security Context (Principal/Authentication) ---
-                  // If the method expects the logged-in user, we inject the principal passed to this mock
-                  else if (principal != null && param.getType().isAssignableFrom(principal.getClass())) {
-                     args[i] = principal;
-                  }
-                  
-                  // --- 3C. Handle The Payload (The "Message Converter" Simulation) ---
-                  // If it's not a URL variable and not the Principal, it MUST be the payload body.
-                  // Because we bypassed the real STOMP broker, we also bypassed Spring's MappingJackson2MessageConverter.
-                  // We must manually deserialize the JSON string into the exact Java class the method demands.
-                  else {
-                     if (jsonPayload == null || jsonPayload.isBlank()) {
-                         args[i] = null; // No payload provided, pass null
-                     } else {
-                         try {
-                               args[i] = mapper.readValue(jsonPayload, param.getType());
-                         } catch (Exception e) {
-                               throw new IllegalArgumentException(
-                                  "MockWebSocket failed to deserialize JSON into " + param.getType().getSimpleName() + 
-                                  ". Please check your JSON structure.", e);
-                         }
-                     }
-                  }
-               }
-               
-               // ----------------------------------------------------------
-               // PHASE 4: EXECUTION
-               // ----------------------------------------------------------
-               // We found the method and successfully built the arguments. 
-               // Now we invoke the method directly using Java Reflection, completely 
-               // bypassing the network layer.
-               Object returnValue;
-               try {
-                   returnValue = route.method().invoke(route.controller(), args);
-               } catch (InvocationTargetException e) {
-                   // Unwrap the reflection exception so the test sees the REAL business exception (e.g., NotFoundException)
-                   Throwable cause = e.getCause();
-                   if (cause instanceof Exception) {
-                       throw (Exception) cause;
-                   }
-                   throw e;
-               }
+        // --------------------------------------------------------------------
+        // PHASE 0: IDENTITY SETUP (Mimic MockMvc filter behavior)
+        // --------------------------------------------------------------------
+        Authentication auth = (principal instanceof Authentication a) ? a : null;
+        SecurityContext originalContext = SecurityContextHolder.getContext();
+        
+        try 
+        {
+            // Temporarily set the context so downstream logic or SpEL can access the user
+            if (auth != null) 
+            {   SecurityContext context = SecurityContextHolder.createEmptyContext();
+                                context.setAuthentication(auth);
+                SecurityContextHolder.setContext(context);
+            }
 
-               // ----------------------------------------------------------
-               // PHASE 5: THE INTERCEPTOR EMULATION (@SendTo / @SendToUser)
-               // ----------------------------------------------------------
-               if (returnValue != null) {
-                  
-                  // Emulate @SendTo
-                  if (route.method().isAnnotationPresent(SendTo.class)) {
-                     String[] outboundDestinations = route.method().getAnnotation(SendTo.class).value();
-                     
-                     for (String outboundDest : outboundDestinations) {
-                           // Resolve placeholders (e.g., {objectId} -> 200)
-                           String resolvedDest = outboundDest;
-                           for (Map.Entry<String, String> entry : pathVars.entrySet()) {
-                              resolvedDest = resolvedDest.replace("{" + entry.getKey() + "}", entry.getValue());
-                           }
-                           
-                           // Push it through our Mockito Megaphone!
-                           // This routes the return value directly into our wiretap (verifyBroadcast)
-                           template.convertAndSend(resolvedDest, returnValue);
-                     }
-                  } 
-                  
-                  // Emulate @SendToUser (e.g., your ExceptionHandler)
-                  else if (route.method().isAnnotationPresent(SendToUser.class)) {
-                     String[] userDestinations = route.method().getAnnotation(SendToUser.class).value();
-                     String username = (principal instanceof Principal p) ? p.getName() : "unknown-test-user";
-                     
-                     for (String userDest : userDestinations) {
-                           template.convertAndSendToUser(username, userDest, returnValue);
-                     }
-                  }
-               }
+            // --------------------------------------------------------------------
+            // PHASE 1: THE ROUTER (Scanning our in-memory registry)
+            // --------------------------------------------------------------------
+            // Instead of querying the Spring ApplicationContext on every test call, we scan 
+            // the lightweight 'routes' list we built during the class constructor.
+            for (Route route : routes) 
+            {
+                // Spring's AntPathMatcher checks if the actual URL (e.g., ".../BCS/200/...") 
+                // matches the route's template (e.g., ".../{entityClass}/{objectId}/...")
+                if (pathMatcher.match(route.pattern(), destination)) 
+                {
+
+                    // ----------------------------------------------------------
+                    // PHASE 2: VARIABLE EXTRACTION
+                    // ----------------------------------------------------------
+                    // Extracts the values from the URL based on the matched template.
+                    // Example: pathVars will contain {"objectId": "200", "entityClass": "BCS"}
+                    Map<String, String> pathVars = 
+                            pathMatcher.extractUriTemplateVariables(route.pattern(), destination);
+
+                    // We prepare an array to hold the exact arguments we will pass to the Java method
+                    Object[] args = new Object[route.method().getParameterCount()];
+                    Parameter[] parameters = route.method().getParameters();
+
+                    // ----------------------------------------------------------
+                    // PHASE 3: THE BINDING PROCESS (Mapping data to method parameters)
+                    // ----------------------------------------------------------
+                    for (int i = 0; i < parameters.length; i++) 
+                    {
+                        Parameter param = parameters[i];
+                        
+                        // --- 3A. Handle @DestinationVariable ---
+                        // If the parameter expects a value from the URL (like @PathVariable in REST)
+                        if (param.isAnnotationPresent(DestinationVariable.class)) {
+                            
+                            // Get the variable name. If the annotation doesn't specify it, use the 
+                            // parameter's name
+                            String varName = param.getAnnotation(DestinationVariable.class).value();
+                            if (varName.isEmpty()) varName = param.getName();
+                            
+                            // Get the raw string value from the extracted URL variables
+                            String strValue = pathVars.get(varName);
+                            
+                            // Perform basic type casting (Spring normally does this automatically)
+                            if (param.getType().equals(Long.class) || 
+                                param.getType().equals(long.class)) 
+                            {     args[i] = Long.parseLong(strValue);
+                            }
+                            else if (param.getType().equals(String.class)) {
+                                args[i] = strValue;
+                            } 
+                            else if (param.getType().equals(Integer.class) || 
+                                    param.getType().equals(int.class)) 
+                            {   args[i] = Integer.parseInt(strValue);
+                            }
+                        } 
+                        
+                        // --- 3B. Handle Security Context (Principal/Authentication) ---
+                        // If the method expects the logged-in user, we inject the principal passed to this mock
+                        else if (principal != null && param.getType().isAssignableFrom(principal.getClass())) {
+                            args[i] = principal;
+                        }
+                        
+                        // --- 3C. Handle The Payload (The "Message Converter" Simulation) ---
+                        // If it's not a URL variable and not the Principal, it MUST be the payload body.
+                        // Because we bypassed the real STOMP broker, we also bypassed Spring's 
+                        // MappingJackson2MessageConverter. We must manually deserialize the JSON string
+                        // into the exact Java class the method demands.
+                        else {
+                            if (jsonPayload == null || jsonPayload.isBlank()) {
+                                args[i] = null; // No payload provided, pass null
+                            } else {
+                                try {
+                                    args[i] = mapper.readValue(jsonPayload, param.getType());
+                                } catch (Exception e) {
+                                    throw new IllegalArgumentException(
+                                        "MockWebSocket failed to deserialize JSON into " + param.getType().getSimpleName() + 
+                                        ". Please check your JSON structure.", e);
+                                }
+                            }
+                        }
+                    }
                
-            // Return the payload directly so @SubscribeMapping tests can assert on it!
-            return returnValue;
-         }
-      }
-      
-      throw new IllegalArgumentException("404 Not Found: No @MessageMapping matched destination -> " + destination);
-   }
+                    // ----------------------------------------------------------
+                    // PHASE 3.5: SECURITY VERIFICATION
+                    // ----------------------------------------------------------
+                    // We wrap the method and bound arguments into a MethodInvocation
+                    // and ask the manager to verify access.
+                    checkSecurity(route, args, auth);
+
+                    // ----------------------------------------------------------
+                    // PHASE 4: EXECUTION
+                    // ----------------------------------------------------------
+                    // If checkSecurity didn't throw an AccessDeniedException, we proceed.
+                    // We found the method and successfully built the arguments. 
+                    // Now we invoke the method directly using Java Reflection, completely 
+                    // bypassing the network layer.
+                    Object returnValue;
+                    try 
+                    {   returnValue = route.method().invoke(route.controller(), args);
+                    } 
+                    catch (InvocationTargetException e) 
+                    {   // Unwrap the reflection exception so the test sees the REAL business exception
+                        // (e.g., NotFoundException)
+                        Throwable cause = e.getCause();
+                        if (cause instanceof Exception) 
+                        {   throw (Exception) cause;
+                        }
+                        throw e;
+                    }
+
+                    // ----------------------------------------------------------
+                    // PHASE 5: THE INTERCEPTOR EMULATION (@SendTo / @SendToUser)
+                    // ----------------------------------------------------------
+                    if (returnValue != null) 
+                    {
+                        // Emulate @SendTo
+                        if (route.method().isAnnotationPresent(SendTo.class)) {
+                            String[] outboundDestinations = route.method()
+                                                                .getAnnotation(SendTo.class).value();
+                            
+                            for (String outboundDest : outboundDestinations) 
+                            {
+                                // Resolve placeholders (e.g., {objectId} -> 200)
+                                String resolvedDest = outboundDest;
+                                for (Map.Entry<String, String> entry : pathVars.entrySet()) {
+                                    resolvedDest = resolvedDest.replace("{" + entry.getKey() + "}",
+                                                                        entry.getValue());
+                                }
+                                
+                                // Push it through our Mockito Megaphone
+                                // This routes the return value directly into our wiretap (verifyBroadcast)
+                                template.convertAndSend(resolvedDest, returnValue);
+                            }
+                        } 
+                        
+                        // Emulate @SendToUser (e.g., your ExceptionHandler)
+                        else if (route.method().isAnnotationPresent(SendToUser.class)) 
+                        {
+                            String[] userDestinations = route.method()
+                                                             .getAnnotation(SendToUser.class).value();
+                            String username = (principal instanceof Principal p) 
+                                                    ? p.getName() 
+                                                    : "unknown-test-user";
+                            
+                            for (String userDest : userDestinations) {
+                                template.convertAndSendToUser(username, userDest, returnValue);
+                            }
+                        }
+                    }
+
+                    // Return the payload directly so @SubscribeMapping tests can assert on it!
+                    return returnValue;
+                }
+            }
+        }
+        finally 
+        {   // Restore the original context to prevent state leakage between test steps
+            SecurityContextHolder.setContext(originalContext);
+        }
+
+        throw new IllegalArgumentException("404 Not Found: No @MessageMapping matched destination -> " + destination);
+    }
+
+
+    /**
+     * Manually triggers the Spring Security evaluation for @PreAuthorize.
+     * Throws AccessDeniedException if the current identity is unauthorized.
+     */
+    private void checkSecurity(Route route, Object[] args, Authentication auth) 
+    {
+        // We create an AOP MethodInvocation which is what the AuthorizationManager expects.
+        // This allows the manager to find the @PreAuthorize annotation on the method OR class.
+        org.aopalliance.intercept.MethodInvocation mi = 
+                new SimpleMethodInvocation(route.controller(), route.method(), args);
+        
+        // The .verify() method performs the SpEL check and throws AccessDeniedException on failure.
+        this.authManager.verify(() -> auth, mi);
+    }
 
 
     /**

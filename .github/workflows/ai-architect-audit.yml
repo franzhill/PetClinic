@@ -42,7 +42,7 @@ jobs:
       #  env:
       #    GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
-        uses: github/super-audit-action@v1 # The 2026 native AI reviewer
+        uses: github/ai-code-review-action@v1 # The 2026 native AI reviewer
         with:
           model: "gpt-4o" 
           api_endpoint: "https://models.inference.ai.azure.com"
@@ -71,7 +71,7 @@ jobs:
         # env:
         #   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         #   GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        uses: github/ai-memory-sync@v1
+        uses: github/ai-memory-manager-action@v1
         with:
           memory_file: "docs/adr/agent_memory.md"
         env:
