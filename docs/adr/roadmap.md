@@ -1,4 +1,5 @@
-# Moxter Roadmap (2026)
+# Moxter Roadmap (2026) 
+Note for FHI: this is a copy of the Confluence page intended for the AI agents. The Confluence page is the reference.
 
 ## 🚨 Priority 1: Adoption, Infrastructure & Schema Alignment
 **Goal:** Remove "magic" friction, stabilize the orchestration layer, and align the model with the long-term vision[cite: 3].

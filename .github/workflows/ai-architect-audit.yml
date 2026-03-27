@@ -24,7 +24,71 @@ jobs:
         with:
           fetch-depth: 0 # AI needs full history for context
 
-      - name: "Run Architectural Review"
+        # Implementation using official gh models CLI extension
+      - name: "Run Multi-Agent Architectural Audit"
+        run: |
+          export GH_REPO=${{ github.repository }}
+          gh extension install github/gh-models
+          
+          # 1. PR Diff Extraction
+          #    OPTIMIZED DIFF: No context lines (-U0) to save massive token space
+          git diff -U0 ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} > diff.txt
+
+          # 2. CREATE SHARED CONTEXT (The "Source of Truth")
+          # We combine the vision, the laws, and the technical spec
+          echo "# GENERAL CONTEXT & PHILOSOPHY" > moxter_context.txt
+          [ -f "docs/adr/context.md" ] && cat docs/adr/context.md >> moxter_context.txt
+
+          echo "# MOXTER ROADMAP & VISION" >> moxter_context.txt
+          [ -f "docs/adr/roadmap.md"        ] && cat docs/adr/roadmap.md >> moxter_context.txt
+          # Because of the 8000 token limit of our model, we won't be providing these for the time being
+          #[ -f "docs/moxter/next.md"        ] && cat docs/moxter/next.md >> moxter_context.txt
+          #[ -f "docs/moxter/blueprint.yaml" ] && cat docs/moxter/blueprint.yaml >> moxter_context.txt
+          
+          # 3. PASS 1: The Critic Agent
+          # Now the Critic knows EXACTLY what the context is
+          echo -e "### SYSTEM CONTEXT\n$(cat moxter_context.txt)\n\n### PR DIFF\n$(cat diff.txt)" > critic_input.txt
+          
+          gh models run openai/gpt-4o "$(cat critic_input.txt)" \
+            --system-prompt "$(cat .github/agents/critic.md)" > critic_findings.md
+          
+          # 4. PASS 2: The Senior Agent (Synthesis)
+          # Receives the same context + the Critic's harsh report for final judgment.
+          echo -e "### CRITIC REPORT & SUMMARY\n$(cat critic_findings.md)\n\n### CORE CONTEXT\n$(cat moxter_context.txt)" > senior_input.txt
+
+          gh models run openai/gpt-4o "$(cat senior_input.txt)" \
+            --system-prompt "$(cat .github/agents/architect.md)" > final_review.md
+          
+          # 5. Post the Final Orchestrated Review
+          gh pr comment ${{ github.event.pull_request.number }} --body-file final_review.md
+        env:
+          GH_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
+
+  # JOB 2: The Learning Protocol (Memory Update)
+  #  Handles the /override command
+  learn:
+    if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/override')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: "Log Decision to Agent Memory"
+
+
+        # Manual append and push for maximum transparency
+        run: |
+          echo "| $(date +%F) | System | Override | ${{ github.event.comment.body }} | @${{ github.actor }} |" >> docs/adr/agent_memory.md
+          git config user.name "Guardian-Alpha"
+          git config user.email "guardian@moxter.ai"
+          git add docs/adr/agent_memory.md
+          git commit -m "chore: update agent memory via /override"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
+
 
       #  uses: google-github-actions/ai-review-agent@v2
       #  with:
@@ -51,29 +115,6 @@ jobs:
       #  env:
       #    GITHUB_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
 
-        # Implementation using official gh models CLI extension
-        run: |
-          gh extension install github/gh-models
-          gh pr diff > diff.txt
-          cat docs/adr/*.md docs/moxter/blueprint.yaml > context.txt
-          gh models run gpt-4o \
-            --system-prompt "$(cat .github/agents/architect.md)" \
-            --file context.txt \
-            --file diff.txt > review.md
-          gh pr comment --body-file review.md
-        env:
-          GH_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
-
-  # JOB 2: The Learning Protocol (Memory Update)
-  #  Handles the /override command
-  learn:
-    if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/override')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: "Log Decision to Agent Memory"
         # uses: google-github-actions/ai-memory-manager@v1
         # with:
         #   memory_file: "docs/adr/agent_memory.md"
@@ -88,14 +129,3 @@ jobs:
         #   memory_file: "docs/adr/agent_memory.md"
         # env:
         #   GITHUB_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
-
-        # Manual append and push for maximum transparency
-        run: |
-          echo "| $(date +%F) | System | Override | ${{ github.event.comment.body }} | @${{ github.actor }} |" >> docs/adr/agent_memory.md
-          git config user.name "Guardian-Alpha"
-          git config user.email "guardian@moxter.ai"
-          git add docs/adr/agent_memory.md
-          git commit -m "chore: update agent memory via /override"
-          git push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

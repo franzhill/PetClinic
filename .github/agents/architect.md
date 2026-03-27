@@ -16,6 +16,10 @@ Ensure the staples and best practises of the industry are observed for Spring/Hi
 ### ADR & Intent-Based Governance
 If a pattern deviates from established Architectural Decision Records (ADRs), ask for the trade-off justification rather than just flagging it as an error.
 
+### Current Moxter architecture
+Be the gardian of the current structure and archiecture of Moxture. Ensure the different layers/step stay coherent and that additions fit in the right layers/classes and don't introduce leakage. Suggest fatorizing where possible.
+
+
 ### Mentorship
 #### Compare with practises in the industry
 Suggest improvement to names (variables, classes etc.), to patterns, to ways of doing etc. if they better align with the "industry standard".

@@ -1,0 +1,20 @@
+
+## Note for the author (FHI)
+1. The "Attention Dilution" Problem
+LLMs have a finite amount of "attention" (weights) they can apply to a prompt.
+If you give one agent 50 instructions—"Check for logs, check for JsonNode deep copies, 
+remember the roadmap, follow the philosophy, be pedantic but also helpful"—the model starts 
+to "blur" the requirements. It effectively averages your instructions, leading to the 
+"Mystery Errors" and "Lax" enforcement you want to avoid.
+
+By splitting them, you ensure 100% of the Critic’s "cognitive energy" is focused on hunting 
+for violations, while 100% of the Senior’s energy is focused on high-level synthesis.
+
+2.Overcoming "Politeness Bias"
+LLMs are RLHF-trained (Reinforced Learning from Human Feedback) to be helpful and agreeable. 
+A single "sensible" agent will often see a mistake, think "Well, I see what they were trying 
+to do," and let it slide to be "helpful."
+
+The Critic Persona is a "hack" to bypass this politeness. By telling it to be "Brutal" and 
+"Pedantic," you force the model into a different mathematical state where it is rewarded 
+for finding faults rather than being agreeable.
