@@ -26,6 +26,68 @@ jobs:
 
       - name: "Run Architectural Review"
 
+
+        # Implementation using official gh models CLI extension
+      - name: "Run Architectural Review"
+        run: |
+          # 1. Declaration: Explicitly set the repo to stop 'gh' from trying to discover the branch
+          export GH_REPO=${{ github.repository }}
+          
+          # 2. Install extension with no-magic friction
+          gh extension install github/gh-models
+          
+          # 3. Explicit PR diff using the PR number from the event context
+          gh pr diff ${{ github.event.pull_request.number }} > diff.txt
+          
+          # 4. Context Loading with Just-in-Time Safety [cite: 11]
+          # This avoids "Call-Time Fatalities" if files are missing [cite: 13]
+          touch context.txt
+          if [ -d "docs/adr" ]; then
+            cat docs/adr/*.md >> context.txt
+          fi
+          if [ -f "docs/moxter/blueprint.yaml" ]; then
+            cat docs/moxter/blueprint.yaml >> context.txt
+          elif [ -f "blueprint.yaml" ]; then
+            cat blueprint.yaml >> context.txt
+          fi
+          
+          # 5. Execute the Architect's Judgment
+          gh models run gpt-4o \
+            --system-prompt "$(cat .github/agents/architect.md)" \
+            --file context.txt \
+            --file diff.txt > review.md
+          
+          # 6. Post the review as an explicit Declaration
+          gh pr comment ${{ github.event.pull_request.number }} --body-file review.md
+        env:
+          GH_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
+
+  # JOB 2: The Learning Protocol (Memory Update)
+  #  Handles the /override command
+  learn:
+    if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/override')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: "Log Decision to Agent Memory"
+
+
+        # Manual append and push for maximum transparency
+        run: |
+          echo "| $(date +%F) | System | Override | ${{ github.event.comment.body }} | @${{ github.actor }} |" >> docs/adr/agent_memory.md
+          git config user.name "Guardian-Alpha"
+          git config user.email "guardian@moxter.ai"
+          git add docs/adr/agent_memory.md
+          git commit -m "chore: update agent memory via /override"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
+
+
       #  uses: google-github-actions/ai-review-agent@v2
       #  with:
       #    model: "gemini-1.5-pro" # High-reasoning model for architectural judgment
@@ -51,29 +113,6 @@ jobs:
       #  env:
       #    GITHUB_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
 
-        # Implementation using official gh models CLI extension
-        run: |
-          gh extension install github/gh-models
-          gh pr diff > diff.txt
-          cat docs/adr/*.md docs/moxter/blueprint.yaml > context.txt
-          gh models run gpt-4o \
-            --system-prompt "$(cat .github/agents/architect.md)" \
-            --file context.txt \
-            --file diff.txt > review.md
-          gh pr comment --body-file review.md
-        env:
-          GH_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
-
-  # JOB 2: The Learning Protocol (Memory Update)
-  #  Handles the /override command
-  learn:
-    if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/override')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: "Log Decision to Agent Memory"
         # uses: google-github-actions/ai-memory-manager@v1
         # with:
         #   memory_file: "docs/adr/agent_memory.md"
@@ -88,14 +127,3 @@ jobs:
         #   memory_file: "docs/adr/agent_memory.md"
         # env:
         #   GITHUB_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
-
-        # Manual append and push for maximum transparency
-        run: |
-          echo "| $(date +%F) | System | Override | ${{ github.event.comment.body }} | @${{ github.actor }} |" >> docs/adr/agent_memory.md
-          git config user.name "Guardian-Alpha"
-          git config user.email "guardian@moxter.ai"
-          git add docs/adr/agent_memory.md
-          git commit -m "chore: update agent memory via /override"
-          git push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
