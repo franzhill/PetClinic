@@ -1,8 +1,5 @@
 name: "AI architect Audit"
 
-
-
-
 on:
   pull_request:
     types: [opened, synchronize]
@@ -14,6 +11,7 @@ permissions:
   contents: write      # Required to update agent_memory.md
   pull-requests: write # Required to post review comments
   issues: write        # Required for issue_comment triggers
+  models: read         # 2026 requirement for gh models access
 
 jobs:
   # JOB 1: The Audit
@@ -42,16 +40,29 @@ jobs:
       #  env:
       #    GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
-        uses: github/super-audit-action@v1 # The 2026 native AI reviewer
-        with:
-          model: "gpt-4o" 
-          api_endpoint: "https://models.inference.ai.azure.com"
-          system_prompt_file: ".github/agents/architect.md"
-          context_files: |
-            docs/adr/*.md
-            docs/moxter/blueprint.yaml
+      #  uses: github/super-audit-action@v1 # The 2026 native AI reviewer
+      #  with:
+      #    model: "gpt-4o" 
+      #    api_endpoint: "https://models.inference.ai.azure.com"
+      #    system_prompt_file: ".github/agents/architect.md"
+      #    context_files: |
+      #      docs/adr/*.md
+      #      docs/moxter/blueprint.yaml
+      #  env:
+      #    GITHUB_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
+
+        # Implementation using official gh models CLI extension
+        run: |
+          gh extension install github/gh-models
+          gh pr diff > diff.txt
+          cat docs/adr/*.md docs/moxter/blueprint.yaml > context.txt
+          gh models run gpt-4o \
+            --system-prompt "$(cat .github/agents/architect.md)" \
+            --file context.txt \
+            --file diff.txt > review.md
+          gh pr comment --body-file review.md
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
 
   # JOB 2: The Learning Protocol (Memory Update)
   #  Handles the /override command
@@ -71,9 +82,20 @@ jobs:
         # env:
         #   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         #   GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        uses: github/ai-memory-sync@v1
-        with:
-          memory_file: "docs/adr/agent_memory.md"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
 
+        # uses: github/ai-memory-sync@v1
+        # with:
+        #   memory_file: "docs/adr/agent_memory.md"
+        # env:
+        #   GITHUB_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
+
+        # Manual append and push for maximum transparency
+        run: |
+          echo "| $(date +%F) | System | Override | ${{ github.event.comment.body }} | @${{ github.actor }} |" >> docs/adr/agent_memory.md
+          git config user.name "Guardian-Alpha"
+          git config user.email "guardian@moxter.ai"
+          git add docs/adr/agent_memory.md
+          git commit -m "chore: update agent memory via /override"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
